@@ -44,6 +44,8 @@ export interface MiscSettings {
     readonly lastSelectedAnkiExportMode: AnkiExportMode;
     readonly tabName: string;
     readonly pauseOnHoverMode: PauseOnHoverMode;
+    readonly subtitleAboveThumbnail: boolean;
+    readonly thumbnailPreview: boolean;
 }
 
 const isIncludedInBitset = (bitset: number, value: number) => ((bitset >> value) & 1) > 0;
@@ -551,6 +553,7 @@ export enum SubtitleListPreference {
     noSubtitleList = 'noSubtitleList',
     app = 'app',
 }
+
 
 export interface PageConfig {
     hostRegex: string;
