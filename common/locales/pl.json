@@ -431,6 +431,8 @@
         "subtitleAlignment": "Wyrównanie napisów",
         "subtitleAlignmentBottom": "Dół",
         "subtitleAlignmentTop": "Góra",
+        "subtitleAboveThumbnail": "Subtitle above thumbnail",
+        "thumbnailPreview": "Show preview thumbnails",
         "subtitleBlur": "Rozmycie napisów",
         "subtitleTrack": "Subtitle Track",
         "allSubtitleTracks": "All",

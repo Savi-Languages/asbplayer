@@ -431,6 +431,8 @@
         "subtitleAlignment": "Расположение субтитров",
         "subtitleAlignmentBottom": "У нижнего края",
         "subtitleAlignmentTop": "У верхнего края",
+        "subtitleAboveThumbnail": "Subtitle above thumbnail",
+        "thumbnailPreview": "Show preview thumbnails",
         "subtitleBlur": "Размытие субтитров",
         "subtitleTrack": "Дорожка субтитров",
         "allSubtitleTracks": "Все",

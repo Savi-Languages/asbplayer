@@ -507,7 +507,7 @@ export default function VideoPlayer({
                         notifyReady(videoElement, playerChannel, setAudioTracks, setSelectedAudioTrack);
                         setVideoWidth(videoElement.videoWidth);
                         setVideoHeight(videoElement.videoHeight);
-                    }
+                    };
                     videoElement.ondurationchange = () =>
                         notifyReady(videoElement, playerChannel, setAudioTracks, setSelectedAudioTrack);
                 }
@@ -533,7 +533,7 @@ export default function VideoPlayer({
                 }
             }
         },
-        [clock, playerChannel, updatePlayerState, videoWidth, videoHeight]
+        [clock, playerChannel, updatePlayerState]
     );
 
     function selectAudioTrack(id: string) {
@@ -756,37 +756,37 @@ export default function VideoPlayer({
             const time = progress * length;
             const video = hiddenVideoRef.current;
 
-            const thumbnailKey = Math.floor(((time / 1000) / 5));
+            const thumbnailKey = Math.floor(time / 1000 / 5);
 
             // cached url found, return url
             if (thumbnailsRef.current.has(thumbnailKey)) {
-                return (thumbnailsRef.current.get(thumbnailKey));
+                return thumbnailsRef.current.get(thumbnailKey);
             }
 
             if (isGeneratingRef.current) return;
             // if not in cache, generate new one in the background
             isGeneratingRef.current = true;
 
-            const onSeeked = () => {                
+            const onSeeked = () => {
                 const canvas = document.createElement('canvas');
                 canvas.width = video.videoWidth * 0.7;
                 canvas.height = video.videoHeight * 0.7;
                 const ctx = canvas.getContext('2d');
                 ctx?.drawImage(video, 0, 0, canvas.width, canvas.height);
-                
+
                 const thumbnailUrl = canvas.toDataURL('image/jpeg', 0.7);
                 thumbnailsRef.current.set(thumbnailKey, thumbnailUrl);
                 isGeneratingRef.current = false;
             };
-            
+
             video.addEventListener('seeked', onSeeked, { once: true });
             video.currentTime = time / 1000;
-            
+
             return;
         },
-        [length, clock]
+        [length]
     );
-    
+
     // load or unload preview thumbnail
     useEffect(() => {
         const videoPreview = hiddenVideoRef.current;
@@ -796,13 +796,13 @@ export default function VideoPlayer({
         if (settings.thumbnailPreview) {
             videoPreview.src = videoFile;
             videoPreview.load();
-        } else {settings.thumbnailPreview
+        } else {
+            settings.thumbnailPreview;
             videoPreview.pause();
-            videoPreview.removeAttribute("src");
-            videoPreview.load(); 
+            videoPreview.removeAttribute('src');
+            videoPreview.load();
         }
-
-    }, [settings.thumbnailPreview, videoFile, hiddenVideoReady])
+    }, [settings.thumbnailPreview, videoFile, hiddenVideoReady]);
 
     const handleSeekByTimestamp = useCallback(
         (timestampMs: number) => {
@@ -1883,8 +1883,8 @@ export default function VideoPlayer({
                 muted
                 preload="none"
                 autoPlay={false}
-                style={{position: "absolute", left: "-9999px"}}
-                ref={node => {
+                style={{ position: 'absolute', left: '-9999px' }}
+                ref={(node) => {
                     hiddenVideoRef.current = node;
                     if (node) {
                         setHiddenVideoReady(true);
@@ -1892,8 +1892,8 @@ export default function VideoPlayer({
                 }}
             />
             {topSubtitleElements.length > 0 && (
-                <SubtitleContainer 
-                    alignment={'top'} 
+                <SubtitleContainer
+                    alignment={'top'}
                     subtitleSettings={subtitleSettings}
                     baseOffset={0}
                     subtitleZIndex={settings.subtitleAboveThumbnail}

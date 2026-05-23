@@ -556,6 +556,12 @@ const settingsSchema = {
                 $ref: '/DictionaryTrack',
             },
         },
+        thumbnailPreview: {
+            type: 'boolean',
+        },
+        subtitleAboveThumbnail: {
+            type: 'boolean',
+        },
         _schema: {
             type: 'number',
         },

@@ -279,7 +279,7 @@ const MiscSettingTab: React.FC<Props> = ({
                         </FormGroup>
                     </FormControl>
                 )}
-                {insideApp && 
+                {insideApp && (
                     <>
                         <SwitchLabelWithHoverEffect
                             control={
@@ -295,7 +295,9 @@ const MiscSettingTab: React.FC<Props> = ({
                             control={
                                 <Switch
                                     checked={subtitleAboveThumbnail}
-                                    onChange={(event) => onSettingChanged('subtitleAboveThumbnail', !subtitleAboveThumbnail)}
+                                    onChange={(event) =>
+                                        onSettingChanged('subtitleAboveThumbnail', !subtitleAboveThumbnail)
+                                    }
                                     disabled={!thumbnailPreview}
                                 />
                             }
@@ -303,7 +305,7 @@ const MiscSettingTab: React.FC<Props> = ({
                             labelPlacement="start"
                         />
                     </>
-                }  
+                )}
                 <SettingsTextField
                     label={t('settings.subtitleRegexFilter')}
                     fullWidth

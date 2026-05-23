@@ -431,6 +431,8 @@
         "subtitleAlignment": "Perataan Takarir",
         "subtitleAlignmentBottom": "Bawah",
         "subtitleAlignmentTop": "Atas",
+        "subtitleAboveThumbnail": "Subtitle above thumbnail",
+        "thumbnailPreview": "Show preview thumbnails",
         "subtitleBlur": "Takarir Buram",
         "subtitleTrack": "Trek Takarir",
         "allSubtitleTracks": "Semua",

@@ -431,6 +431,8 @@
         "subtitleAlignment": "Tekstityksen kohdistus",
         "subtitleAlignmentBottom": "Pohja",
         "subtitleAlignmentTop": "Ylhäällä",
+        "subtitleAboveThumbnail": "Subtitle above thumbnail",
+        "thumbnailPreview": "Show preview thumbnails",
         "subtitleBlur": "Tekstityksen sumennus",
         "subtitleTrack": "Tekstitysraita",
         "allSubtitleTracks": "Kaikki",

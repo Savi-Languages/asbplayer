@@ -431,6 +431,8 @@
         "subtitleAlignment": "Alinhamento da legenda",
         "subtitleAlignmentBottom": "Inferior",
         "subtitleAlignmentTop": "Superior",
+        "subtitleAboveThumbnail": "Subtitle above thumbnail",
+        "thumbnailPreview": "Show preview thumbnails",
         "subtitleBlur": "Desfoque de legenda",
         "subtitleTrack": "Faixa de Legenda",
         "allSubtitleTracks": "Todos",

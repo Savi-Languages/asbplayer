@@ -431,6 +431,8 @@
         "subtitleAlignment": "자막 위치 정렬",
         "subtitleAlignmentBottom": "하단",
         "subtitleAlignmentTop": "상단",
+        "subtitleAboveThumbnail": "Subtitle above thumbnail",
+        "thumbnailPreview": "Show preview thumbnails",
         "subtitleBlur": "자막 블러 효과",
         "subtitleTrack": "자막 트랙",
         "allSubtitleTracks": "모두 선택",

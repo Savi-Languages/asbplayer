@@ -431,6 +431,8 @@
         "subtitleAlignment": "Alineación de Subtítulos",
         "subtitleAlignmentBottom": "Inferior",
         "subtitleAlignmentTop": "Superior",
+        "subtitleAboveThumbnail": "Subtitle above thumbnail",
+        "thumbnailPreview": "Show preview thumbnails",
         "subtitleBlur": "Desenfoque de subtítulos",
         "subtitleTrack": "Pista de Subtítulos",
         "allSubtitleTracks": "Todos",

@@ -197,7 +197,7 @@ const useProgressBarStyles = makeStyles<Theme>((theme) => ({
         borderRadius: 5,
         height: 79,
         top: -90,
-        zIndex: -1, 
+        zIndex: -1,
     },
     thumbnail: {
         height: 79,
@@ -291,7 +291,7 @@ function ProgressBar({ onSeek, onSeekPreview, value, videoHeight, videoWidth, pr
     // calculate width of thumbnail based on aspect ratio of video
     if (videoHeight && videoWidth) {
         videoWidth = Math.round((videoWidth / videoHeight) * 79);
-    }   
+    }
 
     const handleClick = useCallback(
         (e: React.MouseEvent<HTMLDivElement>) => {
@@ -314,7 +314,7 @@ function ProgressBar({ onSeek, onSeekPreview, value, videoHeight, videoWidth, pr
             const progress = Math.min(1, Math.max(0, (e.pageX - rect.left - 10) / width));
             const positionInPixels = progress * width;
             // subtract to center the mouse in the center of the preview box
-            setHoverX((positionInPixels - (145 / 2)) + 10);
+            setHoverX(positionInPixels - 145 / 2 + 10);
 
             const previewSrc = onSeekPreview(progress);
             if (previewSrc) {
@@ -336,12 +336,14 @@ function ProgressBar({ onSeek, onSeekPreview, value, videoHeight, videoWidth, pr
 
     return (
         <div className={classes.root}>
-
-            {mouseOver && 
-            <div style={{left: hoverX, width: videoWidth?? 145, display: previewEnabled ? 'block' : 'none'}} className={classes.preview}>
-                <img src={thumbnailSrc} className={classes.thumbnail} style={{width: videoWidth?? 145}} />
-            </div>
-            }
+            {mouseOver && (
+                <div
+                    style={{ left: hoverX, width: videoWidth ?? 145, display: previewEnabled ? 'block' : 'none' }}
+                    className={classes.preview}
+                >
+                    <img src={thumbnailSrc} className={classes.thumbnail} style={{ width: videoWidth ?? 145 }} />
+                </div>
+            )}
             <div ref={containerRef} className={classes.container}>
                 <div className={fillContainerClassName}>
                     <div className={classes.fill} style={fillStyle}></div>
@@ -580,8 +582,8 @@ interface ControlsProps {
     onLoadFiles?: () => void;
     blurOverlayEnabled?: boolean;
     onBlurOverlayToggle?: () => void;
-    videoWidth?: number | undefined
-    videoHeight?: number | undefined
+    videoWidth?: number | undefined;
+    videoHeight?: number | undefined;
 }
 
 export default function Controls({
@@ -967,11 +969,11 @@ export default function Controls({
             >
                 <Fade in={show} timeout={200}>
                     <div className={classes.subContainer}>
-                        <ProgressBar 
+                        <ProgressBar
                             onSeekPreview={onSeekPreview}
-                            onSeek={handleSeek} 
-                            value={progress * 100} 
-                            videoHeight={videoHeight} 
+                            onSeek={handleSeek}
+                            value={progress * 100}
+                            videoHeight={videoHeight}
                             videoWidth={videoWidth}
                             previewEnabled={previewEnabled}
                         />

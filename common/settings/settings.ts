@@ -554,7 +554,6 @@ export enum SubtitleListPreference {
     app = 'app',
 }
 
-
 export interface PageConfig {
     hostRegex: string;
     syncAllowedAtPath?: string;

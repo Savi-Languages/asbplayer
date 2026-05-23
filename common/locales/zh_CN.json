@@ -431,6 +431,8 @@
         "subtitleAlignment": "字幕对齐方式",
         "subtitleAlignmentBottom": "底部对齐",
         "subtitleAlignmentTop": "顶部对齐",
+        "subtitleAboveThumbnail": "Subtitle above thumbnail",
+        "thumbnailPreview": "Show preview thumbnails",
         "subtitleBlur": "字幕模糊处理",
         "subtitleTrack": "字幕轨道",
         "allSubtitleTracks": "全部",
