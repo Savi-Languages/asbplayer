@@ -664,6 +664,8 @@ export default class VideoChannel {
             tabName,
             pauseOnHoverMode,
             lastSelectedAnkiExportMode,
+            thumbnailPreview,
+            subtitleAboveThumbnail,
         } = settings;
         const message: MiscSettingsToVideoMessage = {
             command: 'miscSettings',
@@ -693,6 +695,8 @@ export default class VideoChannel {
                 tabName,
                 pauseOnHoverMode,
                 lastSelectedAnkiExportMode,
+                thumbnailPreview,
+                subtitleAboveThumbnail,
             },
         };
         this.protocol.postMessage(message);

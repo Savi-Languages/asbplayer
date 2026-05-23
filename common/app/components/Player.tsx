@@ -1453,6 +1453,7 @@ const Player = React.memo(function Player({
                             disableKeyEvents={disableKeyEvents}
                             playbackPreferences={playbackPreferences}
                             showOnMouseMovement={true}
+                            previewEnabled={false}
                         />
                     )}
                     <SubtitlePlayer
