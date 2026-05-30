@@ -274,6 +274,24 @@ export default function OnlineSubtitleSourceDialog({
                                 input: {
                                     endAdornment: (
                                         <InputAdornment position="end">
+                                            <ToggleButtonGroup
+                                                value={jimakuSearchCategory}
+                                                exclusive
+                                                size="small"
+                                                sx={{ mr: 1.5, height: 36 }}
+                                                onChange={(_, value) => {
+                                                    if (value !== null) {
+                                                        onJimakuSearchCategoryChange(value);
+                                                    }
+                                                }}
+                                            >
+                                                <ToggleButton value="anime">
+                                                    {t('onlineSubtitleSources.categoryAnime')}
+                                                </ToggleButton>
+                                                <ToggleButton value="drama">
+                                                    {t('onlineSubtitleSources.categoryDrama')}
+                                                </ToggleButton>
+                                            </ToggleButtonGroup>
                                             <IconButton
                                                 loading={searching}
                                                 onClick={handleSearch}
@@ -286,21 +304,6 @@ export default function OnlineSubtitleSourceDialog({
                                 },
                             }}
                         />
-                        <ToggleButtonGroup
-                            value={jimakuSearchCategory}
-                            exclusive
-                            size="small"
-                            fullWidth
-                            sx={{ mt: 1, mb: 0.5, height: 56 }}
-                            onChange={(_, value) => {
-                                if (value !== null) {
-                                    onJimakuSearchCategoryChange(value);
-                                }
-                            }}
-                        >
-                            <ToggleButton value="anime">{t('onlineSubtitleSources.categoryAnime')}</ToggleButton>
-                            <ToggleButton value="drama">{t('onlineSubtitleSources.categoryDrama')}</ToggleButton>
-                        </ToggleButtonGroup>
                     </Box>
 
                     <TextField
