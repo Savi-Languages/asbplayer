@@ -332,14 +332,14 @@ class TokenCollection extends TokenCollectionBase<TokenStatusResult> {
         key: string,
         states: TokenState[]
     ): void {
-        const statusResult = this.tokenStatusResult(statuses, source, externalCandidateStatuses);
         const normalizedKey = normalizeToken(key);
+        this.ts.updateTokenStates(normalizedKey, states);
+        const statusResult = this.tokenStatusResult(statuses, source, externalCandidateStatuses);
         const existing = this.collection.get(normalizedKey);
         this.collection.set(
             normalizedKey,
             existing ? super.mergeTokenStatusResults(existing, statusResult) : statusResult
         );
-        this.ts.updateTokenStates(normalizedKey, states);
     }
 
     private resolve(
@@ -375,6 +375,7 @@ class TokenCollectionArray extends TokenCollectionBase<TokenStatusResult[]> {
         token: string
     ): void {
         const normalizedToken = normalizeToken(token);
+        this.ts.updateTokenStates(normalizedToken, states);
         const statusResult = this.tokenStatusResult(statuses, source, externalCandidateStatuses, normalizedToken);
         const statusResults = this.collection.get(normalizedKey);
         if (!statusResults) {
@@ -387,7 +388,6 @@ class TokenCollectionArray extends TokenCollectionBase<TokenStatusResult[]> {
         } else {
             statusResults[duplicateIndex] = super.mergeTokenStatusResults(statusResults[duplicateIndex], statusResult);
         }
-        this.ts.updateTokenStates(normalizedToken, states);
     }
 
     /**
