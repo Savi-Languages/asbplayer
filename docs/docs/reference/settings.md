@@ -12,6 +12,10 @@ import NoteAddIcon from '@site/src/components/NoteAddIcon';
 
 URL to the AnkiConnect server running as on addon inside Anki.
 
+### AnkiConnect API Key
+
+API key configured in AnkiConnect when API key protection is enabled.
+
 ### Deck
 
 Anki deck where cards are sent.
@@ -81,9 +85,21 @@ How many milliseconds **before** the target subtitle to start recording audio.
 
 How many milliseconds **after** the target subtitle to stop recording audio.
 
+### Image capture format (website only)
+
+Specifies the image capture format for mined cards. Only available on the website for local video files where the only additional option is "video clip."
+
 ### Max image width/height
 
 Max width/height in pixels of screenshots. `0` means "no limit."
+
+### Clip trim start/end
+
+Specifies how much time to trim off the start and end of a subtitle's time interval when determining the default time interval for the video clip. Only available when the video clip image capture format is selected.
+
+### Max clip length
+
+Specifies the max video clip length. Only available when video clip image capture format is selected.
 
 ### Surrounding subtitles count radius
 
@@ -189,7 +205,7 @@ Some shortcut behaviors require privileged browser extension APIs, requiring the
 ### Word Browser
 
 :::info
-Only local words can be edited/deleted, Anki-synced words are read-only and can only update through [syncing with Anki](#re-build-anki-word-database) and its [respective settings](#anki-decks-optional).
+Only local words can be edited/deleted, external sources are read-only and can only update through [syncing](#re-build-anki-word-database).
 :::
 
 Opens the Word Browser, where you can view and manage all words in your local word database and Anki-synced word database.
@@ -204,7 +220,7 @@ There are also some other common QOL substitutions, such as `e -> é` or `ss -> 
 
 Imports words into asbplayer's **local word database**.
 
-Imported words take priority over the Anki word database when determining word status.
+Imported words are considered local and take priority over the external sources when determining word status.
 
 The import dialog supports pasting arbitrary text (asbplayer will tokenize it) and importing previously-exported files.
 
@@ -226,6 +242,18 @@ The cache is also updated automatically during playback when a track is enabled 
 This button is disabled unless your annotation settings [benefit from Anki integration](../guides/annotation.md#enable-or-disable-annotation-for-a-track).
 
 To clear the Anki word database entries for a track, [follow these steps](../guides/annotation.md#clear-anki-word-database).
+:::
+
+### Re-Build WaniKani word database
+
+Builds (or rebuilds) the local cache of vocabulary information sourced from WaniKani.
+
+:::tip
+The cache is also updated automatically during playback when a track is enabled and a token is configured.
+
+This button is disabled unless your annotation settings [benefit from WaniKani integration](../guides/annotation.md#enable-or-disable-annotation-for-a-track).
+
+To clear the WaniKani word database entries for a track, [follow these steps](../guides/annotation.md#clear-wanikani-word-database).
 :::
 
 ### Subtitle track
@@ -266,7 +294,7 @@ Shows a rank-based frequency value below words (when available). This is useful 
 - **Never**: disable frequency.
 
 :::tip
-Frequency information requires at least one rank-based frequency dictionary to be available in your Yomitan instance.
+Frequency information requires at least one rank-based frequency dictionary to be available in your Yomitan instance. If a frequency dictionary doesn't declare its mode, asbplayer will try to infer whether it is rank-based and use it accordingly.
 
 If multiple frequency numbers are available for a word, the lowest (most frequent) number is used.
 :::
@@ -285,12 +313,14 @@ This highlight reflects the focus asbplayer has to register keyboard shortcuts. 
 
 ### Word field search strategy
 
-Controls how asbplayer matches a subtitle word against local words and Anki cards found in your configured **Anki word fields**.
+Controls how asbplayer matches a subtitle word against your known words.
 
 - **Exact form collected**: the field must contain the exact surface form from the subtitle (running -> running).
-- **Lemma form collected**: the field must contain the lemma/base form (running -> run).
+- **Lemma form collected**: you must have the lemma/base form collected (running -> run).
 - **Lemma or exact form collected**: treat the word as collected if either lemma or exact form matches (any of the above).
 - **Any form collected**: treat the word as collected if any related form matches (running -> run, ran, runs, etc.).
+
+When **Lemma form collected**, **Lemma or exact form collected**, or **Any form collected** is selected, **Match across language scripts** controls whether lemma-based matching may cross between different scripts for a language (e.g Kanji, Hiragana, Katakana).
 
 ### Card choice priority
 
@@ -304,6 +334,8 @@ If multiple Anki cards match a word, this controls which card is used to determi
 ### Sentence field search strategy
 
 Controls how asbplayer searches your configured **Anki sentence fields**, it has the same options as **Word field search strategy**.
+
+When **Lemma form collected**, **Lemma or exact form collected**, or **Any form collected** is selected, **Match across language scripts** controls whether lemma-based matching may cross between different scripts for a language (e.g Kanji, Hiragana, Katakana).
 
 :::tip
 Since sentences will contain multiple words thus diluting the relevance of the card state to any individual word, it's best to keep this as **Exact form collected** unless you only have sentence cards.
@@ -342,7 +374,7 @@ Restricts Anki searches to the selected decks. If left empty, asbplayer searches
 
 ### Anki word fields
 
-Anki note fields that contain *only* the target word. This is the recommended way to source known-status information from Anki.
+Anki note fields that contain _only_ the target word. This is the recommended way to source known-status information from Anki.
 
 ### Anki sentence fields
 
@@ -352,7 +384,7 @@ Anki note fields that contain a sentence (commonly used for sentence decks). Thi
 
 Controls the cutoff (in days) for treating an Anki card as **Mature** versus lower maturity statuses.
 
-- **Uncollected**: not found in Anki or local word database.
+- **Uncollected**: not found in Anki.
 - **Unknown**: found in Anki with `is:new`.
 - **Learning**: found in Anki with `is:learn`.
 - **Graduated**: found in Anki with `-is:new -is:learn prop:s<{ceil(cutoff / 2)}`.
@@ -361,6 +393,8 @@ Controls the cutoff (in days) for treating an Anki card as **Mature** versus low
 
 :::tip
 If a card has its FSRS stability available (last review of the card was with FSRS enabled), it will be used instead of the interval.
+
+For more information on word statuses, see [Word status colors](#word-status-colors).
 :::
 
 ### Treat suspended Anki cards as
@@ -372,6 +406,23 @@ Controls how **suspended** cards are treated when building word status from Anki
 
 :::tip
 If only some of the cards for a word are suspended, the suspended cards will be filtered out and the word status will be based on the unsuspended cards.
+:::
+
+### WaniKani API token
+
+The WaniKani API token to sync your known words from WaniKani. For setup, follow the instructions in the [annotations guide](../guides/annotation.md#setup).
+
+For asbplayer, we only use the `vocabulary` and `kana_vocabulary` subject types to determine known words. Statuses are determined based on the SRS stage based on the configured [spaced repetition system](https://docs.api.wanikani.com/20170710/#spaced-repetition-system) for that subject. WaniKani statuses are determined as follows:
+
+- **Uncollected**: not found in WaniKani.
+- **Unknown**: found in WaniKani with an SRS stage below `Starting stage`.
+- **Learning**: found in WaniKani with an SRS stage at or above `Starting stage` and below `Passing stage`.
+- **Graduated**: found in WaniKani with an SRS stage in the lower half of the stages between `Passing stage` and `Burning stage`.
+- **Young**: found in WaniKani with an SRS stage in the upper half of the stages between `Passing stage` and `Burning stage`.
+- **Mature**: found in WaniKani with an SRS stage at or above `Burning stage`.
+
+:::tip
+For more information on word statuses, see [Word status colors](#word-status-colors).
 :::
 
 ### Word color style
@@ -394,9 +445,9 @@ Controls the thickness (in pixels) of **Underline**, **Overline**, and **Outline
 
 ### Word status colors
 
-Each status has a configurable color used by **Word color style** (see [**Mature Anki stability/interval (days)**](#mature-anki-stabilityinterval-days) for how Anki card statuses are determined):
+Each status has a configurable color used by **Word color style**.
 
-- **Uncollected**: Word is not present in your local word database and not found in your Anki word database.
+- **Uncollected**: Word is not present in your asbplayer database.
 - **Unknown**: Word is present but considered unknown.
 - **Learning**: Word is currently learning.
 - **Graduated**: Word has graduated from learning.
@@ -407,6 +458,9 @@ Each status has a configurable color used by **Word color style** (see [**Mature
 You can disable status stylings per your liking, e.g. disabling **Mature** to reduce clutter.
 
 You can reuse colors (e.g. **Graduated** and **Young**) if you don't want to differentiate between certain statuses.
+
+For how Anki Card statuses are determined, see [**Mature Anki stability/interval (days)**](#mature-anki-stabilityinterval-days).
+For how WaniKani statuses are determined, see [WaniKani API token](#wanikani-api-token).
 :::
 
 ## [Streaming video](https://app.asbplayer.dev/?view=settings#streaming-video) (extension only)
@@ -457,6 +511,14 @@ When condensed playback is enabled, skip to the next subtitle only if the next s
 
 Determines where the extension fetches some configuration, and what URL to open when syncing subtitles to the website running in a separate tab. Essentially the website URL.
 
+### Pages
+
+Settings for page-specific integrations like YouTube, Netflix, etc. asbplayer has pre-configured default settings for each page. The pages section allows those defaults to be modified.
+
+#### Target language codes for machine translation (YouTube only)
+
+Specifies which target languages to use for YouTube's machine translation. When languages are specified here, additional tracks for each target language appear in the subtitle track selector.
+
 ## [Misc](https://app.asbplayer.dev/?view=settings#misc-settings)
 
 ### Theme
@@ -470,6 +532,14 @@ When enabled, timing offset is "sticky." Subtitles are loaded with the last-used
 ### Auto-copy current subtitle to clipboard
 
 Automatically copies subtitle to clipboard when it appears on screen. Useful for sending subtitles to apps that can monitor the clipboard.
+
+### Subtitle tracks eligible for auto-copy
+
+Specifies which tracks will be auto-copied when the `Auto-copy current subtitle to clipboard` setting is enabled.
+
+### Subtitle tracks affected by playback modes and keyboard shortcuts
+
+Specifies which tracks will be considered when using keyboard shorcuts to seek between subtitles, or when using playback modes. For example, when condensed mode is enabled, blank space to be automatically skipped, is considered to be any part of the timeline without subtitles in the tracks specified by this option.
 
 ### Always play after invoking 'Seek to beginning of current/previous subtitle'
 
@@ -500,6 +570,10 @@ Note: not all strings have been localized in every language that asbplayer suppo
 ### Auto-pause preference
 
 When auto-pause is enabled, whether to auto-pause at the start or end of subtitles.
+
+### Detect and Display Ruby
+
+When enabled, asbplayer will automatically detect Netflix-style word readings and display them stylistically using `ruby` tags. Netflix-style readings frequently appear in Japanese subtitles and look like `花子（はなこ）` where a reading in parentheses follows a word.
 
 ### Auto-pause when mousing over subtitles
 

@@ -24,11 +24,11 @@
   - **Auto-pause**: Automatically pause at the beginning or end of every subtitle.
 - **Use customizable keyboard shortcuts** to access most of asbplayer's features.
 - **Annotate subtitles** with the help of tools such as [Yomitan](https://yomitan.wiki/)
-  - **Word styling** (color/underline/outline, etc.) based on a word's status (uncollected/unknown/learning, etc.) synced from Anki and/or tracked locally in asbplayer.
-  - **Reading annotation** for pronunciation displayed above each word or based on status.
+  - **Word styling** (color/underline/outline, etc.) based on a word's status (uncollected/unknown/learning, etc.) synced from Anki, WaniKani, and/or tracked locally in asbplayer.
+  - **Reading annotation** for reading displayed above each word or based on status.
   - **Frequency annotation** for rank-based frequency displayed below each word or based on status.
   - **Statistics and Comprehension** on your known words for the current media.
-  - **Word browser** to manage local and Anki-synced words.
+  - **Word browser** to manage local and view words synced from external sources.
   - Many more features for future releases! Some planned features include:
     - **Auto pause**, **Condensed playback**, and **Auto mining** on uncollected/unknown/learning words.
     - **Accent annotation** such as pitch accent, tones, gender, etc.
@@ -127,7 +127,9 @@ Thank you to all those who have contributed to asbplayer:
 [@xwxb](https://github.com/xwxb),
 [@yqmmm](https://github.com/yqmmm),
 [@jprostko](https://github.com/jprostko),
-[@rodrigo-suarezmajor](https://github.com/rodrigo-suarezmajor)
+[@rodrigo-suarezmajor](https://github.com/rodrigo-suarezmajor),
+[@Roka20012](https://github.com/Roka20012),
+[@RonzyOnGIT](https://github.com/RonzyOnGIT)
 
 Thank you to all those who have translated asbplayer:
 
@@ -145,7 +147,8 @@ Thank you to all those who have translated asbplayer:
 **[@825i](https://github.com/825i)** (Finnish),
 **[@Jaybird1291](https://github.com/jaybird1291)** (French),
 **Tigerbabe aka Gyaru Jinsei Juku** (Korean),
-**yaacha** (Indonesian)
+**yaacha** (Indonesian),
+**[@NeriSal](https://github.com/nerisal)** (Italian)
 
 If you are a non-English native, and would like to help translate asbplayer, join the [Crowdin project](https://crowdin.com/project/asbplayer). If your language isn't there, feel free to create an issue to add it on the [issues page](https://github.com/asbplayer/asbplayer/issues).
 

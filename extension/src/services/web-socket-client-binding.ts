@@ -124,19 +124,25 @@ export const bindWebSocketClient = async (settings: SettingsProvider, tabRegistr
     };
     client.onSeekTimestamp = async ({ body: { timestamp } }: SeekTimestampCommand) => {
         return new Promise<void>((resolve) => {
-            // Publish the command to all active video elements
-            tabRegistry.publishCommandToVideoElements((videoElement) => {
-                return {
-                    sender: 'asbplayer-extension-to-video',
-                    message: {
-                        command: 'currentTime',
-                        value: timestamp,
-                    },
-                    src: videoElement.src,
-                };
-            });
+            // Publish the command to the active tab video element
+            browser.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+                tabRegistry.publishCommandToVideoElements((videoElement) => {
+                    if (tabs.find((t) => t.id === videoElement.tab.id) === undefined) {
+                        return undefined;
+                    }
 
-            resolve();
+                    return {
+                        sender: 'asbplayer-extension-to-video',
+                        message: {
+                            command: 'currentTime',
+                            value: timestamp,
+                        },
+                        src: videoElement.src,
+                    };
+                });
+
+                resolve();
+            });
         });
     };
 };

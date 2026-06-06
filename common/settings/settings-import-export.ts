@@ -45,6 +45,9 @@ const dictionaryTrackSchema = {
         dictionaryTokenMatchStrategy: {
             type: 'string',
         },
+        dictionaryMatchAcrossScripts: {
+            type: 'boolean',
+        },
         dictionaryTokenMatchStrategyPriority: {
             type: 'string',
         },
@@ -92,6 +95,9 @@ const dictionaryTrackSchema = {
         },
         dictionaryAnkiTreatSuspended: {
             type: ['string', 'number'],
+        },
+        dictionaryWaniKaniApiToken: {
+            type: 'string',
         },
         dictionaryTokenStyling: {
             type: 'string',
@@ -186,6 +192,9 @@ const settingsSchema = {
     type: 'object',
     properties: {
         ankiConnectUrl: {
+            type: 'string',
+        },
+        ankiConnectApiKey: {
             type: 'string',
         },
         deck: {
@@ -549,6 +558,12 @@ const settingsSchema = {
             items: {
                 $ref: '/DictionaryTrack',
             },
+        },
+        thumbnailPreview: {
+            type: 'boolean',
+        },
+        subtitleAboveThumbnail: {
+            type: 'boolean',
         },
         _schema: {
             type: 'number',

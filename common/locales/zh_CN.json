@@ -203,7 +203,8 @@
         "subtitleFileNotOpen": "字幕文件 {{fileName}} 未打开。",
         "unknownExtension": "无法识别 {{fileName}} 的文件格式",
         "unsupportedExtension": "不支持该文件格式：{{extension}}",
-        "videoPlayerDragAndDropNotAllowed": "播放器无法接收拖放文件，请拖至视频画面外。"
+        "videoPlayerDragAndDropNotAllowed": "播放器无法接收拖放文件，请拖至视频画面外。",
+        "restoreSessionFailed": "恢复上次会话失败，文件可能已被移动或删除。"
     },
     "extension": {
         "settings": {
@@ -327,7 +328,8 @@
         "extensionUpdateAvailable": "发现新的 <1>扩展更新</1>。",
         "noSubtitles": "无字幕",
         "videoElementsDetected": "为视频加载字幕以开始使用。",
-        "noVideoElementsDetected": "未检测到视频元素。"
+        "noVideoElementsDetected": "未检测到视频元素。",
+        "restoreLastSession": "恢复上次会话"
     },
     "activeTabPermissionRequest": {
         "title": "开启录音权限",
@@ -353,6 +355,7 @@
         "alwaysPlayOnSubtitleRepeat": "触发单句复读后自动继续播放",
         "anki": "Anki 设置",
         "ankiConnectUrl": "AnkiConnect 链接",
+        "ankiConnectApiKey": "Anki Connect API Key",
         "audioField": "音频字段",
         "audioPaddingEnd": "音频结尾留白",
         "audioPaddingStart": "音频开头留白",
@@ -428,6 +431,8 @@
         "subtitleAlignment": "字幕对齐方式",
         "subtitleAlignmentBottom": "底部对齐",
         "subtitleAlignmentTop": "顶部对齐",
+        "subtitleAboveThumbnail": "Subtitle above thumbnail",
+        "thumbnailPreview": "Show preview thumbnails",
         "subtitleBlur": "字幕模糊处理",
         "subtitleTrack": "字幕轨道",
         "allSubtitleTracks": "全部",
@@ -476,8 +481,13 @@
         "buildAnkiCacheHelperText": "在播放期间且 Anki 连接正常时，缓存将自动更新。",
         "buildAnkiCacheAnkiEnableHelperText": "配置单词或例句字段，以便调用 Anki 数据识别已掌握词汇。",
         "ankiCacheDependentSettingsHelperText": "修改“{{field}}”可能使缓存失效，可选择立即重建或在下次播放时自动重建。",
+        "buildWaniKaniCache": "Re-Build WaniKani word database",
+        "buildWaniKaniCacheHelperText": "The WaniKani word database is automatically updated during playback when a track is enabled and a token is configured.",
+        "buildWaniKaniCacheTokenEnableHelperText": "Add a WaniKani API token below to collect your WaniKani vocabulary.",
+        "waniKaniCacheDependentSettingsHelperText": "Changing \"{{field}}\" could invalidate the WaniKani cache, trigger a rebuild now or have it done automatically on your next playback when this track is enabled and a token is configured.",
         "dictionaryLocalWordDatabase": "本地生词本",
         "dictionaryAnkiWordDatabase": "Anki 词汇库",
+        "dictionaryWaniKaniWordDatabase": "WaniKani word database",
         "dictionaryColorizeSubtitles": "根据词汇掌握度着色",
         "dictionaryAutoGenerateStatistics": "自动生成数据统计",
         "dictionaryColorizeOnHoverOnly": "仅在鼠标悬停时显示颜色",
@@ -487,6 +497,7 @@
         "dictionaryTokenMatchStrategyLemmaOrExactFormCollected": "匹配词元或完全匹配",
         "dictionaryTokenMatchStrategyLemmaFormCollected": "仅匹配词元（原形）",
         "dictionaryTokenMatchStrategyExactFormCollected": "仅完全匹配原文",
+        "dictionaryMatchAcrossScripts": "Match across language scripts",
         "dictionaryTokenMatchStrategyPriority": "卡片匹配优先级",
         "dictionaryTokenMatchStrategyPriorityExact": "优先匹配包含原文的卡片",
         "dictionaryTokenMatchStrategyPriorityLemma": "优先匹配包含词元的卡片",
@@ -519,6 +530,9 @@
         "dictionaryAnkiMatureCutoff": "Anki 成熟卡片判定标准（天）",
         "dictionaryAnkiTreatSuspended": "被暂停卡片的处理方式",
         "dictionaryAnkiTreatSuspendedNormal": "正常处理",
+        "dictionaryWaniKaniSection": "WaniKani",
+        "dictionaryWaniKaniApiToken": "WaniKani API token",
+        "dictionaryWaniKaniApiTokenHelperText": "Instructions to get an API token are <0>here</0>.",
         "dictionaryTokenStyling": "词汇高亮样式",
         "dictionaryTokenStylingText": "文本颜色",
         "dictionaryTokenStylingBackground": "背景高亮",
@@ -542,12 +556,20 @@
         "dictionaryTokenStatusReading0": "读音区",
         "dictionaryTokenStateIgnored": "已忽略",
         "dictionaryBuildAnkiStarted": "正在查询 Anki 更新卡片状态",
+        "dictionaryBuildWaniKaniStarted": "Syncing WaniKani vocabulary",
         "dictionaryTokenStatusAlpha": "透明度",
         "dictionaryBuildAnkiTracks": "扫描轨道：{{tracks}}",
+        "dictionaryBuildWaniKaniTrack": "WaniKani track #{{trackNumber}}",
+        "dictionaryBuildWaniKaniTrackCleared": "cleared",
+        "dictionaryBuildWaniKaniTrackNoChanges": "no changes",
         "dictionaryBuildModifiedCards": "发现 {{numCards}} 张已修改卡片",
+        "dictionaryBuildWaniKaniTokens": "{{numTokens}} imported word(s)",
+        "dictionaryBuildWaniKaniAssignments": "{{numAssignments}} assignment(s)",
+        "dictionaryBuildWaniKaniSubjects": "{{numSubjects}} subject(s)",
         "dictionaryBuildOrphanedCards": "清理 {{numCards}} 张失效卡片（来自轨道：{{tracks}}）",
         "dictionaryBuildInProgress": "缓存构建进行中（预计于 {{time}} 完成）",
         "dictionaryBuildAnkiError": "从 Anki 获取权限失败",
+        "dictionaryBuildWaniKaniTokenInvalidError": "Error connecting to WaniKani. Check the API token for track {{trackNumber}}.",
         "dictionaryBuildYomitanError": "轨道 {{trackNumber}} 连接 Yomitan 失败（如不使用请禁用此轨道）",
         "dictionaryImportClipboardIgnored": "将剪贴板词汇标记为“已忽略”",
         "dictionaryImportClipboardText": "粘贴文本或单行录入单词",
@@ -579,13 +601,16 @@
                 "status": "Status",
                 "states": "States",
                 "track": "Track",
+                "assignmentIds": "Assignment IDs",
                 "cardIds": "Card IDs",
+                "subjectIds": "Subject IDs",
                 "noteIds": "Note IDs",
                 "suspended": "Suspended"
             },
             "sources": {
                 "local": "Local",
                 "ankiWord": "Anki word",
+                "waniKani": "WaniKani",
                 "ankiSentence": "Anki sentence"
             },
             "suspended": {
@@ -620,6 +645,7 @@
         "occurrences": "出现次数",
         "sentenceStatistics": "句子挖掘价值分析",
         "currentWatch": "当前首刷",
+        "projected": "Projected",
         "projectedRewatch": "预计二刷",
         "rewatchSelect": "选择重播轮次",
         "rewatchOption": "第 {{rewatch}} 次重播",
@@ -630,6 +656,7 @@
         "noMoreRewatches": "在本次学习中挖掘完所有 i+1 句子后，将不再有可挖掘内容。",
         "totalSentences": "台词总数",
         "knownSentences": "完全掌握句数",
+        "projectMature": "Treat upcoming material as mature",
         "anki": {
             "ankiStatistics": "Anki 进度统计",
             "dueByToday": "今日到期",
@@ -638,10 +665,27 @@
             "suspended": "被暂停卡片",
             "deckBreakdown": "牌组分布",
             "modelBreakdown": "笔记类型占比",
+            "newCardsCount": "{{count}} new cards",
+            "projectReviewedCards": "Treat all reviewed cards as mature",
+            "knownDeckWords": "Anki known words",
             "ankiNeedsToBeRunning": "需保持 Anki 运行以加载统计数据。",
             "noDeckBreakdown": "未在 Anki 中检索到属于此媒体的卡片。",
             "info": {
-                "ankiStatistics": "分析当前视频词汇在 Anki 库中的收录情况。"
+                "ankiStatistics": "分析当前视频词汇在 Anki 库中的收录情况。",
+                "projectedCards": "Preview your stats by treating past cards or new cards (in the order they will be introduced) as Mature."
+            }
+        },
+        "waniKani": {
+            "waniKaniStatistics": "WaniKani statistics",
+            "projectLevel": "WaniKani level",
+            "projectedWords": "WaniKani known words",
+            "projectedLevel": "Level {{level}}",
+            "currentKnowledge": "Current WaniKani",
+            "waniKaniNeedsToBeAvailable": "WaniKani statistics could not be loaded.",
+            "noWaniKaniBreakdown": "No matching WaniKani vocabulary was found for this media.",
+            "info": {
+                "waniKaniStatistics": "How your upcoming WaniKani reviews match up with the words in this media.",
+                "projectedLevel": "Preview your stats by treating all words at or below a level as Mature."
             }
         },
         "info": {
@@ -669,6 +713,9 @@
         "entries": "Search results",
         "noEntries": "No search results",
         "availableFiles": "Files",
-        "noFiles": "No files"
+        "noFiles": "No files",
+        "searchCategory": "Search category",
+        "categoryAnime": "Anime",
+        "categoryDrama": "Drama"
     }
 }

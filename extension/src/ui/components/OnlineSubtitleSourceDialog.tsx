@@ -11,10 +11,12 @@ import ListItem from '@mui/material/ListItem';
 import ListItemButton from '@mui/material/ListItemButton';
 import ListItemText from '@mui/material/ListItemText';
 import CloseIcon from '@mui/icons-material/Close';
+import ToggleButton from '@mui/material/ToggleButton';
+import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { JimakuClient, JimakuEntry } from '@/services/subtitle-sources';
 import IconButton from '@mui/material/IconButton';
@@ -34,6 +36,8 @@ interface Props {
     detectedTitleHint?: string;
     jimakuApiKey: string;
     onJimakuApiKeyChange: (jimakuApiKey: string) => void;
+    jimakuSearchCategory: 'anime' | 'drama';
+    onJimakuSearchCategoryChange: (category: 'anime' | 'drama') => void;
 }
 
 const SUPPORTED_JIMAKU_EXTENSIONS = ['.srt', '.ass'];
@@ -85,6 +89,8 @@ export default function OnlineSubtitleSourceDialog({
     detectedTitleHint,
     jimakuApiKey,
     onJimakuApiKeyChange,
+    jimakuSearchCategory,
+    onJimakuSearchCategoryChange,
 }: Props) {
     const { t } = useTranslation();
     const [searching, setSearching] = useState(false);
@@ -93,9 +99,11 @@ export default function OnlineSubtitleSourceDialog({
 
     const [query, setQuery] = useState('');
     const [lastQuery, setLastQuery] = useState<string>();
+    const [lastSearchCategory, setLastSearchCategory] = useState<string>();
     const [jimakuEntries, setJimakuEntries] = useState<{ id: number; name: string }[]>([]);
     const [jimakuSelectedEntry, setJimakuSelectedEntry] = useState<JimakuEntry>();
     const [jimakuFiles, setJimakuFiles] = useState<OnlineSubtitleImportCandidate[]>();
+    const resultsCache = useRef<Map<string, { anime: JimakuEntry[]; drama: JimakuEntry[] }>>(new Map());
 
     const normalizedDetectedTitleHint = useMemo(
         () => normalizeDetectedTitleHint(detectedTitleHint),
@@ -105,7 +113,7 @@ export default function OnlineSubtitleSourceDialog({
         searching ||
         query.trim().length === 0 ||
         jimakuApiKey.trim().length === 0 ||
-        lastQuery === query ||
+        (lastQuery === query && lastSearchCategory === jimakuSearchCategory) ||
         loadingFiles;
 
     const resetState = useCallback(() => {
@@ -123,16 +131,47 @@ export default function OnlineSubtitleSourceDialog({
         }
     }, [open, normalizedDetectedTitleHint, resetState]);
 
+    useEffect(() => {
+        resultsCache.current.clear();
+    }, [query]);
+
     const handleSearchJimaku = useCallback(async () => {
         setError(undefined);
         setSearching(true);
         setFilterString('');
 
         try {
+            const cacheKey = query.trim();
+            const cached = resultsCache.current.get(cacheKey);
+            if (cached) {
+                const cachedResult = jimakuSearchCategory === 'anime' ? cached.anime : cached.drama;
+                if (cachedResult.length > 0) {
+                    setLastQuery(query);
+                    setLastSearchCategory(jimakuSearchCategory);
+                    setJimakuEntries(cachedResult.map((entry) => ({ id: entry.id, name: entry.name })));
+                    setJimakuSelectedEntry(undefined);
+                    setJimakuFiles(undefined);
+                    setSearching(false);
+                    return;
+                }
+            }
+
             const client = new JimakuClient({ apiKey: jimakuApiKey });
-            const entries = (await client.searchEntries(query)).data;
+            const result =
+                jimakuSearchCategory === 'anime'
+                    ? await client.searchEntries(query)
+                    : await client.searchEntries(query, false);
+
             setLastQuery(query);
-            setJimakuEntries(entries.map((entry) => ({ id: entry.id, name: entry.name })));
+            setLastSearchCategory(jimakuSearchCategory);
+            setJimakuEntries(result.data.map((entry) => ({ id: entry.id, name: entry.name })));
+            const cacheEntry = resultsCache.current.get(cacheKey) ?? { anime: [], drama: [] };
+            if (jimakuSearchCategory === 'anime') {
+                cacheEntry.anime = result.data;
+            } else {
+                cacheEntry.drama = result.data;
+            }
+            resultsCache.current.set(cacheKey, cacheEntry);
             setJimakuSelectedEntry(undefined);
             setJimakuFiles(undefined);
         } catch (e) {
@@ -140,7 +179,19 @@ export default function OnlineSubtitleSourceDialog({
         } finally {
             setSearching(false);
         }
-    }, [jimakuApiKey, query]);
+    }, [jimakuApiKey, query, jimakuSearchCategory]);
+
+    const prevCategoryRef = useRef(jimakuSearchCategory);
+    const lastQueryRef = useRef(lastQuery);
+    lastQueryRef.current = lastQuery;
+    const handleSearchJimakuRef = useRef(handleSearchJimaku);
+    handleSearchJimakuRef.current = handleSearchJimaku;
+    useEffect(() => {
+        if (prevCategoryRef.current !== jimakuSearchCategory && lastQueryRef.current !== undefined) {
+            handleSearchJimakuRef.current?.();
+        }
+        prevCategoryRef.current = jimakuSearchCategory;
+    }, [jimakuSearchCategory]);
 
     const handleLoadJimakuFiles = useCallback(
         async (entry: JimakuEntry) => {
@@ -205,7 +256,7 @@ export default function OnlineSubtitleSourceDialog({
             <DialogContent>
                 <Stack spacing={2}>
                     {error && <Alert severity="error">{error}</Alert>}
-                    <Box sx={{ display: 'flex', gap: 1 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
                         <TextField
                             autoFocus
                             margin="dense"
@@ -223,6 +274,24 @@ export default function OnlineSubtitleSourceDialog({
                                 input: {
                                     endAdornment: (
                                         <InputAdornment position="end">
+                                            <ToggleButtonGroup
+                                                value={jimakuSearchCategory}
+                                                exclusive
+                                                size="small"
+                                                sx={{ mr: 1.5, height: 36 }}
+                                                onChange={(_, value) => {
+                                                    if (value !== null) {
+                                                        onJimakuSearchCategoryChange(value);
+                                                    }
+                                                }}
+                                            >
+                                                <ToggleButton value="anime">
+                                                    {t('onlineSubtitleSources.categoryAnime')}
+                                                </ToggleButton>
+                                                <ToggleButton value="drama">
+                                                    {t('onlineSubtitleSources.categoryDrama')}
+                                                </ToggleButton>
+                                            </ToggleButtonGroup>
                                             <IconButton
                                                 loading={searching}
                                                 onClick={handleSearch}

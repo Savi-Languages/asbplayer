@@ -44,6 +44,8 @@ export interface MiscSettings {
     readonly lastSelectedAnkiExportMode: AnkiExportMode;
     readonly tabName: string;
     readonly pauseOnHoverMode: PauseOnHoverMode;
+    readonly subtitleAboveThumbnail: boolean;
+    readonly thumbnailPreview: boolean;
 }
 
 const isIncludedInBitset = (bitset: number, value: number) => ((bitset >> value) & 1) > 0;
@@ -79,6 +81,47 @@ export enum DictionaryTokenSource {
     LOCAL = 0,
     ANKI_WORD = 1,
     ANKI_SENTENCE = 2,
+    WANIKANI = 3,
+}
+
+export function dictionaryTokenSourcePriority(source: DictionaryTokenSource): number {
+    switch (source) {
+        case DictionaryTokenSource.LOCAL:
+            return 3;
+        case DictionaryTokenSource.ANKI_WORD:
+        case DictionaryTokenSource.WANIKANI:
+            return 2;
+        case DictionaryTokenSource.ANKI_SENTENCE:
+            return 1;
+        default:
+            throw new Error(`Unsupported DictionaryTokenSource: ${source}`);
+    }
+}
+
+export type AnkiSource = DictionaryTokenSource.ANKI_WORD | DictionaryTokenSource.ANKI_SENTENCE;
+export function isAnkiSource(source: DictionaryTokenSource): source is AnkiSource {
+    return source === DictionaryTokenSource.ANKI_WORD || source === DictionaryTokenSource.ANKI_SENTENCE;
+}
+
+export type ExternalWordSource = DictionaryTokenSource.ANKI_WORD | DictionaryTokenSource.WANIKANI;
+export function isExternalWordSource(source: DictionaryTokenSource): source is ExternalWordSource {
+    return source === DictionaryTokenSource.ANKI_WORD || source === DictionaryTokenSource.WANIKANI;
+}
+
+export function externalWordSourcePriority(source: ExternalWordSource): number {
+    switch (source) {
+        case DictionaryTokenSource.ANKI_WORD:
+            return 2;
+        case DictionaryTokenSource.WANIKANI:
+            return 1;
+        default:
+            throw new Error(`Unsupported DictionaryTokenSource: ${source}`);
+    }
+}
+
+export type WordSource = DictionaryTokenSource.LOCAL | ExternalWordSource;
+export function isWordSource(source: DictionaryTokenSource): source is WordSource {
+    return source === DictionaryTokenSource.LOCAL || isExternalWordSource(source);
 }
 
 /*
@@ -226,6 +269,7 @@ export interface DictionaryTrack {
     readonly dictionaryColorizeOnHoverOnly: boolean; // Currently applies to both colorization and reading annotations, named in case we want to separate later
     readonly dictionaryHighlightOnHover: boolean;
     readonly dictionaryTokenMatchStrategy: TokenMatchStrategy;
+    readonly dictionaryMatchAcrossScripts: boolean;
     readonly dictionaryTokenMatchStrategyPriority: TokenMatchStrategyPriority;
     readonly dictionaryYomitanUrl: string;
     readonly dictionaryYomitanParser: 'scanning-parser' | 'mecab';
@@ -239,6 +283,7 @@ export interface DictionaryTrack {
     readonly dictionaryAnkiSentenceTokenMatchStrategy: TokenMatchStrategy;
     readonly dictionaryAnkiMatureCutoff: number;
     readonly dictionaryAnkiTreatSuspended: TokenStatus | 'NORMAL';
+    readonly dictionaryWaniKaniApiToken: string;
     readonly dictionaryTokenStyling: TokenStyling;
     readonly dictionaryTokenStylingThickness: number;
     readonly dictionaryColorizeFullyKnownTokens: boolean; // Deprecated in favor of dictionaryTokenStatusConfig
@@ -258,6 +303,7 @@ const dictionaryTrackComparators: {
     dictionaryColorizeOnHoverOnly: (a, b) => a === b,
     dictionaryHighlightOnHover: (a, b) => a === b,
     dictionaryTokenMatchStrategy: (a, b) => a === b,
+    dictionaryMatchAcrossScripts: (a, b) => a === b,
     dictionaryTokenMatchStrategyPriority: (a, b) => a === b,
     dictionaryYomitanUrl: (a, b) => a === b,
     dictionaryYomitanParser: (a, b) => a === b,
@@ -271,6 +317,7 @@ const dictionaryTrackComparators: {
     dictionaryAnkiSentenceTokenMatchStrategy: (a, b) => a === b,
     dictionaryAnkiMatureCutoff: (a, b) => a === b,
     dictionaryAnkiTreatSuspended: (a, b) => a === b,
+    dictionaryWaniKaniApiToken: (a, b) => a === b,
     dictionaryTokenStyling: (a, b) => a === b,
     dictionaryTokenStylingThickness: (a, b) => a === b,
     dictionaryColorizeFullyKnownTokens: (a, b) => a === b,
@@ -312,6 +359,7 @@ export type MediaFragmentFormatSetting = 'jpeg' | 'webm';
 
 export interface AnkiSettings {
     readonly ankiConnectUrl: string;
+    readonly ankiConnectApiKey: string;
     readonly deck: string;
     readonly noteType: string;
     readonly sentenceField: string;
@@ -364,6 +412,7 @@ export type CustomAnkiFieldSettings = { [key: string]: AnkiField };
 
 const ankiSettingsKeysObject: { [key in keyof AnkiSettings]: boolean } = {
     ankiConnectUrl: true,
+    ankiConnectApiKey: true,
     deck: true,
     noteType: true,
     sentenceField: true,

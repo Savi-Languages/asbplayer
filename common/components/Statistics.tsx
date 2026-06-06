@@ -7,6 +7,7 @@ import {
     DictionaryStatisticsAnkiTrackSnapshot,
     DictionaryStatisticsFrequencyBucketStatusCounts,
     dictionaryStatisticsComprehensionBands,
+    DictionaryStatisticsWaniKaniTrackSnapshot,
     DictionaryStatisticsSentenceDialogBucket,
     DictionaryStatisticsTrackSnapshot,
     DictionaryStatisticsSentence,
@@ -16,8 +17,13 @@ import {
     percent,
     percentDisplay,
     DictionaryStatisticsSnapshot,
+    DictionaryStatisticsRewatchProjection,
+    DictionaryStatisticsRewatchProjectionsByTrack,
+    DictionaryStatisticsRewatchSnapshot,
+    DictionaryStatisticsAnkiUnknownCardsByDeck,
     processDictionaryStatisticsAnkiTrackSnapshot,
     processDictionaryStatisticsSnapshot,
+    processDictionaryStatisticsWaniKaniTrackSnapshot,
     selectedRewatchSnapshotForTrack,
     sentenceComprehensionPointLabel,
     sentenceComprehensionXAxisLabels,
@@ -27,7 +33,7 @@ import {
 import { AsbplayerSettings, dictionaryTrackEnabled, TokenStatus } from '@project/common/settings';
 import StatisticsSentenceDetailsDialog from '@project/common/components/StatisticsSentenceDetailsDialog';
 import { Trans, useTranslation } from 'react-i18next';
-import { type MouseEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { type MouseEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import ButtonBase from '@mui/material/ButtonBase';
 import Button from '@mui/material/Button';
@@ -36,8 +42,11 @@ import IconButton from '@mui/material/IconButton';
 import LinearProgress from '@mui/material/LinearProgress';
 import MenuItem from '@mui/material/MenuItem';
 import Paper from '@mui/material/Paper';
+import Popover from '@mui/material/Popover';
+import Switch from '@mui/material/Switch';
 import TextField from '@mui/material/TextField';
 import Typography, { type TypographyProps } from '@mui/material/Typography';
+import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import ChevronRightRoundedIcon from '@mui/icons-material/ChevronRightRounded';
 import Tooltip from '@mui/material/Tooltip';
@@ -48,6 +57,8 @@ import BarChartIcon from '@mui/icons-material/BarChart';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import PictureInPictureAltIcon from '@mui/icons-material/PictureInPictureAlt';
 import Link from '@mui/material/Link';
+import { WaniKani, type WaniKaniUser } from '@project/common/wanikani';
+import SwitchLabelWithHoverEffect from './SwitchLabelWithHoverEffect';
 
 export interface MediaInfo {
     sourceString: string;
@@ -64,6 +75,7 @@ export interface StatisticsProps {
     onSeekWasRequested?: (mediaId: string) => Promise<void>;
     onMineWasRequested?: (mediaId: string) => Promise<void>;
     mediaInfoFetcher?: (mediaId: string) => Promise<MediaInfo>;
+    contentPadding?: number;
     sx?: SxProps<Theme>;
 }
 
@@ -436,9 +448,15 @@ function StatisticsSectionHeading({ title, infoLines }: { title: string; infoLin
     );
 }
 
-function StatisticsSectionSubHeading({ children }: { children: React.ReactNode }) {
+function StatisticsSectionSubHeading({
+    children,
+    marginBottom = 1,
+}: {
+    children: React.ReactNode;
+    marginBottom?: number;
+}) {
     return (
-        <Typography variant="body1" sx={{ mb: 1, fontWeight: 500 }}>
+        <Typography variant="body1" sx={{ mb: marginBottom, fontWeight: 500 }}>
             {children}
         </Typography>
     );
@@ -446,6 +464,7 @@ function StatisticsSectionSubHeading({ children }: { children: React.ReactNode }
 
 interface SentenceStatsPanelProps {
     title: string;
+    infoLines?: string[];
     totalSentences: number;
     sentenceBuckets: DictionaryStatisticsSentenceBuckets;
     uncollectedLabel: string;
@@ -463,7 +482,11 @@ interface SentenceStatsPanelProps {
     globalKnownLabel: string;
     globalKnownCount: number;
     onOpenSentenceBucketDetails: (bucket: DictionaryStatisticsSentenceDialogBucket) => void;
+    headerEndAction?: ReactNode;
     headerAction?: ReactNode;
+    extraStats?: ReactNode;
+    hideStats?: boolean;
+    sentenceFiltersPosition: 'top' | 'bottom';
     emptyMessage?: string;
 }
 
@@ -525,8 +548,329 @@ function StatBoxes({ keyPrefix, stats }: StatBoxesProps) {
     );
 }
 
+const maxWaniKaniLevelFallback = 60;
+
+function hasProjectedAnkiUnknownCards(projection: DictionaryStatisticsRewatchProjection) {
+    return Object.values(projection.ankiUnknownCardsByDeck ?? {}).some((count) => count > 0);
+}
+
+function clampIntegerInput(value: string, min: number, max: number) {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isNaN(parsed)) return min;
+    return Math.max(min, Math.min(max, parsed));
+}
+
+function useWaniKaniUserInfo(apiToken: string) {
+    const [userInfo, setUserInfo] = useState<WaniKaniUser>();
+    const [error, setError] = useState<string>();
+
+    useEffect(() => {
+        const trimmedApiToken = apiToken.trim();
+        setUserInfo(undefined);
+        setError(undefined);
+        if (!trimmedApiToken) return;
+        void new WaniKani(trimmedApiToken)
+            .user()
+            .then((user) => setUserInfo(user))
+            .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+    }, [apiToken]);
+
+    return { userInfo, error };
+}
+
+type KnowledgeStatsSnapshot = Pick<DictionaryStatisticsRewatchSnapshot, 'ankiDeckStats' | 'waniKaniStats'>;
+
+function KnowledgeStats({ snapshot }: { snapshot: KnowledgeStatsSnapshot }) {
+    const { t } = useTranslation();
+
+    if (!snapshot.ankiDeckStats.length && snapshot.waniKaniStats === undefined) return null;
+
+    return (
+        <Stack spacing={1} sx={{ mt: 0.5 }}>
+            {snapshot.ankiDeckStats.length > 0 && (
+                <Box>
+                    <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+                        {t('statistics.anki.knownDeckWords')}
+                    </Typography>
+                    <Stack spacing={0.5}>
+                        {snapshot.ankiDeckStats.map((deckStats) => (
+                            <StatRow
+                                key={deckStats.deckName}
+                                label={deckStats.deckName}
+                                value={`${deckStats.knownWords} / ${deckStats.totalWords}`}
+                            />
+                        ))}
+                    </Stack>
+                </Box>
+            )}
+            {snapshot.waniKaniStats !== undefined && (
+                <Box>
+                    <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+                        {t('statistics.waniKani.projectedWords')}
+                    </Typography>
+                    <StatRow
+                        label={
+                            snapshot.waniKaniStats.level === undefined
+                                ? t('statistics.waniKani.currentKnowledge')
+                                : t('statistics.waniKani.projectedLevel', { level: snapshot.waniKaniStats.level })
+                        }
+                        value={`${snapshot.waniKaniStats.knownWords} / ${snapshot.waniKaniStats.totalWords}`}
+                    />
+                </Box>
+            )}
+        </Stack>
+    );
+}
+
+function ProjectedRewatchSelect({
+    rewatchSnapshots,
+    selectedRewatch,
+    onSelectedRewatchChanged,
+}: {
+    rewatchSnapshots: DictionaryStatisticsTrackSnapshot['rewatchSnapshots'];
+    selectedRewatch: number;
+    onSelectedRewatchChanged: (rewatch: number) => void;
+}) {
+    const { t } = useTranslation();
+    return (
+        <TextField
+            select
+            fullWidth
+            size="small"
+            value={selectedRewatch}
+            label={t('statistics.rewatchSelect')}
+            onChange={(event) => onSelectedRewatchChanged(Number(event.target.value))}
+            sx={{ minWidth: 132 }}
+        >
+            {rewatchSnapshots.map((rewatchSnapshot) => (
+                <MenuItem key={rewatchSnapshot.rewatch} value={rewatchSnapshot.rewatch}>
+                    {t('statistics.rewatchOption', {
+                        rewatch: rewatchSnapshot.rewatch,
+                    })}
+                </MenuItem>
+            ))}
+        </TextField>
+    );
+}
+
+function ProjectedPopoverButton({
+    label,
+    open,
+    onClick,
+}: {
+    label: string;
+    open: boolean;
+    onClick: (event: MouseEvent<HTMLButtonElement>) => void;
+}) {
+    return (
+        <Button
+            variant="outlined"
+            size="small"
+            fullWidth
+            aria-haspopup="dialog"
+            aria-expanded={open ? 'true' : undefined}
+            endIcon={<ArrowDropDownIcon fontSize="small" />}
+            onClick={onClick}
+            sx={(theme) => ({
+                justifyContent: 'space-between',
+                minWidth: 0,
+                textTransform: 'none',
+                color: 'text.primary',
+                borderColor: theme.palette.mode === 'light' ? 'rgba(0, 0, 0, 0.23)' : 'rgba(255, 255, 255, 0.23)',
+                '&:hover': {
+                    borderColor: 'text.primary',
+                    backgroundColor: 'action.hover',
+                },
+                '& .MuiButton-endIcon': {
+                    color: 'action.active',
+                },
+            })}
+        >
+            <Box component="span" sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {label}
+            </Box>
+        </Button>
+    );
+}
+
+type ProjectedPopoverSource = 'anki' | 'waniKani';
+
+function ProjectedProjectionControls({
+    unknownAnkiCardsByDeck,
+    ankiAvailable,
+    waniKaniAvailable,
+    projection,
+    waniKaniApiToken,
+    onProjectionChanged,
+}: {
+    unknownAnkiCardsByDeck: DictionaryStatisticsAnkiUnknownCardsByDeck[];
+    ankiAvailable: boolean;
+    waniKaniAvailable: boolean;
+    projection: DictionaryStatisticsRewatchProjection;
+    waniKaniApiToken: string;
+    onProjectionChanged: (projection: DictionaryStatisticsRewatchProjection) => void;
+}) {
+    const { t } = useTranslation();
+    const [openPopover, setOpenPopover] = useState<{ source: ProjectedPopoverSource; anchorEl: HTMLElement }>();
+    const { userInfo: waniKaniUserInfo, error: waniKaniUserInfoError } = useWaniKaniUserInfo(
+        waniKaniAvailable ? waniKaniApiToken : ''
+    );
+    const projectedAnkiUnknownCardsByDeck = projection.ankiUnknownCardsByDeck ?? {};
+    const ankiLearningOrAboveIsMature = projection.ankiLearningOrAboveIsMature ?? false;
+    const waniKaniLevel = projection.waniKaniLevel ?? 0;
+    const maxWaniKaniLevel = waniKaniUserInfo?.data.subscription.max_level_granted ?? maxWaniKaniLevelFallback;
+    const waniKaniHelperText = waniKaniUserInfo
+        ? ` (${waniKaniUserInfo.data.username}: ${waniKaniUserInfo.data.level}/${maxWaniKaniLevel})`
+        : '';
+
+    const updateProjection = useCallback(
+        (patch: DictionaryStatisticsRewatchProjection) => onProjectionChanged({ ...projection, ...patch }),
+        [onProjectionChanged, projection]
+    );
+
+    const updateProjectedAnkiUnknownCardsByDeck = useCallback(
+        (deckName: string, value: string, totalUnknownCards: number) => {
+            const count = clampIntegerInput(value, 0, totalUnknownCards);
+            const ankiUnknownCardsByDeck = { ...(projection.ankiUnknownCardsByDeck ?? {}) };
+            if (count > 0) ankiUnknownCardsByDeck[deckName] = count;
+            else delete ankiUnknownCardsByDeck[deckName];
+            updateProjection({ ankiUnknownCardsByDeck });
+        },
+        [projection.ankiUnknownCardsByDeck, updateProjection]
+    );
+
+    const openProjectionPopover = useCallback(
+        (source: ProjectedPopoverSource) => (event: MouseEvent<HTMLButtonElement>) =>
+            setOpenPopover({ source, anchorEl: event.currentTarget }),
+        []
+    );
+    const closeProjectionPopover = useCallback(() => setOpenPopover(undefined), []);
+    const ankiPopoverOpen = openPopover?.source === 'anki';
+    const waniKaniPopoverOpen = openPopover?.source === 'waniKani';
+
+    if (!ankiAvailable && !waniKaniAvailable) return null;
+
+    return (
+        <>
+            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                {ankiAvailable && (
+                    <Box sx={{ flex: '1 1 120px', minWidth: 0 }}>
+                        <ProjectedPopoverButton
+                            label={t('settings.anki')}
+                            open={ankiPopoverOpen}
+                            onClick={openProjectionPopover('anki')}
+                        />
+                    </Box>
+                )}
+                {waniKaniAvailable && (
+                    <Box sx={{ flex: '1 1 120px', minWidth: 0 }}>
+                        <ProjectedPopoverButton
+                            label={t('settings.dictionaryWaniKaniSection')}
+                            open={waniKaniPopoverOpen}
+                            onClick={openProjectionPopover('waniKani')}
+                        />
+                    </Box>
+                )}
+            </Box>
+            <Popover
+                disableEnforceFocus={true}
+                open={ankiPopoverOpen}
+                anchorEl={ankiPopoverOpen ? openPopover.anchorEl : undefined}
+                onClose={closeProjectionPopover}
+                anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+                transformOrigin={{ vertical: 'top', horizontal: 'center' }}
+                PaperProps={{ sx: { p: 1.5, width: 320, maxWidth: 'calc(100vw - 32px)' } }}
+            >
+                <Stack spacing={1.5}>
+                    <Typography variant="body1">{t('statistics.projectMature')}</Typography>
+                    {unknownAnkiCardsByDeck.length > 0 && (
+                        <Stack spacing={1}>
+                            {unknownAnkiCardsByDeck.map(({ deckName, totalUnknownCards }) => (
+                                <TextField
+                                    key={deckName}
+                                    type="number"
+                                    size="small"
+                                    fullWidth
+                                    label={`${deckName} (${t('statistics.anki.newCardsCount', { count: totalUnknownCards })})`}
+                                    value={projectedAnkiUnknownCardsByDeck[deckName] ?? 0}
+                                    onChange={(event) =>
+                                        updateProjectedAnkiUnknownCardsByDeck(
+                                            deckName,
+                                            event.target.value,
+                                            totalUnknownCards
+                                        )
+                                    }
+                                    slotProps={{
+                                        htmlInput: {
+                                            min: 0,
+                                            max: totalUnknownCards,
+                                            inputMode: 'numeric',
+                                            pattern: '[0-9]*',
+                                        },
+                                    }}
+                                />
+                            ))}
+                        </Stack>
+                    )}
+                    <SwitchLabelWithHoverEffect
+                        control={
+                            <Switch
+                                checked={ankiLearningOrAboveIsMature}
+                                onChange={(event) =>
+                                    updateProjection({
+                                        ankiLearningOrAboveIsMature: event.target.checked,
+                                    })
+                                }
+                            />
+                        }
+                        label={t('statistics.anki.projectReviewedCards')}
+                        labelPlacement="start"
+                        sx={{ width: '100%', mt: -0.25 }}
+                    />
+                </Stack>
+            </Popover>
+            <Popover
+                disableEnforceFocus={true}
+                open={waniKaniPopoverOpen}
+                anchorEl={waniKaniPopoverOpen ? openPopover.anchorEl : undefined}
+                onClose={closeProjectionPopover}
+                anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+                transformOrigin={{ vertical: 'top', horizontal: 'center' }}
+                PaperProps={{ sx: { p: 1.5, width: 320, maxWidth: 'calc(100vw - 32px)' } }}
+            >
+                <Stack spacing={1.5}>
+                    <Typography variant="body1">{t('statistics.projectMature')}</Typography>
+                    <TextField
+                        type="number"
+                        size="small"
+                        fullWidth
+                        label={`${t('statistics.waniKani.projectLevel')}${waniKaniHelperText}`}
+                        value={waniKaniLevel}
+                        helperText={waniKaniUserInfoError}
+                        error={Boolean(waniKaniUserInfoError)}
+                        onChange={(event) =>
+                            updateProjection({
+                                waniKaniLevel: clampIntegerInput(event.target.value, 0, maxWaniKaniLevel),
+                            })
+                        }
+                        slotProps={{
+                            htmlInput: {
+                                min: 0,
+                                max: maxWaniKaniLevel,
+                                inputMode: 'numeric',
+                                pattern: '[0-9]*',
+                            },
+                        }}
+                    />
+                </Stack>
+            </Popover>
+        </>
+    );
+}
+
 function SentenceStatsPanel({
     title,
+    infoLines,
     totalSentences,
     sentenceBuckets,
     uncollectedLabel,
@@ -543,7 +887,11 @@ function SentenceStatsPanel({
     comprehensionPercent,
     globalKnownLabel,
     globalKnownCount,
+    headerEndAction,
     headerAction,
+    extraStats,
+    hideStats,
+    sentenceFiltersPosition,
     emptyMessage,
     onOpenSentenceBucketDetails,
 }: SentenceStatsPanelProps) {
@@ -616,6 +964,43 @@ function SentenceStatsPanel({
 
     const comprehensionBand = dictionaryStatisticsComprehensionBandForPercent(comprehensionPercent);
 
+    const sentenceFilterRows = (
+        <>
+            {renderSentenceBucketRow(
+                { kind: 'allKnown' },
+                knownSentencesLabel,
+                sentenceBuckets.allKnown.count,
+                sentenceBuckets.allKnown.entries
+            )}
+            {uncollectedSentenceBuckets.map(({ bucket, label, count, entries }, index) => (
+                <Box key={label} sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    {renderSentenceBucketRow(bucket, label, count, entries)}
+                    {unknownSentenceBuckets[index] !== undefined &&
+                        renderSentenceBucketRow(
+                            unknownSentenceBuckets[index].bucket,
+                            unknownSentenceBuckets[index].label,
+                            unknownSentenceBuckets[index].count,
+                            unknownSentenceBuckets[index].entries
+                        )}
+                </Box>
+            ))}
+        </>
+    );
+
+    const statRows = (
+        <>
+            <StatRow
+                label={comprehensionLabel}
+                value={percentDisplay(comprehensionPercent)}
+                valueSx={{ color: comprehensionBand.color, fontWeight: 600 }}
+            />
+            <StatRow label={knownWordsLabel} value={`${knownWordsCount} · ${percentDisplay(knownWordsPercent)}`} />
+            <StatRow label={globalKnownLabel} value={`${globalKnownCount}`} />
+            <StatRow label={uniqueWordsPerSentenceLabel} value={averageDisplay(uniqueWordsPerSentence)} />
+            <StatRow label={knownWordsPerSentenceLabel} value={averageDisplay(knownWordsPerSentence)} />
+        </>
+    );
+
     return (
         <Box
             sx={{
@@ -627,46 +1012,34 @@ function SentenceStatsPanel({
             }}
         >
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, height: '100%' }}>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 1, alignItems: 'flex-start' }}>
-                    <StatisticsSectionSubHeading>{title}</StatisticsSectionSubHeading>
+                <Box
+                    sx={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        gap: 1,
+                        alignItems: 'flex-start',
+                        flexWrap: 'wrap',
+                    }}
+                >
+                    <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, mb: 1 }}>
+                        <StatisticsSectionSubHeading marginBottom={0}>{title}</StatisticsSectionSubHeading>
+                        {infoLines !== undefined && <StatisticsInfoTooltip label={title} lines={infoLines} />}
+                    </Box>
+                    {headerEndAction && (
+                        <Box sx={{ flex: { xs: '1 1 100%', sm: '0 0 132px' }, minWidth: 132 }}>{headerEndAction}</Box>
+                    )}
                 </Box>
-                {headerAction && <Box sx={{ mb: 1.5 }}>{headerAction}</Box>}
-                {emptyMessage ? (
+                {headerAction && <Box>{headerAction}</Box>}
+                {hideStats ? null : emptyMessage ? (
                     <Typography typography="body2" color="text.secondary">
                         {emptyMessage}
                     </Typography>
                 ) : (
                     <>
-                        <StatRow
-                            label={comprehensionLabel}
-                            value={percentDisplay(comprehensionPercent)}
-                            valueSx={{ color: comprehensionBand.color, fontWeight: 600 }}
-                        />
-                        <StatRow
-                            label={knownWordsLabel}
-                            value={`${knownWordsCount} · ${percentDisplay(knownWordsPercent)}`}
-                        />
-                        <StatRow label={globalKnownLabel} value={`${globalKnownCount}`} />
-                        <StatRow label={uniqueWordsPerSentenceLabel} value={averageDisplay(uniqueWordsPerSentence)} />
-                        <StatRow label={knownWordsPerSentenceLabel} value={averageDisplay(knownWordsPerSentence)} />
-                        {renderSentenceBucketRow(
-                            { kind: 'allKnown' },
-                            knownSentencesLabel,
-                            sentenceBuckets.allKnown.count,
-                            sentenceBuckets.allKnown.entries
-                        )}
-                        {uncollectedSentenceBuckets.map(({ bucket, label, count, entries }, index) => (
-                            <Box key={label} sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                                {renderSentenceBucketRow(bucket, label, count, entries)}
-                                {unknownSentenceBuckets[index] !== undefined &&
-                                    renderSentenceBucketRow(
-                                        unknownSentenceBuckets[index].bucket,
-                                        unknownSentenceBuckets[index].label,
-                                        unknownSentenceBuckets[index].count,
-                                        unknownSentenceBuckets[index].entries
-                                    )}
-                            </Box>
-                        ))}
+                        {sentenceFiltersPosition === 'top' && sentenceFilterRows}
+                        {statRows}
+                        {extraStats}
+                        {sentenceFiltersPosition === 'bottom' && sentenceFilterRows}
                     </>
                 )}
             </Box>
@@ -684,9 +1057,6 @@ function AnkiStatisticsSection({
     dueByTomorrowLabel,
     dueByWeekLabel,
     suspendedCardsLabel,
-    deckFrequencyBreakdownLabel,
-    modelBreakdownLabel,
-    uniqueWordsLabel,
     frequencyLabel,
     unavailableMessage,
     emptyDeckBreakdownMessage,
@@ -700,9 +1070,6 @@ function AnkiStatisticsSection({
     dueByTomorrowLabel: string;
     dueByWeekLabel: string;
     suspendedCardsLabel: string;
-    deckFrequencyBreakdownLabel: string;
-    modelBreakdownLabel: string;
-    uniqueWordsLabel: (count: number) => string;
     frequencyLabel: string;
     unavailableMessage: string;
     emptyDeckBreakdownMessage: string;
@@ -850,6 +1217,134 @@ function AnkiStatisticsSection({
     );
 }
 
+function WaniKaniStatisticsSection({
+    snapshot,
+    statusLabels,
+    statusColors,
+    title,
+    infoLines,
+    dueByTodayLabel,
+    dueByTomorrowLabel,
+    dueByWeekLabel,
+    frequencyLabel,
+    unavailableMessage,
+    emptyMessage,
+}: {
+    snapshot: DictionaryStatisticsWaniKaniTrackSnapshot;
+    statusLabels: Record<TokenStatus, string>;
+    statusColors: DictionaryStatisticsTrackSnapshot['statusColors'];
+    title: string;
+    infoLines?: string[];
+    dueByTodayLabel: string;
+    dueByTomorrowLabel: string;
+    dueByWeekLabel: string;
+    frequencyLabel: string;
+    unavailableMessage: string;
+    emptyMessage: string;
+}) {
+    const { t } = useTranslation();
+    return (
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <StatisticsSectionHeading title={title} infoLines={infoLines} />
+
+            {snapshot.available === false ? (
+                <Typography color="text.secondary">{unavailableMessage}</Typography>
+            ) : snapshot.uniqueWords === 0 ? (
+                <Typography color="text.secondary">{emptyMessage}</Typography>
+            ) : (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                    <StatBoxes
+                        keyPrefix="wanikani"
+                        stats={[
+                            { label: dueByTodayLabel, value: snapshot.dueCounts.today },
+                            { label: dueByTomorrowLabel, value: snapshot.dueCounts.tomorrow },
+                            { label: dueByWeekLabel, value: snapshot.dueCounts.week },
+                            { label: t('statistics.uniqueWords'), value: snapshot.uniqueWords },
+                        ]}
+                    />
+
+                    <Box>
+                        <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                            {frequencyLabel}
+                        </Typography>
+                        {snapshot.frequencyBuckets
+                            .filter((bucket) => bucket.count > 0)
+                            .map((bucket) => {
+                                const bucketLabel =
+                                    bucket.label === 'Unknown' ? statusLabels[TokenStatus.UNKNOWN] : bucket.label;
+
+                                return (
+                                    <Box key={bucket.label} sx={{ mb: 1 }}>
+                                        <Box
+                                            sx={{
+                                                display: 'flex',
+                                                justifyContent: 'space-between',
+                                                mb: 0.5,
+                                            }}
+                                        >
+                                            <Typography variant="body2">{bucketLabel}</Typography>
+                                            <Typography variant="body2" color="text.secondary">
+                                                {countPercentOccurrencesDisplay(
+                                                    bucket.count,
+                                                    snapshot.uniqueWords,
+                                                    bucket.numOccurrences
+                                                )}
+                                            </Typography>
+                                        </Box>
+                                        <FrequencyDistributionBar
+                                            totalPercent={bucket.percent}
+                                            count={bucket.count}
+                                            statusCounts={bucket.statusCounts}
+                                            statusColors={statusColors}
+                                            statusLabels={statusLabels}
+                                            totalConsideredCount={snapshot.uniqueWords}
+                                        />
+                                    </Box>
+                                );
+                            })}
+                    </Box>
+                </Box>
+            )}
+        </Box>
+    );
+}
+
+type ReviewStatisticsSource = 'anki' | 'waniKani';
+
+function ReviewStatisticsSourceSelector({
+    selectedSource,
+    onSelectedSource,
+    ankiLabel,
+    waniKaniLabel,
+}: {
+    selectedSource: ReviewStatisticsSource;
+    onSelectedSource: (source: ReviewStatisticsSource) => void;
+    ankiLabel: string;
+    waniKaniLabel: string;
+}) {
+    const options: { source: ReviewStatisticsSource; label: string }[] = [
+        { source: 'anki', label: ankiLabel },
+        { source: 'waniKani', label: waniKaniLabel },
+    ];
+
+    return (
+        <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
+            {options.map(({ source, label }) => (
+                <div key={source}>
+                    <Button
+                        variant={selectedSource === source ? 'contained' : 'outlined'}
+                        startIcon={<BarChartIcon />}
+                        onClick={() => onSelectedSource(source)}
+                        size="small"
+                    >
+                        {label}
+                    </Button>
+                </div>
+            ))}
+        </Box>
+    );
+}
+
 function TrackSnapshotSelector({
     selectedIndex,
     onSelectedIndex,
@@ -884,13 +1379,17 @@ function TrackSnapshot({
     trackSnapshot,
     statisticsSnapshot,
     selectedRewatchesByTrack,
+    rewatchProjection,
     onSelectedRewatchChanged,
+    onRewatchProjectionChanged,
     onSentenceDialogState,
 }: {
     trackSnapshot: DictionaryStatisticsTrackSnapshot;
     statisticsSnapshot: DictionaryStatisticsSnapshot;
     selectedRewatchesByTrack: Record<number, number>;
+    rewatchProjection: DictionaryStatisticsRewatchProjection;
     onSelectedRewatchChanged: (track: number, rewatch: number) => void;
+    onRewatchProjectionChanged: (track: number, projection: DictionaryStatisticsRewatchProjection) => void;
     onSentenceDialogState: (state: SentenceDialogState) => void;
 }) {
     const { t } = useTranslation();
@@ -911,10 +1410,12 @@ function TrackSnapshot({
         () => [t('statistics.info.wordDistribution'), t('statistics.info.occurrences'), t('statistics.info.frequency')],
         [t]
     );
-    const sentenceStatisticsInfoLines = useMemo(
+    const sentenceStatisticsInfoLines = useMemo(() => [t('statistics.info.sentenceStatistics')], [t]);
+    const projectedRewatchInfoLines = useMemo(
         () => [
-            t('statistics.info.sentenceStatistics'),
-            `${t('statistics.projectedRewatch')}: ${t('statistics.info.projectedRewatch')}`,
+            `${t('statistics.rewatchSelect')}: ${t('statistics.info.projectedRewatch')}`,
+            `${t('settings.anki')}: ${t('statistics.anki.info.projectedCards')}`,
+            `${t('settings.dictionaryWaniKaniSection')}: ${t('statistics.waniKani.info.projectedLevel')}`,
         ],
         [t]
     );
@@ -924,20 +1425,22 @@ function TrackSnapshot({
     const unknownLabel = statusLabels[TokenStatus.UNKNOWN];
     const currentWatchTitle = t('statistics.currentWatch');
     const ankiStatisticsTitle = t('statistics.anki.ankiStatistics');
+    const waniKaniStatisticsTitle = t('statistics.waniKani.waniKaniStatistics');
     const ankiStatisticsInfoLines = useMemo(() => [t('statistics.anki.info.ankiStatistics')], [t]);
+    const waniKaniStatisticsInfoLines = useMemo(() => [t('statistics.waniKani.info.waniKaniStatistics')], [t]);
     const dueByTodayLabel = t('statistics.anki.dueByToday');
     const dueByTomorrowLabel = t('statistics.anki.dueByTomorrow');
     const dueByWeekLabel = t('statistics.anki.dueByWeek');
     const suspendedCardsLabel = t('statistics.anki.suspended');
-    const deckFrequencyBreakdownLabel = t('statistics.anki.deckBreakdown');
-    const modelBreakdownLabel = t('statistics.anki.modelBreakdown');
     const ankiUnavailableMessage = t('statistics.anki.ankiNeedsToBeRunning');
     const emptyDeckBreakdownMessage = t('statistics.anki.noDeckBreakdown');
-    const deckUniqueWordsLabel = useCallback((count: number) => `${count} ${t('statistics.uniqueWords')}`, [t]);
+    const waniKaniUnavailableMessage = t('statistics.waniKani.waniKaniNeedsToBeAvailable');
+    const emptyWaniKaniBreakdownMessage = t('statistics.waniKani.noWaniKaniBreakdown');
+    const dictionaryWaniKaniApiToken =
+        statisticsSnapshot.settings.dictionaryTracks[trackSnapshot.track]?.dictionaryWaniKaniApiToken ?? '';
 
     const totalSentences = trackSnapshot.progress.total;
     const selectedRewatchSnapshot = selectedRewatchSnapshotForTrack(trackSnapshot, selectedRewatchesByTrack);
-    const maxRewatches = trackSnapshot.rewatchSnapshots.length;
     const projectedSentenceBuckets = selectedRewatchSnapshot?.sentenceBuckets ?? emptySentenceBuckets;
     const projectedKnownCount = selectedRewatchSnapshot?.numKnownTokens ?? 0;
     const projectedGlobalKnownCount = selectedRewatchSnapshot?.numDictionaryKnownTokens ?? 0;
@@ -945,8 +1448,40 @@ function TrackSnapshot({
     const projectedAverageKnownWordsPerSentence = selectedRewatchSnapshot?.averageKnownWordsPerSentence ?? 0;
     const projectedKnownPercent = selectedRewatchSnapshot?.knownPercent ?? 0;
     const projectedComprehension = selectedRewatchSnapshot?.comprehensionPercent ?? 0;
-    const miningEnabled = trackSnapshot.progress.current >= trackSnapshot.progress.total;
     const ankiTrackSnapshot = processDictionaryStatisticsAnkiTrackSnapshot(statisticsSnapshot, trackSnapshot.track);
+    const waniKaniTrackSnapshot = processDictionaryStatisticsWaniKaniTrackSnapshot(
+        statisticsSnapshot,
+        trackSnapshot.track
+    );
+    const ankiAvailable = ankiTrackSnapshot.available === true;
+    const waniKaniAvailable = waniKaniTrackSnapshot.available === true;
+    const hasProjectedKnowledge =
+        (ankiAvailable &&
+            (hasProjectedAnkiUnknownCards(rewatchProjection) ||
+                (rewatchProjection.ankiLearningOrAboveIsMature ?? false))) ||
+        (waniKaniAvailable && rewatchProjection.waniKaniLevel !== undefined && rewatchProjection.waniKaniLevel > 0);
+    const hideProjectedStats = selectedRewatchSnapshot?.rewatch === 0 && !hasProjectedKnowledge;
+    const miningEnabled = trackSnapshot.progress.current >= trackSnapshot.progress.total;
+    const ankiHasStats = ankiTrackSnapshot.deckSnapshots.length > 0;
+    const waniKaniHasStats = waniKaniTrackSnapshot.uniqueWords > 0;
+    const defaultReviewStatisticsSource: ReviewStatisticsSource =
+        !ankiHasStats && waniKaniHasStats ? 'waniKani' : 'anki';
+    const [selectedReviewStatisticsSource, setSelectedReviewStatisticsSource] = useState<ReviewStatisticsSource>();
+    const [reviewStatisticsScrollRequest, setReviewStatisticsScrollRequest] = useState(0);
+    const reviewStatisticsSectionRef = useRef<HTMLDivElement | null>(null);
+    const shouldScrollToReviewStatisticsRef = useRef(false);
+    useEffect(() => setSelectedReviewStatisticsSource(undefined), [trackSnapshot.track, statisticsSnapshot.mediaId]);
+    const reviewStatisticsSource = selectedReviewStatisticsSource ?? defaultReviewStatisticsSource;
+    const handleReviewStatisticsSourceSelected = useCallback((source: ReviewStatisticsSource) => {
+        shouldScrollToReviewStatisticsRef.current = true;
+        setSelectedReviewStatisticsSource(source);
+        setReviewStatisticsScrollRequest((request) => request + 1);
+    }, []);
+    useEffect(() => {
+        if (!shouldScrollToReviewStatisticsRef.current) return;
+        shouldScrollToReviewStatisticsRef.current = false;
+        reviewStatisticsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, [reviewStatisticsSource, reviewStatisticsScrollRequest]);
     const comprehensionBand = dictionaryStatisticsComprehensionBandForPercent(trackSnapshot.comprehensionPercent);
 
     return (
@@ -1152,6 +1687,8 @@ function TrackSnapshot({
                         comprehensionPercent={trackSnapshot.comprehensionPercent}
                         globalKnownLabel={t('statistics.globalKnownWords')}
                         globalKnownCount={trackSnapshot.numDictionaryKnownTokens}
+                        extraStats={<KnowledgeStats snapshot={trackSnapshot} />}
+                        sentenceFiltersPosition="top"
                         onOpenSentenceBucketDetails={(bucket) => {
                             const bucketData = sentenceDialogBucketData(bucket, trackSnapshot.sentenceBuckets, {
                                 knownSentencesLabel: t('statistics.knownSentences'),
@@ -1171,7 +1708,8 @@ function TrackSnapshot({
                 </Box>
                 <Box>
                     <SentenceStatsPanel
-                        title={t('statistics.projectedRewatch')}
+                        title={t('statistics.projected')}
+                        infoLines={projectedRewatchInfoLines}
                         totalSentences={totalSentences}
                         sentenceBuckets={projectedSentenceBuckets}
                         uncollectedLabel={uncollectedLabel}
@@ -1188,28 +1726,38 @@ function TrackSnapshot({
                         comprehensionPercent={projectedComprehension}
                         globalKnownLabel={t('statistics.globalKnownWords')}
                         globalKnownCount={projectedGlobalKnownCount}
-                        headerAction={
+                        headerEndAction={
                             selectedRewatchSnapshot !== undefined ? (
-                                <TextField
-                                    select
-                                    fullWidth
-                                    size="small"
-                                    value={selectedRewatchSnapshot.rewatch}
-                                    onChange={(event) =>
-                                        onSelectedRewatchChanged(trackSnapshot.track, Number(event.target.value))
+                                <ProjectedRewatchSelect
+                                    rewatchSnapshots={trackSnapshot.rewatchSnapshots}
+                                    selectedRewatch={selectedRewatchSnapshot.rewatch}
+                                    onSelectedRewatchChanged={(rewatch) =>
+                                        onSelectedRewatchChanged(trackSnapshot.track, rewatch)
                                     }
-                                >
-                                    {trackSnapshot.rewatchSnapshots.map((rewatchSnapshot) => (
-                                        <MenuItem key={rewatchSnapshot.rewatch} value={rewatchSnapshot.rewatch}>
-                                            {t('statistics.rewatchOption', {
-                                                rewatch: rewatchSnapshot.rewatch,
-                                            })}
-                                        </MenuItem>
-                                    ))}
-                                </TextField>
+                                />
                             ) : undefined
                         }
-                        emptyMessage={maxRewatches === 0 ? t('statistics.noMoreRewatches') : undefined}
+                        headerAction={
+                            selectedRewatchSnapshot !== undefined && (ankiAvailable || waniKaniAvailable) ? (
+                                <ProjectedProjectionControls
+                                    unknownAnkiCardsByDeck={trackSnapshot.unknownAnkiCardsByDeck}
+                                    ankiAvailable={ankiAvailable}
+                                    waniKaniAvailable={waniKaniAvailable}
+                                    projection={rewatchProjection}
+                                    waniKaniApiToken={dictionaryWaniKaniApiToken}
+                                    onProjectionChanged={(projection) =>
+                                        onRewatchProjectionChanged(trackSnapshot.track, projection)
+                                    }
+                                />
+                            ) : undefined
+                        }
+                        extraStats={
+                            selectedRewatchSnapshot !== undefined ? (
+                                <KnowledgeStats snapshot={selectedRewatchSnapshot} />
+                            ) : undefined
+                        }
+                        hideStats={hideProjectedStats}
+                        sentenceFiltersPosition="bottom"
                         onOpenSentenceBucketDetails={(bucket) => {
                             if (selectedRewatchSnapshot === undefined) return;
                             const bucketData = sentenceDialogBucketData(
@@ -1240,23 +1788,46 @@ function TrackSnapshot({
                 </Box>
             </Box>
 
-            <AnkiStatisticsSection
-                snapshot={ankiTrackSnapshot}
-                statusLabels={statusLabels}
-                statusColors={trackSnapshot.statusColors}
-                title={ankiStatisticsTitle}
-                infoLines={ankiStatisticsInfoLines}
-                dueByTodayLabel={dueByTodayLabel}
-                dueByTomorrowLabel={dueByTomorrowLabel}
-                dueByWeekLabel={dueByWeekLabel}
-                suspendedCardsLabel={suspendedCardsLabel}
-                deckFrequencyBreakdownLabel={deckFrequencyBreakdownLabel}
-                modelBreakdownLabel={modelBreakdownLabel}
-                uniqueWordsLabel={deckUniqueWordsLabel}
-                frequencyLabel={t('statistics.frequency')}
-                unavailableMessage={ankiUnavailableMessage}
-                emptyDeckBreakdownMessage={emptyDeckBreakdownMessage}
-            />
+            <Box ref={reviewStatisticsSectionRef} sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <ReviewStatisticsSourceSelector
+                    selectedSource={reviewStatisticsSource}
+                    onSelectedSource={handleReviewStatisticsSourceSelected}
+                    ankiLabel={ankiStatisticsTitle}
+                    waniKaniLabel={waniKaniStatisticsTitle}
+                />
+                <Box>
+                    {reviewStatisticsSource === 'anki' ? (
+                        <AnkiStatisticsSection
+                            snapshot={ankiTrackSnapshot}
+                            statusLabels={statusLabels}
+                            statusColors={trackSnapshot.statusColors}
+                            title={ankiStatisticsTitle}
+                            infoLines={ankiStatisticsInfoLines}
+                            dueByTodayLabel={dueByTodayLabel}
+                            dueByTomorrowLabel={dueByTomorrowLabel}
+                            dueByWeekLabel={dueByWeekLabel}
+                            suspendedCardsLabel={suspendedCardsLabel}
+                            frequencyLabel={t('statistics.frequency')}
+                            unavailableMessage={ankiUnavailableMessage}
+                            emptyDeckBreakdownMessage={emptyDeckBreakdownMessage}
+                        />
+                    ) : (
+                        <WaniKaniStatisticsSection
+                            snapshot={waniKaniTrackSnapshot}
+                            statusLabels={statusLabels}
+                            statusColors={trackSnapshot.statusColors}
+                            title={waniKaniStatisticsTitle}
+                            infoLines={waniKaniStatisticsInfoLines}
+                            dueByTodayLabel={dueByTodayLabel}
+                            dueByTomorrowLabel={dueByTomorrowLabel}
+                            dueByWeekLabel={dueByWeekLabel}
+                            frequencyLabel={t('statistics.frequency')}
+                            unavailableMessage={waniKaniUnavailableMessage}
+                            emptyMessage={emptyWaniKaniBreakdownMessage}
+                        />
+                    )}
+                </Box>
+            </Box>
         </Box>
     );
 }
@@ -1272,18 +1843,28 @@ export default function Statistics({
     onViewAnnotationSettings,
     onSeekWasRequested,
     onMineWasRequested,
+    contentPadding = 0,
     sx,
 }: StatisticsProps) {
     const { t } = useTranslation();
     const [mediaInfo, setMediaInfo] = useState<MediaInfo>();
     const [statisticsSnapshot, setStatisticsSnapshot] = useState<DictionaryStatisticsSnapshot>();
-    const [trackSnapshots, setTrackSnapshots] = useState<DictionaryStatisticsTrackSnapshot[]>();
+    const [statisticsSnapshotLoaded, setStatisticsSnapshotLoaded] = useState(false);
     const [selectedTrackSnapshotIndex, setSelectedTrackSnapshotIndex] = useState<number>(0);
     const [generationRequested, setGenerationRequested] = useState(false);
     const [selectedRewatchesByTrack, setSelectedRewatchesByTrack] = useState<Record<number, number>>({});
+    const [rewatchProjectionsByTrack, setRewatchProjectionsByTrack] =
+        useState<DictionaryStatisticsRewatchProjectionsByTrack>({});
     const [sentenceDialogState, setSentenceDialogState] = useState<SentenceDialogState>();
+    const trackSnapshots = useMemo(
+        () =>
+            statisticsSnapshotLoaded
+                ? processDictionaryStatisticsSnapshot(statisticsSnapshot, rewatchProjectionsByTrack)
+                : undefined,
+        [statisticsSnapshot, statisticsSnapshotLoaded, rewatchProjectionsByTrack]
+    );
     const hasSnapshots = trackSnapshots && trackSnapshots.length > 0;
-    const loadingSnapshots = trackSnapshots === undefined;
+    const loadingSnapshots = !statisticsSnapshotLoaded;
     const allTrackProgressComplete = useMemo(
         () => hasSnapshots && trackSnapshots.every((s) => s.progress.current >= s.progress.total),
         [hasSnapshots, trackSnapshots]
@@ -1291,12 +1872,21 @@ export default function Statistics({
     const isGenerating = generationRequested && (!hasSnapshots || !allTrackProgressComplete);
 
     useEffect(() => {
+        setMediaInfo(undefined);
+        setStatisticsSnapshot(undefined);
+        setStatisticsSnapshotLoaded(false);
+        setSelectedTrackSnapshotIndex(0);
+        setSelectedRewatchesByTrack({});
+        setRewatchProjectionsByTrack({});
+    }, [mediaId]);
+
+    useEffect(() => {
         const unsubscribeStatistics = dictionaryProvider.onStatisticsSnapshot(
             (snapshot?: DictionaryStatisticsSnapshot) => {
                 if (!snapshot) {
                     setMediaInfo(undefined);
                     setStatisticsSnapshot(undefined);
-                    setTrackSnapshots([]);
+                    setStatisticsSnapshotLoaded(true);
                     setGenerationRequested(false);
                     return;
                 }
@@ -1308,16 +1898,7 @@ export default function Statistics({
                         setMediaInfo(undefined);
                     }
                     setStatisticsSnapshot(snapshot);
-                    const nextTrackSnapshots = processDictionaryStatisticsSnapshot(snapshot);
-                    setTrackSnapshots(nextTrackSnapshots);
-                    if (
-                        nextTrackSnapshots.length &&
-                        nextTrackSnapshots.every(
-                            (trackSnapshot) => trackSnapshot.progress.current >= trackSnapshot.progress.total
-                        )
-                    ) {
-                        setGenerationRequested(false);
-                    }
+                    setStatisticsSnapshotLoaded(true);
                 }
             }
         );
@@ -1333,7 +1914,9 @@ export default function Statistics({
         };
     }, [dictionaryProvider, mediaInfoFetcher, mediaId]);
 
-    useEffect(() => setSelectedTrackSnapshotIndex(0), [mediaId]);
+    useEffect(() => {
+        if (allTrackProgressComplete) setGenerationRequested(false);
+    }, [allTrackProgressComplete]);
 
     const handleGenerate = useCallback(() => {
         setGenerationRequested(true);
@@ -1352,6 +1935,12 @@ export default function Statistics({
     const handleSelectedRewatchChanged = useCallback((track: number, rewatch: number) => {
         setSelectedRewatchesByTrack((current) => ({ ...current, [track]: rewatch }));
     }, []);
+    const handleRewatchProjectionChanged = useCallback(
+        (track: number, projection: DictionaryStatisticsRewatchProjection) => {
+            setRewatchProjectionsByTrack((current) => ({ ...current, [track]: projection }));
+        },
+        []
+    );
     const handleCloseSentenceBucketDetails = useCallback(() => setSentenceDialogState(undefined), []);
     const handleSeekSentence = useCallback(
         (sentence: DictionaryStatisticsSentence) => {
@@ -1434,8 +2023,21 @@ export default function Statistics({
             )}
 
             {hasSnapshots && (
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                    <Box sx={{ display: 'flex', flexDirection: 'row' }}>
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3, px: contentPadding, pb: contentPadding }}>
+                    <Box
+                        sx={{
+                            position: 'sticky',
+                            top: 0,
+                            zIndex: 1,
+                            display: 'flex',
+                            flexDirection: 'row',
+                            backgroundColor: 'background.paper',
+                            backgroundImage: 'var(--Paper-overlay, none)',
+                            mx: contentPadding === 0 ? 0 : -contentPadding,
+                            px: contentPadding,
+                            py: contentPadding / 2,
+                        }}
+                    >
                         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, pt: 0.5, flexGrow: 1 }}>
                             {mediaInfo?.sourceString && <Typography variant="h5">{mediaInfo?.sourceString}</Typography>}
                             {trackSnapshots.length > 0 && (
@@ -1475,8 +2077,10 @@ export default function Statistics({
                             trackSnapshot={trackSnapshot}
                             statisticsSnapshot={statisticsSnapshot}
                             onSelectedRewatchChanged={handleSelectedRewatchChanged}
+                            onRewatchProjectionChanged={handleRewatchProjectionChanged}
                             onSentenceDialogState={setSentenceDialogState}
                             selectedRewatchesByTrack={selectedRewatchesByTrack}
+                            rewatchProjection={rewatchProjectionsByTrack[trackSnapshot.track] ?? {}}
                         />
                     )}
                 </Box>

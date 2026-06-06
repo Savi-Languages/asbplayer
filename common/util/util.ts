@@ -1,7 +1,8 @@
 import sanitize from 'sanitize-filename';
 import { Rgb, SubtitleModel, Tokenization, TokenReading } from '../src/model';
-import { TextSubtitleSettings } from '../settings/settings';
+import { TextSubtitleSettings, TokenStatus } from '../settings/settings';
 import { Progress } from '..';
+import { TokenStatusInfo } from '../dictionary-db';
 
 export function arrayEquals<T>(a: T[], b: T[], equals = (lhs: T, rhs: T) => lhs === rhs): boolean {
     if (a.length !== b.length) {
@@ -24,6 +25,13 @@ export const localizedDate = (timestamp: number) => {
         second: '2-digit',
     });
 };
+
+export const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+export function utcStartOfToday(): Date {
+    const now = new Date();
+    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+}
 
 export function humanReadableTime(timestamp: number, nearestTenth = false, fullyPadded = false): string {
     const totalSeconds = Math.floor(timestamp / 1000);
@@ -410,6 +418,10 @@ export function isNumeric(str: string) {
 
 export const HAS_LETTER_REGEX = /\p{L}/u;
 
+export const NEWLINES_REGEX = /\r?\n/g;
+
+export const STERM_AND_NEWLINES_REGEX = /(?:\p{STerm}|\r?\n)+/u;
+
 export const ONLY_ASCII_LETTERS_REGEX = /^[a-z]+$/i;
 
 const KANA_ONLY_REGEX =
@@ -637,11 +649,61 @@ const areTokensEqual = (aToken: any, bToken: any) => {
     if (!arrayEquals(aToken.readings, bToken.readings, areTokenReadingsEqual)) return false;
     if (aToken.frequency !== bToken.frequency) return false;
     if (aToken.groupingKey !== bToken.groupingKey) return false;
+    if (aToken.lemmasGroupingKey !== bToken.lemmasGroupingKey) return false;
     return true;
 };
 
 const areTokenReadingsEqual = (a: TokenReading, b: TokenReading) =>
     arrayEquals(a.pos, b.pos) && a.reading === b.reading;
+
+/**
+ * We prefer the highest status for a given token (e.g. duplicate anki cards)
+ */
+export function getTokenStatus(
+    statuses: TokenStatusInfo[],
+    dictionaryAnkiTreatSuspended: TokenStatus | 'NORMAL'
+): TokenStatus {
+    if (statuses.length && dictionaryAnkiTreatSuspended !== 'NORMAL') {
+        const unsuspended = statuses.filter((status) => !status.suspended);
+        if (!unsuspended.length) return dictionaryAnkiTreatSuspended;
+        statuses = unsuspended;
+    }
+    if (statuses.some((c) => c.status === TokenStatus.MATURE)) return TokenStatus.MATURE;
+    if (statuses.some((c) => c.status === TokenStatus.YOUNG)) return TokenStatus.YOUNG;
+    if (statuses.some((c) => c.status === TokenStatus.GRADUATED)) return TokenStatus.GRADUATED;
+    if (statuses.some((c) => c.status === TokenStatus.LEARNING)) return TokenStatus.LEARNING;
+    return TokenStatus.UNKNOWN;
+}
+
+export function dedupeTokenStatusInfos(statuses: TokenStatusInfo[]): TokenStatusInfo[] | undefined {
+    if (!statuses.length) return;
+    const seen = new Set<string>();
+    const deduped: TokenStatusInfo[] = [];
+    for (const status of statuses) {
+        const key = JSON.stringify([
+            status.cardId,
+            status.waniKani?.subjectId,
+            status.waniKani?.subjectLevel,
+            status.waniKani?.assignmentId,
+            status.waniKani?.availableAt,
+            status.status,
+            status.suspended,
+        ]);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        deduped.push(status);
+    }
+    return deduped;
+}
+
+/**
+ * Normalize a string for dictionary lookup, currently only by case folding.
+ * If normalization expands from just case folding then the entire annotation and db logic will need
+ * to be revisited since Dexie supports case folding natively through anyOfIgnoreCase() but nothing custom.
+ */
+export function normalizeToken(value: string): string {
+    return value.toLowerCase();
+}
 
 /**
  * An async safe semaphore implementation that preserves FIFO order (within a priority group).

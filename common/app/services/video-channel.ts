@@ -571,6 +571,7 @@ export default class VideoChannel {
     ankiSettings(settings: AnkiSettings) {
         const {
             ankiConnectUrl,
+            ankiConnectApiKey,
             deck,
             noteType,
             sentenceField,
@@ -604,6 +605,7 @@ export default class VideoChannel {
             command: 'ankiSettings',
             value: {
                 ankiConnectUrl,
+                ankiConnectApiKey,
                 deck,
                 noteType,
                 sentenceField,
@@ -664,6 +666,8 @@ export default class VideoChannel {
             tabName,
             pauseOnHoverMode,
             lastSelectedAnkiExportMode,
+            thumbnailPreview,
+            subtitleAboveThumbnail,
         } = settings;
         const message: MiscSettingsToVideoMessage = {
             command: 'miscSettings',
@@ -693,6 +697,8 @@ export default class VideoChannel {
                 tabName,
                 pauseOnHoverMode,
                 lastSelectedAnkiExportMode,
+                thumbnailPreview,
+                subtitleAboveThumbnail,
             },
         };
         this.protocol.postMessage(message);

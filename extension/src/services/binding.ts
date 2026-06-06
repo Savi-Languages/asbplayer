@@ -50,12 +50,11 @@ import {
     IndexedSubtitleModel,
     SaveTokenLocalMessage,
     DictionaryBuildAnkiCacheStateMessage,
+    DictionaryBuildWaniKaniCacheStateMessage,
 } from '@project/common';
 import { adjacentSubtitle } from '@project/common/key-binder';
 import PlayModeManager from '@project/common/app/services/play-mode-manager';
 import {
-    AutoCopyableTracks,
-    calculateAutoCopyableTracksValue,
     calculateSeekableTracksValue,
     extractAnkiSettings,
     isTrackSeekable,
@@ -94,6 +93,7 @@ import { pgsParserWorkerFactory } from './pgs-parser-worker-factory';
 import { DictionaryProvider } from '@project/common/dictionary-db/dictionary-provider';
 import { ExtensionDictionaryStorage } from './extension-dictionary-storage';
 import { HoveredToken } from '@project/common/subtitle-annotations';
+import { v4 as uuidv4 } from 'uuid';
 
 let netflix = false;
 document.addEventListener('asbplayer-netflix-enabled', (e) => {
@@ -127,6 +127,8 @@ const startAudioRecordingErrorResponse: (e: any) => StartRecordingResponse = (e:
 };
 
 export default class Binding {
+    private readonly _fallbackVideoSrc = uuidv4();
+
     subscribed: boolean = false;
 
     ankiUiSavedState?: AnkiUiSavedState;
@@ -134,6 +136,7 @@ export default class Binding {
 
     private _synced: boolean;
     private _syncedTimestamp?: number;
+    private _lastSyncedLocation?: string;
 
     recordingState: RecordingState = RecordingState.notRecording;
     recordingPostMineAction?: PostMineAction;
@@ -198,7 +201,7 @@ export default class Binding {
         sendResponse: (response?: any) => void
     ) => void;
     private heartbeatInterval?: NodeJS.Timeout;
-    private registeredVideoSrc?: string;
+    private _registeredVideoSrc: string;
 
     // In the case of firefox, we need to avoid capturing the audio stream more than once,
     // so we keep a reference to the first one we capture here.
@@ -213,10 +216,11 @@ export default class Binding {
 
     constructor(video: HTMLMediaElement, hasPageScript: boolean, frameId?: string) {
         this.video = video;
+        this._registeredVideoSrc = video.src || this._fallbackVideoSrc;
         this.hasPageScript = hasPageScript;
         this.dictionary = new DictionaryProvider(new ExtensionDictionaryStorage());
         this.settings = new SettingsProvider(new ExtensionSettingsStorage());
-        this.subtitleController = new SubtitleController(video, this.dictionary, this.settings);
+        this.subtitleController = new SubtitleController(this, this.dictionary, this.settings);
         this.videoDataSyncController = new VideoDataSyncController(this, this.settings);
         this.controlsController = new ControlsController(video);
         this.dragController = new DragController(video);
@@ -242,8 +246,11 @@ export default class Binding {
         this.postMinePlayback = PostMinePlayback.remember;
         this._synced = false;
         this.recordingMediaWithScreenshot = false;
-        this.registeredVideoSrc = video.src || undefined;
         this.frameId = frameId;
+    }
+
+    get registeredVideoSrc() {
+        return this._registeredVideoSrc;
     }
 
     get recordingMedia() {
@@ -499,7 +506,7 @@ export default class Binding {
                         command: 'readyState',
                         value: 4,
                     },
-                    src: this.video.src,
+                    src: this._registeredVideoSrc,
                 };
 
                 browser.runtime.sendMessage(command);
@@ -548,7 +555,7 @@ export default class Binding {
                 selectedAudioTrack: undefined,
                 playbackRate: this.video.playbackRate,
             },
-            src: this.video.src,
+            src: this._registeredVideoSrc,
         };
 
         browser.runtime.sendMessage(command);
@@ -562,7 +569,7 @@ export default class Binding {
                     command: 'play',
                     echo: false,
                 },
-                src: this.video.src,
+                src: this._registeredVideoSrc,
             };
 
             browser.runtime.sendMessage(command);
@@ -581,7 +588,7 @@ export default class Binding {
                     command: 'pause',
                     echo: false,
                 },
-                src: this.video.src,
+                src: this._registeredVideoSrc,
             };
 
             browser.runtime.sendMessage(command);
@@ -601,7 +608,7 @@ export default class Binding {
                     value: this.video.currentTime,
                     echo: false,
                 },
-                src: this.video.src,
+                src: this._registeredVideoSrc,
             };
             const readyStateCommand: VideoToExtensionCommand<ReadyStateFromVideoMessage> = {
                 sender: 'asbplayer-video',
@@ -609,7 +616,7 @@ export default class Binding {
                     command: 'readyState',
                     value: this.video.readyState,
                 },
-                src: this.video.src,
+                src: this._registeredVideoSrc,
             };
 
             browser.runtime.sendMessage(currentTimeCommand);
@@ -626,7 +633,7 @@ export default class Binding {
                     value: this.video.playbackRate,
                     echo: false,
                 },
-                src: this.video.src,
+                src: this._registeredVideoSrc,
             };
 
             browser.runtime.sendMessage(command);
@@ -672,7 +679,22 @@ export default class Binding {
 
         if (this.hasPageScript) {
             this.videoChangeListener = () => {
-                this._updateRegisteredVideoSrc(this.video.src || undefined);
+                this._updateRegisteredVideoSrc(this.video.src || this._fallbackVideoSrc);
+
+                // Player events (e.g. Hulu blob URL rotation) can fire loadedmetadata
+                // without an actual video change. Skip refresh when the picker is open
+                // here or subtitles are already synced for it.
+                if (
+                    this.videoDataSyncController.pickerVisible &&
+                    this.videoDataSyncController.openedLocation === window.location.href
+                ) {
+                    return;
+                }
+
+                if (this._synced && this._lastSyncedLocation === window.location.href) {
+                    return;
+                }
+
                 this.videoDataSyncController.requestSubtitles();
                 this._resetSubtitles();
             };
@@ -680,9 +702,7 @@ export default class Binding {
         }
 
         this.heartbeatInterval = setInterval(() => {
-            const src = this.video.src || undefined;
-            this._updateRegisteredVideoSrc(src);
-            if (!src) return;
+            this._updateRegisteredVideoSrc(this.video.src || this._fallbackVideoSrc);
 
             const command: VideoToExtensionCommand<VideoHeartbeatMessage> = {
                 sender: 'asbplayer-video',
@@ -693,7 +713,7 @@ export default class Binding {
                     syncedTimestamp: this._syncedTimestamp,
                     loadedSubtitles: this.subtitleController.subtitles.length > 0,
                 },
-                src,
+                src: this._registeredVideoSrc,
             };
 
             browser.runtime.sendMessage(command);
@@ -708,7 +728,7 @@ export default class Binding {
             sender: Browser.runtime.MessageSender,
             sendResponse: (response?: any) => void
         ) => {
-            if (request.sender === 'asbplayer-extension-to-video' && request.src === this.video.src) {
+            if (request.sender === 'asbplayer-extension-to-video' && request.src === this._registeredVideoSrc) {
                 switch (request.message.command) {
                     case 'init':
                         this._notifyReady();
@@ -863,6 +883,11 @@ export default class Binding {
                         const state = request.message as DictionaryBuildAnkiCacheStateMessage;
                         this.subtitleController.subtitleAnnotations.buildAnkiCacheStateChange(state);
                         break;
+                    case 'dictionary-build-wanikani-cache-state': {
+                        const state = request.message as DictionaryBuildWaniKaniCacheStateMessage;
+                        this.subtitleController.subtitleAnnotations.buildWaniKaniCacheStateChange(state);
+                        break;
+                    }
                     case 'notify-error':
                         const notifyErrorMessage = request.message as NotifyErrorMessage;
                         this.subtitleController.notification('info.error', { message: notifyErrorMessage.message });
@@ -1031,7 +1056,7 @@ export default class Binding {
                             command: 'ack-message',
                             messageId: request.message['messageId'],
                         },
-                        src: this.video.src,
+                        src: this._registeredVideoSrc,
                     };
                     browser.runtime.sendMessage(ackCommand);
                 }
@@ -1206,8 +1231,9 @@ export default class Binding {
         this.bulkExportController.unbind();
         this.subscribed = false;
 
-        this._notifyVideoDisappeared(this.registeredVideoSrc ?? (this.video.src || undefined));
-        this.registeredVideoSrc = undefined;
+        this._notifyVideoDisappeared(this._registeredVideoSrc);
+        this._registeredVideoSrc = '';
+        this._lastSyncedLocation = undefined;
     }
 
     async _takeScreenshot() {
@@ -1226,7 +1252,7 @@ export default class Binding {
                 subtitleFileName: this.subtitleFileName(),
                 mediaTimestamp: this.video.currentTime * 1000,
             },
-            src: this.video.src,
+            src: this._registeredVideoSrc,
         };
 
         browser.runtime.sendMessage(command);
@@ -1306,7 +1332,7 @@ export default class Binding {
                 isBulkExport,
                 ...this._imageCaptureParams,
             },
-            src: this.video.src,
+            src: this._registeredVideoSrc,
         };
 
         browser.runtime.sendMessage(command);
@@ -1339,7 +1365,7 @@ export default class Binding {
                     ...this._imageCaptureParams,
                     ...this._surroundingSubtitlesAroundInterval(this.recordingMediaStartedTimestamp!, currentTimestamp),
                 },
-                src: this.video.src,
+                src: this._registeredVideoSrc,
             };
 
             browser.runtime.sendMessage(command);
@@ -1377,7 +1403,7 @@ export default class Binding {
                     imageDelay: this.imageDelay,
                     ...this._imageCaptureParams,
                 },
-                src: this.video.src,
+                src: this._registeredVideoSrc,
             };
 
             browser.runtime.sendMessage(command);
@@ -1428,7 +1454,7 @@ export default class Binding {
                 timestamp: start,
                 subtitleFileName: this.subtitleFileName(),
             },
-            src: this.video.src,
+            src: this._registeredVideoSrc,
         };
 
         browser.runtime.sendMessage(command);
@@ -1555,7 +1581,7 @@ export default class Binding {
                     withSyncedAsbplayerOnly,
                     withAsbplayerId,
                 },
-                src: this.video.src,
+                src: this._registeredVideoSrc,
             };
             browser.runtime.sendMessage(syncMessage);
         };
@@ -1623,6 +1649,7 @@ export default class Binding {
         this.ankiUiSavedState = undefined;
         this._synced = true;
         this._syncedTimestamp = Date.now();
+        this._lastSyncedLocation = window.location.href;
 
         if (this.video.paused) {
             this.mobileVideoOverlayController.show();
@@ -1654,17 +1681,18 @@ export default class Binding {
         this.ankiUiSavedState = undefined;
         this._synced = false;
         this._syncedTimestamp = undefined;
+        this._lastSyncedLocation = undefined;
         this.mobileVideoOverlayController.disposeOverlay();
     }
 
-    private _updateRegisteredVideoSrc(src: string | undefined) {
-        if (src === this.registeredVideoSrc) return;
-        this._notifyVideoDisappeared(this.registeredVideoSrc);
-        this.registeredVideoSrc = src;
+    private _updateRegisteredVideoSrc(src: string) {
+        if (src === this._registeredVideoSrc) return;
+        this._notifyVideoDisappeared(this._registeredVideoSrc);
+        this._registeredVideoSrc = src;
     }
 
     private _notifyVideoDisappeared(src: string | undefined) {
-        if (!src) return;
+        if (src === undefined) return;
         const command: VideoToExtensionCommand<VideoDisappearedMessage> = {
             sender: 'asbplayer-video',
             message: {
@@ -1768,7 +1796,7 @@ export default class Binding {
                     base64,
                     extension: 'webm',
                 },
-                src: this.video.src,
+                src: this._registeredVideoSrc,
             };
             base64 = await browser.runtime.sendMessage(encodeMp3Command);
         }
@@ -1780,7 +1808,7 @@ export default class Binding {
                 base64,
                 requestId,
             },
-            src: this.video.src,
+            src: this._registeredVideoSrc,
         };
 
         browser.runtime.sendMessage(command);
@@ -1793,7 +1821,7 @@ export default class Binding {
                 command: 'requesting-active-tab-permission',
                 requesting,
             },
-            src: this.video.src,
+            src: this._registeredVideoSrc,
         };
 
         browser.runtime.sendMessage(command);

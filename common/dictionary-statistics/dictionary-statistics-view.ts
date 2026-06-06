@@ -11,10 +11,17 @@ import {
     DictionaryStatisticsSentence,
     DictionaryStatisticsSentences,
     DictionaryStatisticsSnapshot,
+    DictionaryStatisticsWaniKaniSnapshot,
+    REVIEW_DUES,
 } from '@project/common/dictionary-statistics';
-import { CardStatus } from '@project/common/dictionary-db';
-import { getCardTokenStatus } from '@project/common/subtitle-annotations';
-import { HAS_LETTER_REGEX } from '@project/common/util';
+import { TokenStatusInfo, WaniKaniTokenStatusInfo } from '@project/common/dictionary-db';
+import {
+    dedupeTokenStatusInfos,
+    getTokenStatus,
+    HAS_LETTER_REGEX,
+    MS_PER_DAY,
+    utcStartOfToday,
+} from '@project/common/util';
 
 /**
  * This file along with its consumers can be freely modified without concern to version
@@ -145,6 +152,31 @@ export interface DictionaryStatisticsSentenceBuckets {
     unknown: DictionaryStatisticsSentenceUnknownBucket[];
 }
 
+export interface DictionaryStatisticsRewatchProjection {
+    ankiUnknownCardsByDeck?: Record<string, number>;
+    ankiLearningOrAboveIsMature?: boolean;
+    waniKaniLevel?: number;
+}
+
+export type DictionaryStatisticsRewatchProjectionsByTrack = Record<number, DictionaryStatisticsRewatchProjection>;
+
+export interface DictionaryStatisticsAnkiUnknownCardsByDeck {
+    deckName: string;
+    totalUnknownCards: number;
+}
+
+export interface DictionaryStatisticsAnkiDeckProjectionStats {
+    deckName: string;
+    knownWords: number;
+    totalWords: number;
+}
+
+export interface DictionaryStatisticsWaniKaniProjectionStats {
+    level?: number;
+    knownWords: number;
+    totalWords: number;
+}
+
 export interface DictionaryStatisticsRewatchSnapshot {
     rewatch: number;
     numKnownTokens: number;
@@ -156,6 +188,8 @@ export interface DictionaryStatisticsRewatchSnapshot {
     sentenceTotals: DictionaryStatisticsSentenceTotals;
     statusCounts: DictionaryStatisticsTokenStatusCounts;
     sentenceBuckets: DictionaryStatisticsSentenceBuckets;
+    ankiDeckStats: DictionaryStatisticsAnkiDeckProjectionStats[];
+    waniKaniStats?: DictionaryStatisticsWaniKaniProjectionStats;
 }
 
 export interface DictionaryStatisticsTrackSnapshot {
@@ -180,7 +214,11 @@ export interface DictionaryStatisticsTrackSnapshot {
     statusCounts: DictionaryStatisticsTokenStatusCounts;
     frequencyBuckets: DictionaryStatisticsFrequencyBucket[];
     sentenceBuckets: DictionaryStatisticsSentenceBuckets;
+    ankiDeckStats: DictionaryStatisticsAnkiDeckProjectionStats[];
+    waniKaniStats?: DictionaryStatisticsWaniKaniProjectionStats;
     rewatchSnapshots: DictionaryStatisticsRewatchSnapshot[];
+    totalUnknownAnkiCards: number;
+    unknownAnkiCardsByDeck: DictionaryStatisticsAnkiUnknownCardsByDeck[];
 }
 
 export interface DictionaryStatisticsAnkiDueCounts {
@@ -188,6 +226,8 @@ export interface DictionaryStatisticsAnkiDueCounts {
     tomorrow: number;
     week: number;
 }
+
+export type DictionaryStatisticsWaniKaniDueCounts = DictionaryStatisticsAnkiDueCounts;
 
 export interface DictionaryStatisticsAnkiDeckModelSnapshot {
     modelName: string;
@@ -210,11 +250,19 @@ export interface DictionaryStatisticsAnkiTrackSnapshot {
     deckSnapshots: DictionaryStatisticsAnkiDeckSnapshot[];
 }
 
+export interface DictionaryStatisticsWaniKaniTrackSnapshot {
+    available?: boolean;
+    dueCounts: DictionaryStatisticsWaniKaniDueCounts;
+    uniqueWords: number;
+    frequencyBuckets: DictionaryStatisticsFrequencyBucket[];
+}
+
 interface ProcessedTokenSnapshot {
     status: TokenStatus;
     ignored: boolean;
     frequency: number | null;
     numOccurrences: number;
+    externalCandidateStatuses?: TokenStatusInfo[];
 }
 type ProcessedTokenSnapshots = Map<string, ProcessedTokenSnapshot>;
 
@@ -222,6 +270,10 @@ interface ProcessedSentenceSnapshot {
     sentence: DictionaryStatisticsSentence;
     tokens: ProcessedTokenSnapshots;
 }
+
+type TokenGrouping = 'surface' | 'lemma';
+
+type DictionaryStatisticsDictionaryTokens = DictionaryStatisticsRawTrackSnapshot['stats']['dictionary']['tokens'];
 
 interface EvaluatedSentenceSnapshot {
     sentence: DictionaryStatisticsSentence;
@@ -248,13 +300,26 @@ function emptyAnkiDueCounts(): DictionaryStatisticsAnkiDueCounts {
     };
 }
 
-function hasCardId(status: CardStatus): status is CardStatus & { cardId: number } {
+function hasCardId(status: TokenStatusInfo): status is TokenStatusInfo & { cardId: number } {
     return status.cardId !== undefined;
+}
+
+type WaniKaniTokenStatus = TokenStatusInfo & { waniKani: WaniKaniTokenStatusInfo };
+type WaniKaniAssignmentTokenStatus = TokenStatusInfo & {
+    waniKani: WaniKaniTokenStatusInfo & { assignmentId: number };
+};
+
+function hasWaniKani(status: TokenStatusInfo): status is WaniKaniTokenStatus {
+    return status.waniKani !== undefined;
+}
+
+function hasAssignmentId(status: WaniKaniTokenStatus): status is WaniKaniAssignmentTokenStatus {
+    return status.waniKani.assignmentId !== undefined;
 }
 
 function incrementAnkiDueCounts(
     counts: DictionaryStatisticsAnkiDueCounts,
-    tokenStatuses: (CardStatus & { cardId: number })[],
+    tokenStatuses: (TokenStatusInfo & { cardId: number })[],
     dueByToday: Set<number>,
     dueByTomorrow: Set<number>,
     dueByWeek: Set<number>
@@ -264,13 +329,47 @@ function incrementAnkiDueCounts(
     if (tokenStatuses.some(({ cardId }) => dueByWeek.has(cardId))) counts.week += 1;
 }
 
-function dictionaryTokenForGroupingKey(
-    groupingKey: string,
-    dictionaryTokens: DictionaryStatisticsRawTrackSnapshot['stats']['dictionary']['tokens']
+function incrementWaniKaniDueCounts(
+    counts: DictionaryStatisticsWaniKaniDueCounts,
+    tokenStatuses: WaniKaniAssignmentTokenStatus[],
+    dueByToday: Set<number>,
+    dueByTomorrow: Set<number>,
+    dueByWeek: Set<number>
 ) {
+    if (tokenStatuses.some(({ waniKani }) => dueByToday.has(waniKani.assignmentId))) counts.today += 1;
+    if (tokenStatuses.some(({ waniKani }) => dueByTomorrow.has(waniKani.assignmentId))) counts.tomorrow += 1;
+    if (tokenStatuses.some(({ waniKani }) => dueByWeek.has(waniKani.assignmentId))) counts.week += 1;
+}
+
+function waniKaniDueAssignmentSets(waniKaniSnapshot?: DictionaryStatisticsWaniKaniSnapshot) {
+    const dueByToday = new Set<number>();
+    const dueByTomorrow = new Set<number>();
+    const dueByWeek = new Set<number>();
+    if (!waniKaniSnapshot) return { dueByToday, dueByTomorrow, dueByWeek };
+
+    const todayStart = utcStartOfToday();
+    const todayEnd = todayStart.getTime() + (REVIEW_DUES[0] + 1) * MS_PER_DAY;
+    const tomorrowEnd = todayStart.getTime() + (REVIEW_DUES[1] + 1) * MS_PER_DAY;
+    const weekEnd = todayStart.getTime() + REVIEW_DUES[2] * MS_PER_DAY;
+    for (const assignment of waniKaniSnapshot.assignments) {
+        if (assignment.data.hidden) continue;
+        if (waniKaniSnapshot.subjects[assignment.subjectId]?.data.hidden_at) continue;
+        const availableAt = assignment.data.available_at;
+        if (availableAt === null || availableAt === undefined) continue;
+        const availableAtTime = Date.parse(availableAt);
+        if (!Number.isFinite(availableAtTime)) continue;
+        if (availableAtTime < todayEnd) dueByToday.add(assignment.assignmentId);
+        if (availableAtTime < tomorrowEnd) dueByTomorrow.add(assignment.assignmentId);
+        if (availableAtTime < weekEnd) dueByWeek.add(assignment.assignmentId);
+    }
+
+    return { dueByToday, dueByTomorrow, dueByWeek };
+}
+
+function dictionaryTokenForGroupingKey(groupingKey: string, dictionaryTokens: DictionaryStatisticsDictionaryTokens) {
     if (groupingKey in dictionaryTokens) return dictionaryTokens[groupingKey];
     if (groupingKey.startsWith('token:')) return dictionaryTokens[groupingKey.slice('token:'.length)];
-    return undefined;
+    return;
 }
 
 export function clampPercent(value: number) {
@@ -452,15 +551,22 @@ function mergeTokenSnapshot(
                 ? Math.min(prev.frequency, curr.frequency)
                 : (prev.frequency ?? curr.frequency),
         numOccurrences: prev.numOccurrences + curr.numOccurrences,
+        externalCandidateStatuses: dedupeTokenStatusInfos([
+            ...(prev.externalCandidateStatuses ?? []),
+            ...(curr.externalCandidateStatuses ?? []),
+        ]),
     };
 }
 
-function processSentenceSnapshots(sentences: DictionaryStatisticsSentences): ProcessedSentenceSnapshot[] {
+function processSentenceSnapshots(
+    sentences: DictionaryStatisticsSentences,
+    grouping: TokenGrouping
+): ProcessedSentenceSnapshot[] {
     const sentenceSnapshots: ProcessedSentenceSnapshot[] = [];
     for (const sentence of Object.values(sentences).sort((left, right) => left.index - right.index)) {
         const tokens: ProcessedTokenSnapshots = new Map();
         for (const token of sentence.tokenization?.tokens ?? []) {
-            const key = token.groupingKey;
+            const key = grouping === 'lemma' ? (token.lemmasGroupingKey ?? token.groupingKey) : token.groupingKey;
             if (!key) continue;
             const tokenText = sentence.text.substring(token.pos[0], token.pos[1]);
             if (!HAS_LETTER_REGEX.test(tokenText)) continue;
@@ -471,12 +577,57 @@ function processSentenceSnapshots(sentences: DictionaryStatisticsSentences): Pro
                     ignored: token.states.includes(TokenState.IGNORED),
                     frequency: token.frequency ?? null,
                     numOccurrences: 1,
+                    externalCandidateStatuses: token.externalCandidateStatuses,
                 })
             );
         }
         sentenceSnapshots.push({ sentence, tokens });
     }
     return sentenceSnapshots;
+}
+
+function surfaceProjectedStatusesForGrouping(
+    sentenceSnapshots: ProcessedSentenceSnapshot[],
+    projectedStatuses: Map<string, TokenStatus>,
+    grouping: TokenGrouping
+) {
+    const groupedStatuses = new Map<string, TokenStatus>();
+    for (const { sentence } of sentenceSnapshots) {
+        for (const token of sentence.tokenization?.tokens ?? []) {
+            const sourceKey = token.groupingKey;
+            const targetKey = grouping === 'lemma' ? (token.lemmasGroupingKey ?? token.groupingKey) : token.groupingKey;
+            if (!sourceKey || !targetKey || token.states.includes(TokenState.IGNORED)) continue;
+            const projectedStatus = projectedStatuses.get(sourceKey);
+            if (projectedStatus === undefined) continue;
+            const tokenText = sentence.text.substring(token.pos[0], token.pos[1]);
+            if (!HAS_LETTER_REGEX.test(tokenText)) continue;
+
+            groupedStatuses.set(
+                targetKey,
+                Math.max(groupedStatuses.get(targetKey) ?? projectedStatus, projectedStatus) as TokenStatus
+            );
+        }
+    }
+    return groupedStatuses;
+}
+
+function mergeProjectedStatuses(...projectedStatusMaps: Map<string, TokenStatus>[]) {
+    const mergedStatuses = new Map<string, TokenStatus>();
+    for (const projectedStatuses of projectedStatusMaps) {
+        for (const [tokenKey, status] of projectedStatuses.entries()) {
+            mergedStatuses.set(tokenKey, Math.max(mergedStatuses.get(tokenKey) ?? status, status) as TokenStatus);
+        }
+    }
+    return mergedStatuses;
+}
+
+function mergeSentenceTokenSnapshots(sentenceSnapshots: ProcessedSentenceSnapshot[]): ProcessedTokenSnapshots {
+    const tokens: ProcessedTokenSnapshots = new Map();
+    for (const { tokens: sentenceTokens } of sentenceSnapshots) {
+        for (const [key, token] of sentenceTokens.entries())
+            tokens.set(key, mergeTokenSnapshot(tokens.get(key), token));
+    }
+    return tokens;
 }
 
 function evaluateSentenceSnapshot(
@@ -495,7 +646,7 @@ function evaluateSentenceSnapshot(
     for (const [tokenKey, token] of sentenceSnapshot.tokens.entries()) {
         if (token.ignored) continue;
 
-        const status = projectedStatuses?.get(tokenKey) ?? token.status;
+        const status = Math.max(projectedStatuses?.get(tokenKey) ?? token.status, token.status) as TokenStatus;
         numConsideredTokens += 1;
         consideredTokenKeys.push(tokenKey);
         const count = statusCounts.get(status)!;
@@ -752,31 +903,285 @@ function dictionaryCountsFromRaw(
             numIgnoredTokens += 1;
             continue;
         }
-        const status = getCardTokenStatus(token.statuses, dictionaryAnkiTreatSuspended);
+        const status = getTokenStatus(token.statuses, dictionaryAnkiTreatSuspended);
         if (isTokenStatusKnown(status)) numKnownTokens += 1;
     }
     return { numKnownTokens, numIgnoredTokens };
 }
 
+function tokenStatusesForProjection(
+    tokenKey: string,
+    tokenSnapshot: ProcessedTokenSnapshot,
+    dictionaryTokens: DictionaryStatisticsDictionaryTokens
+) {
+    const token = dictionaryTokenForGroupingKey(tokenKey, dictionaryTokens);
+    return tokenSnapshot.externalCandidateStatuses ?? token?.externalCandidateStatuses ?? token?.statuses ?? [];
+}
+
+function sortAnkiCardIdsByDue(cardIds: number[], cardsInfo: DictionaryStatisticsSnapshot['anki']['cardsInfo']) {
+    return [...cardIds].sort((left, right) => {
+        const leftDue = cardsInfo[left]?.due ?? Number.POSITIVE_INFINITY;
+        const rightDue = cardsInfo[right]?.due ?? Number.POSITIVE_INFINITY;
+        return leftDue - rightDue || left - right;
+    });
+}
+
+function sortedUnknownAnkiCardIds(
+    cardsStatus: DictionaryStatisticsSnapshot['anki']['cardsStatus'],
+    cardsInfo: DictionaryStatisticsSnapshot['anki']['cardsInfo']
+) {
+    if (cardsStatus === undefined) return [];
+    const unknownCards = Object.entries(cardsStatus).flatMap(([cardId, status]) =>
+        status === TokenStatus.UNKNOWN ? [Number(cardId)] : []
+    );
+    return sortAnkiCardIdsByDue(unknownCards, cardsInfo);
+}
+
+interface UnknownAnkiCardsByDeck extends DictionaryStatisticsAnkiUnknownCardsByDeck {
+    cardIds: number[];
+}
+
+function groupUnknownAnkiCardIdsByDeck(
+    cardIds: number[],
+    cardsInfo: DictionaryStatisticsSnapshot['anki']['cardsInfo']
+): UnknownAnkiCardsByDeck[] {
+    const cardsByDeck = new Map<string, number[]>();
+    for (const cardId of cardIds) {
+        const deckName = cardsInfo[cardId]?.deckName;
+        if (!deckName) continue;
+
+        const deckCardIds = cardsByDeck.get(deckName);
+        if (deckCardIds) deckCardIds.push(cardId);
+        else cardsByDeck.set(deckName, [cardId]);
+    }
+
+    return Array.from(cardsByDeck.entries())
+        .map(([deckName, cardIds]) => ({ deckName, cardIds, totalUnknownCards: cardIds.length }))
+        .sort((left, right) => left.deckName.localeCompare(right.deckName));
+}
+
+function clampedProjectedAnkiUnknownCards(value: number | undefined, total: number) {
+    const requestedCards = value ?? 0;
+    return Number.isFinite(requestedCards) ? Math.max(0, Math.min(total, Math.floor(requestedCards))) : 0;
+}
+
+function projectedUnknownAnkiCardIds(
+    unknownAnkiCardsByDeck: UnknownAnkiCardsByDeck[],
+    projection: DictionaryStatisticsRewatchProjection
+) {
+    return new Set(
+        unknownAnkiCardsByDeck.flatMap(({ deckName, cardIds, totalUnknownCards }) => {
+            const count = clampedProjectedAnkiUnknownCards(
+                projection.ankiUnknownCardsByDeck?.[deckName],
+                totalUnknownCards
+            );
+            return cardIds.slice(0, count);
+        })
+    );
+}
+
+interface ProjectionOptions {
+    dictionaryTokens: DictionaryStatisticsDictionaryTokens;
+    cardsInfo: DictionaryStatisticsSnapshot['anki']['cardsInfo'];
+    dictionaryAnkiTreatSuspended: TokenStatus | 'NORMAL';
+    ankiCardIds: Set<number>;
+    ankiLearningOrAboveIsMature: boolean;
+    waniKaniLevel?: number;
+}
+
+interface ProjectionData {
+    projectedStatuses: Map<string, TokenStatus>;
+    ankiDeckStats: DictionaryStatisticsAnkiDeckProjectionStats[];
+    waniKaniStats?: DictionaryStatisticsWaniKaniProjectionStats;
+}
+
+function projectedByAnki(status: TokenStatusInfo, options: ProjectionOptions) {
+    if (!hasCardId(status)) return false;
+    return (
+        options.ankiCardIds.has(status.cardId) ||
+        (options.ankiLearningOrAboveIsMature && status.status >= TokenStatus.LEARNING)
+    );
+}
+
+function projectedByWaniKani(status: TokenStatusInfo, waniKaniLevel: number | undefined) {
+    return hasWaniKani(status) && waniKaniLevel !== undefined && status.waniKani.subjectLevel <= waniKaniLevel;
+}
+
+function projectionData(tokenEntries: [string, ProcessedTokenSnapshot][], options: ProjectionOptions): ProjectionData {
+    const projectedStatuses = new Map<string, TokenStatus>();
+    const deckCounts = new Map<string, { knownWords: number; totalWords: number }>();
+    let waniKaniKnownWords = 0;
+    let waniKaniTotalWords = 0;
+
+    for (const [tokenKey, tokenSnapshot] of tokenEntries) {
+        if (tokenSnapshot.ignored) continue;
+
+        const statuses = tokenStatusesForProjection(tokenKey, tokenSnapshot, options.dictionaryTokens);
+        if (
+            statuses.some(
+                (status) => projectedByAnki(status, options) || projectedByWaniKani(status, options.waniKaniLevel)
+            )
+        ) {
+            projectedStatuses.set(tokenKey, Math.max(tokenSnapshot.status, fullyKnownTokenStatus) as TokenStatus);
+        }
+
+        const statusesByDeck = new Map<string, (TokenStatusInfo & { cardId: number })[]>();
+        for (const status of statuses.filter(hasCardId)) {
+            const deckName = options.cardsInfo[status.cardId]?.deckName;
+            if (!deckName) continue;
+
+            const deckStatuses = statusesByDeck.get(deckName) ?? [];
+            deckStatuses.push(status);
+            statusesByDeck.set(deckName, deckStatuses);
+        }
+
+        for (const [deckName, statuses] of statusesByDeck.entries()) {
+            const status = statuses.some((status) => projectedByAnki(status, options))
+                ? fullyKnownTokenStatus
+                : getTokenStatus(statuses, options.dictionaryAnkiTreatSuspended);
+
+            const counts = deckCounts.get(deckName) ?? { knownWords: 0, totalWords: 0 };
+            counts.totalWords += 1;
+            if (isTokenStatusKnown(status)) counts.knownWords += 1;
+            deckCounts.set(deckName, counts);
+        }
+
+        const waniKaniStatuses = statuses.filter(hasWaniKani);
+        if (!waniKaniStatuses.length) continue;
+
+        const waniKaniStatus = waniKaniStatuses.some((status) => projectedByWaniKani(status, options.waniKaniLevel))
+            ? fullyKnownTokenStatus
+            : getTokenStatus(waniKaniStatuses, 'NORMAL');
+
+        waniKaniTotalWords += 1;
+        if (isTokenStatusKnown(waniKaniStatus)) waniKaniKnownWords += 1;
+    }
+
+    return {
+        projectedStatuses,
+        ankiDeckStats: Array.from(deckCounts.entries())
+            .map(([deckName, counts]) => ({ deckName, ...counts }))
+            .sort((left, right) => left.deckName.localeCompare(right.deckName)),
+        waniKaniStats:
+            waniKaniTotalWords > 0
+                ? { level: options.waniKaniLevel, knownWords: waniKaniKnownWords, totalWords: waniKaniTotalWords }
+                : undefined,
+    };
+}
+
+function promoteTokenStatus(status: TokenStatus): TokenStatus {
+    return Math.min(status + 1, fullyKnownTokenStatus) as TokenStatus;
+}
+
+function promoteProjectedStatuses(
+    tokenEntries: [string, ProcessedTokenSnapshot][],
+    projectedStatuses: Map<string, TokenStatus>
+) {
+    for (const [tokenKey, token] of tokenEntries) {
+        if (token.ignored) continue;
+        const currentStatus = projectedStatuses.get(tokenKey) ?? token.status;
+        if (currentStatus <= TokenStatus.UNCOLLECTED || currentStatus >= fullyKnownTokenStatus) continue;
+        projectedStatuses.set(tokenKey, promoteTokenStatus(currentStatus));
+    }
+}
+
+function projectedRewatchSnapshot(
+    rewatch: number,
+    dictionaryKnownTokens: number,
+    aggregateTokens: ProcessedTokenSnapshots,
+    aggregateSentenceSnapshots: ProcessedSentenceSnapshot[],
+    sentenceFilterTokens: ProcessedTokenSnapshots,
+    sentenceFilterSnapshots: ProcessedSentenceSnapshot[],
+    currentKnownTokens: number,
+    consideredTokens: number,
+    aggregateProjectedStatuses: Map<string, TokenStatus>,
+    sentenceFilterProjectedStatuses: Map<string, TokenStatus>,
+    projectionData: ProjectionData
+): DictionaryStatisticsRewatchSnapshot {
+    const tokenEntries = Array.from(aggregateTokens.entries());
+    const evaluatedProjectedSentences = aggregateSentenceSnapshots.map((sentenceSnapshot) =>
+        evaluateSentenceSnapshot(sentenceSnapshot, aggregateProjectedStatuses)
+    );
+    const evaluatedSentenceFilters = sentenceFilterSnapshots.map((sentenceSnapshot) =>
+        evaluateSentenceSnapshot(sentenceSnapshot, sentenceFilterProjectedStatuses)
+    );
+    const projectedSentenceTotals = sentenceTotals(evaluatedProjectedSentences);
+    const projectedSentenceBuckets = buildSentenceBucketData(evaluatedSentenceFilters, sentenceFilterTokens);
+    const { averageWordsPerSentence, averageKnownWordsPerSentence } =
+        sentenceAveragesFromTotals(projectedSentenceTotals);
+    const projectedStatusCounts = emptyStatusCounts();
+    let projectedKnownTokens = 0;
+
+    for (const [tokenKey, token] of tokenEntries) {
+        if (token.ignored) continue;
+        const projectedStatus = Math.max(
+            aggregateProjectedStatuses.get(tokenKey) ?? token.status,
+            token.status
+        ) as TokenStatus;
+        const count = projectedStatusCounts.get(projectedStatus)!;
+        count.numUnique += 1;
+        count.numOccurrences += token.numOccurrences;
+        if (isTokenStatusKnown(projectedStatus)) projectedKnownTokens += 1;
+    }
+
+    const comprehensionPercent = comprehensionFromStatusOccurrences(projectedStatusCounts);
+
+    return {
+        rewatch,
+        numKnownTokens: projectedKnownTokens,
+        numDictionaryKnownTokens: dictionaryKnownTokens + (projectedKnownTokens - currentKnownTokens),
+        knownPercent: percent(projectedKnownTokens, consideredTokens),
+        comprehensionPercent,
+        averageWordsPerSentence,
+        averageKnownWordsPerSentence,
+        sentenceTotals: projectedSentenceTotals,
+        statusCounts: projectedStatusCounts,
+        sentenceBuckets: projectedSentenceBuckets,
+        ankiDeckStats: projectionData.ankiDeckStats,
+        waniKaniStats: projectionData.waniKaniStats,
+    };
+}
+
 function rewatchSnapshotsFromRaw(
     dictionaryKnownTokens: number,
-    tokens: ProcessedTokenSnapshots,
-    sentenceSnapshots: ProcessedSentenceSnapshot[],
+    aggregateTokens: ProcessedTokenSnapshots,
+    aggregateSentenceSnapshots: ProcessedSentenceSnapshot[],
+    sentenceFilterTokens: ProcessedTokenSnapshots,
+    sentenceFilterSnapshots: ProcessedSentenceSnapshot[],
     currentKnownTokens: number,
-    consideredTokens: number
+    consideredTokens: number,
+    aggregateProjectionData: ProjectionData,
+    sentenceFilterProjectionData: ProjectionData
 ): DictionaryStatisticsRewatchSnapshot[] {
-    const tokenEntries = Array.from(tokens.entries());
-    const projectedStatuses = new Map<string, TokenStatus>(
-        tokenEntries
-            .filter(([, token]) => token.status === TokenStatus.UNKNOWN)
-            .map(([tokenKey]) => [tokenKey, TokenStatus.LEARNING])
-    );
-    const rewatchSnapshots: DictionaryStatisticsRewatchSnapshot[] = [];
+    const tokenEntries = Array.from(sentenceFilterTokens.entries());
+    const sentenceFilterProjectedStatuses = sentenceFilterProjectionData.projectedStatuses;
+    const aggregateProjectedStatuses = () =>
+        mergeProjectedStatuses(
+            aggregateProjectionData.projectedStatuses,
+            surfaceProjectedStatusesForGrouping(sentenceFilterSnapshots, sentenceFilterProjectedStatuses, 'lemma')
+        );
+    const rewatchSnapshots: DictionaryStatisticsRewatchSnapshot[] = [
+        projectedRewatchSnapshot(
+            0,
+            dictionaryKnownTokens,
+            aggregateTokens,
+            aggregateSentenceSnapshots,
+            sentenceFilterTokens,
+            sentenceFilterSnapshots,
+            currentKnownTokens,
+            consideredTokens,
+            aggregateProjectedStatuses(),
+            sentenceFilterProjectedStatuses,
+            aggregateProjectionData
+        ),
+    ];
 
     while (true) {
+        promoteProjectedStatuses(tokenEntries, sentenceFilterProjectedStatuses);
+
         const tokensToPromote = new Set<string>();
-        for (const sentenceSnapshot of sentenceSnapshots) {
-            const evaluated = evaluateSentenceSnapshot(sentenceSnapshot, projectedStatuses);
+        for (const sentenceSnapshot of sentenceFilterSnapshots) {
+            const evaluated = evaluateSentenceSnapshot(sentenceSnapshot, sentenceFilterProjectedStatuses);
             const isIPlusOneUncollected =
                 evaluated.numConsideredTokens > 0 && evaluated.numKnownTokens === evaluated.numConsideredTokens - 1;
             if (!isIPlusOneUncollected) continue;
@@ -787,45 +1192,31 @@ function rewatchSnapshotsFromRaw(
         if (!tokensToPromote.size) break;
 
         for (const tokenKey of Array.from(tokensToPromote).sort()) {
-            const currentStatus = projectedStatuses.get(tokenKey) ?? tokens.get(tokenKey)?.status;
-            if (currentStatus !== undefined && currentStatus < TokenStatus.LEARNING) {
-                projectedStatuses.set(tokenKey, TokenStatus.LEARNING);
+            const currentStatus =
+                sentenceFilterProjectedStatuses.get(tokenKey) ?? sentenceFilterTokens.get(tokenKey)?.status;
+            if (currentStatus !== undefined && currentStatus < fullyKnownTokenStatus) {
+                sentenceFilterProjectedStatuses.set(
+                    tokenKey,
+                    Math.max(promoteTokenStatus(currentStatus), TokenStatus.LEARNING) as TokenStatus
+                );
             }
         }
 
-        const evaluatedProjectedSentences = sentenceSnapshots.map((sentenceSnapshot) =>
-            evaluateSentenceSnapshot(sentenceSnapshot, projectedStatuses)
+        rewatchSnapshots.push(
+            projectedRewatchSnapshot(
+                rewatchSnapshots.length,
+                dictionaryKnownTokens,
+                aggregateTokens,
+                aggregateSentenceSnapshots,
+                sentenceFilterTokens,
+                sentenceFilterSnapshots,
+                currentKnownTokens,
+                consideredTokens,
+                aggregateProjectedStatuses(),
+                sentenceFilterProjectedStatuses,
+                aggregateProjectionData
+            )
         );
-        const projectedSentenceTotals = sentenceTotals(evaluatedProjectedSentences);
-        const projectedSentenceBuckets = buildSentenceBucketData(evaluatedProjectedSentences, tokens);
-        const { averageWordsPerSentence, averageKnownWordsPerSentence } =
-            sentenceAveragesFromTotals(projectedSentenceTotals);
-        const projectedStatusCounts = emptyStatusCounts();
-        let projectedKnownTokens = 0;
-
-        for (const [tokenKey, token] of tokenEntries) {
-            if (token.ignored) continue;
-            const projectedStatus = projectedStatuses.get(tokenKey) ?? token.status;
-            const count = projectedStatusCounts.get(projectedStatus)!;
-            count.numUnique += 1;
-            count.numOccurrences += token.numOccurrences;
-            if (isTokenStatusKnown(projectedStatus)) projectedKnownTokens += 1;
-        }
-
-        const comprehensionPercent = comprehensionFromStatusOccurrences(projectedStatusCounts);
-
-        rewatchSnapshots.push({
-            rewatch: rewatchSnapshots.length + 1,
-            numKnownTokens: projectedKnownTokens,
-            numDictionaryKnownTokens: dictionaryKnownTokens + (projectedKnownTokens - currentKnownTokens),
-            knownPercent: percent(projectedKnownTokens, consideredTokens),
-            comprehensionPercent,
-            averageWordsPerSentence,
-            averageKnownWordsPerSentence,
-            sentenceTotals: projectedSentenceTotals,
-            statusCounts: projectedStatusCounts,
-            sentenceBuckets: projectedSentenceBuckets,
-        });
     }
 
     return rewatchSnapshots;
@@ -833,19 +1224,53 @@ function rewatchSnapshotsFromRaw(
 
 function processDictionaryStatisticsTrackSnapshot(
     snapshot: DictionaryStatisticsSnapshot,
-    trackSnapshot: DictionaryStatisticsRawTrackSnapshot
+    trackSnapshot: DictionaryStatisticsRawTrackSnapshot,
+    projection: DictionaryStatisticsRewatchProjection = {}
 ): DictionaryStatisticsTrackSnapshot {
     const { dictionary, sentences } = trackSnapshot.stats;
-    const sentenceSnapshots = processSentenceSnapshots(sentences);
-    const dictionaryCounts = dictionaryCountsFromRaw(
-        dictionary,
-        snapshot.settings.dictionaryTracks[trackSnapshot.track]?.dictionaryAnkiTreatSuspended ?? 'NORMAL'
-    );
+    const aggregateSentenceSnapshots = processSentenceSnapshots(sentences, 'lemma');
+    const sentenceFilterSnapshots = processSentenceSnapshots(sentences, 'surface');
+    const dictionaryAnkiTreatSuspended =
+        snapshot.settings.dictionaryTracks[trackSnapshot.track]?.dictionaryAnkiTreatSuspended ?? 'NORMAL';
+    const dictionaryCounts = dictionaryCountsFromRaw(dictionary, dictionaryAnkiTreatSuspended);
 
-    const tokens: ProcessedTokenSnapshots = new Map();
-    for (const { tokens: sentenceTokens } of sentenceSnapshots) {
-        for (const [k, token] of sentenceTokens.entries()) tokens.set(k, mergeTokenSnapshot(tokens.get(k), token));
-    }
+    const aggregateTokens = mergeSentenceTokenSnapshots(aggregateSentenceSnapshots);
+    const sentenceFilterTokens = mergeSentenceTokenSnapshots(sentenceFilterSnapshots);
+    const aggregateTokenEntries = Array.from(aggregateTokens.entries());
+    const sentenceFilterTokenEntries = Array.from(sentenceFilterTokens.entries());
+    const cardsInfo = snapshot.anki.cardsInfo ?? {};
+    const unknownAnkiCardIds = sortedUnknownAnkiCardIds(snapshot.anki.cardsStatus, cardsInfo);
+    const unknownAnkiCardsByDeck = groupUnknownAnkiCardIdsByDeck(unknownAnkiCardIds, cardsInfo);
+    const projectedAnkiCardIds = projectedUnknownAnkiCardIds(unknownAnkiCardsByDeck, projection);
+    const waniKaniLevel =
+        projection.waniKaniLevel !== undefined &&
+        Number.isFinite(projection.waniKaniLevel) &&
+        projection.waniKaniLevel > 0
+            ? Math.floor(projection.waniKaniLevel)
+            : undefined;
+    const projectionOptions = {
+        dictionaryTokens: dictionary.tokens,
+        cardsInfo,
+        dictionaryAnkiTreatSuspended,
+    };
+    const currentKnowledgeData = projectionData(aggregateTokenEntries, {
+        ...projectionOptions,
+        ankiCardIds: new Set<number>(),
+        ankiLearningOrAboveIsMature: false,
+    });
+    const aggregateProjectedData = projectionData(aggregateTokenEntries, {
+        ...projectionOptions,
+        ankiCardIds: projectedAnkiCardIds,
+        ankiLearningOrAboveIsMature: projection.ankiLearningOrAboveIsMature ?? false,
+        waniKaniLevel,
+    });
+    const sentenceFilterProjectedData = projectionData(sentenceFilterTokenEntries, {
+        ...projectionOptions,
+        ankiCardIds: projectedAnkiCardIds,
+        ankiLearningOrAboveIsMature: projection.ankiLearningOrAboveIsMature ?? false,
+        waniKaniLevel,
+    });
+    const sentenceTokenCounts = statusCountsAndFrequencies(aggregateTokens);
 
     const {
         statusCounts,
@@ -854,22 +1279,29 @@ function processDictionaryStatisticsTrackSnapshot(
         numIgnoredTokens,
         numIgnoredOccurrences,
         numKnownTokens,
-    } = statusCountsAndFrequencies(tokens);
-    const evaluatedSentenceSnapshots = sentenceSnapshots.map((sentenceSnapshot) =>
+    } = sentenceTokenCounts;
+    const evaluatedSentenceSnapshots = aggregateSentenceSnapshots.map((sentenceSnapshot) =>
+        evaluateSentenceSnapshot(sentenceSnapshot)
+    );
+    const evaluatedSentenceFilters = sentenceFilterSnapshots.map((sentenceSnapshot) =>
         evaluateSentenceSnapshot(sentenceSnapshot)
     );
     const currentSentenceTotals = sentenceTotals(evaluatedSentenceSnapshots);
     const { averageWordsPerSentence, averageKnownWordsPerSentence } = sentenceAveragesFromTotals(currentSentenceTotals);
-    const currentSentenceBuckets = buildSentenceBucketData(evaluatedSentenceSnapshots, tokens);
+    const currentSentenceBuckets = buildSentenceBucketData(evaluatedSentenceFilters, sentenceFilterTokens);
     const sentenceComprehensionPoints = sentenceComprehensionPointsFromSentenceTotals(currentSentenceTotals);
-    const trackAllSentenceEntries = allSentenceEntries(evaluatedSentenceSnapshots, tokens);
+    const trackAllSentenceEntries = allSentenceEntries(evaluatedSentenceSnapshots, aggregateTokens);
     const comprehensionPercent = comprehensionFromStatusOccurrences(statusCounts);
     const rewatchSnapshots = rewatchSnapshotsFromRaw(
         dictionaryCounts.numKnownTokens,
-        tokens,
-        sentenceSnapshots,
-        numKnownTokens,
-        consideredTokens
+        aggregateTokens,
+        aggregateSentenceSnapshots,
+        sentenceFilterTokens,
+        sentenceFilterSnapshots,
+        sentenceTokenCounts.numKnownTokens,
+        sentenceTokenCounts.consideredTokens,
+        aggregateProjectedData,
+        sentenceFilterProjectedData
     );
 
     return {
@@ -879,7 +1311,7 @@ function processDictionaryStatisticsTrackSnapshot(
         statusColors: trackSnapshot.statusColors,
         numDictionaryKnownTokens: dictionaryCounts.numKnownTokens,
         numDictionaryIgnoredTokens: dictionaryCounts.numIgnoredTokens,
-        numUniqueTokens: tokens.size,
+        numUniqueTokens: aggregateTokens.size,
         consideredTokens,
         numIgnoredTokens,
         numIgnoredOccurrences,
@@ -894,7 +1326,14 @@ function processDictionaryStatisticsTrackSnapshot(
         statusCounts,
         frequencyBuckets,
         sentenceBuckets: currentSentenceBuckets,
+        ankiDeckStats: currentKnowledgeData.ankiDeckStats,
+        waniKaniStats: currentKnowledgeData.waniKaniStats,
         rewatchSnapshots,
+        totalUnknownAnkiCards: unknownAnkiCardIds.length,
+        unknownAnkiCardsByDeck: unknownAnkiCardsByDeck.map(({ deckName, totalUnknownCards }) => ({
+            deckName,
+            totalUnknownCards,
+        })),
     };
 }
 
@@ -1015,11 +1454,12 @@ export function selectedRewatchSnapshotForTrack(
     selectedRewatchesByTrack: Record<number, number>
 ) {
     if (!trackSnapshot.rewatchSnapshots.length) return;
-    const selectedRewatch = Math.min(
-        selectedRewatchesByTrack[trackSnapshot.track] ?? 1,
-        trackSnapshot.rewatchSnapshots.length
+    const maxRewatch = trackSnapshot.rewatchSnapshots[trackSnapshot.rewatchSnapshots.length - 1].rewatch;
+    const selectedRewatch = Math.min(selectedRewatchesByTrack[trackSnapshot.track] ?? 0, maxRewatch);
+    return (
+        trackSnapshot.rewatchSnapshots.find((rewatchSnapshot) => rewatchSnapshot.rewatch === selectedRewatch) ??
+        trackSnapshot.rewatchSnapshots[0]
     );
-    return trackSnapshot.rewatchSnapshots[selectedRewatch - 1];
 }
 
 export function sortDictionaryStatisticsSentenceBucketEntries(
@@ -1115,11 +1555,13 @@ export function sortDictionaryStatisticsSentenceBucketEntries(
 }
 
 export function processDictionaryStatisticsSnapshot(
-    snapshot?: DictionaryStatisticsSnapshot
+    snapshot?: DictionaryStatisticsSnapshot,
+    projectionsByTrack: DictionaryStatisticsRewatchProjectionsByTrack = {}
 ): DictionaryStatisticsTrackSnapshot[] {
     return (
-        snapshot?.snapshots.map((trackSnapshot) => processDictionaryStatisticsTrackSnapshot(snapshot, trackSnapshot)) ??
-        []
+        snapshot?.snapshots.map((trackSnapshot) =>
+            processDictionaryStatisticsTrackSnapshot(snapshot, trackSnapshot, projectionsByTrack[trackSnapshot.track])
+        ) ?? []
     );
 }
 
@@ -1148,30 +1590,24 @@ export function processDictionaryStatisticsAnkiTrackSnapshot(
     const cardsInfo = snapshot.anki.cardsInfo ?? {};
     const dictionaryAnkiTreatSuspended =
         snapshot.settings.dictionaryTracks[track]?.dictionaryAnkiTreatSuspended ?? 'NORMAL';
-    const sentenceSnapshots = processSentenceSnapshots(rawTrackSnapshot.stats.sentences);
-    const tokens: ProcessedTokenSnapshots = new Map();
+    const sentenceSnapshots = processSentenceSnapshots(rawTrackSnapshot.stats.sentences, 'lemma');
+    const tokens = mergeSentenceTokenSnapshots(sentenceSnapshots);
     const deckDueCounts = new Map<string, DictionaryStatisticsAnkiDueCounts>();
     const deckSuspendedCardIds = new Map<string, Set<number>>();
     const deckModelTokenSnapshots = new Map<string, Map<string, ProcessedTokenSnapshot[]>>();
-
-    for (const { tokens: sentenceTokens } of sentenceSnapshots) {
-        for (const [tokenKey, token] of sentenceTokens.entries()) {
-            tokens.set(tokenKey, mergeTokenSnapshot(tokens.get(tokenKey), token));
-        }
-    }
 
     for (const [tokenKey, tokenSnapshot] of tokens.entries()) {
         if (tokenSnapshot.ignored) continue;
 
         const token = dictionaryTokenForGroupingKey(tokenKey, rawTrackSnapshot.stats.dictionary.tokens);
-        if (!token || token.states.includes(TokenState.IGNORED)) continue;
+        if (token?.states.includes(TokenState.IGNORED)) continue;
 
-        const tokenStatuses = token.statuses.filter(hasCardId);
+        const tokenStatuses = (tokenSnapshot.externalCandidateStatuses ?? token?.statuses ?? []).filter(hasCardId);
         if (!tokenStatuses.length) continue;
 
         incrementAnkiDueCounts(dueCounts, tokenStatuses, dueByToday, dueByTomorrow, dueByWeek);
 
-        const deckStatuses = new Map<string, (CardStatus & { cardId: number })[]>();
+        const deckStatuses = new Map<string, (TokenStatusInfo & { cardId: number })[]>();
         for (const status of tokenStatuses) {
             const cardInfo = cardsInfo[status.cardId];
             const deckName = cardInfo?.deckName;
@@ -1192,7 +1628,7 @@ export function processDictionaryStatisticsAnkiTrackSnapshot(
             incrementAnkiDueCounts(dueCountsForDeck, statuses, dueByToday, dueByTomorrow, dueByWeek);
             deckDueCounts.set(deckName, dueCountsForDeck);
 
-            const modelStatuses = new Map<string, (CardStatus & { cardId: number })[]>();
+            const modelStatuses = new Map<string, (TokenStatusInfo & { cardId: number })[]>();
             for (const status of statuses) {
                 const modelName = cardsInfo[status.cardId]?.modelName;
                 if (!modelName) continue;
@@ -1206,7 +1642,7 @@ export function processDictionaryStatisticsAnkiTrackSnapshot(
             const modelSnapshotsForDeck =
                 deckModelTokenSnapshots.get(deckName) ?? new Map<string, ProcessedTokenSnapshot[]>();
             for (const [modelName, statusesForModel] of modelStatuses.entries()) {
-                const tokenStatus = getCardTokenStatus(statusesForModel, dictionaryAnkiTreatSuspended);
+                const tokenStatus = getTokenStatus(statusesForModel, dictionaryAnkiTreatSuspended);
                 const modelTokens = modelSnapshotsForDeck.get(modelName) ?? [];
                 modelTokens.push({
                     status: tokenStatus,
@@ -1250,6 +1686,60 @@ export function processDictionaryStatisticsAnkiTrackSnapshot(
     };
 }
 
+export function processDictionaryStatisticsWaniKaniTrackSnapshot(
+    snapshot: DictionaryStatisticsSnapshot | undefined,
+    track: number
+): DictionaryStatisticsWaniKaniTrackSnapshot {
+    const dueCounts = emptyAnkiDueCounts();
+    const waniKaniSnapshot = snapshot?.waniKani?.[track];
+    const rawTrackSnapshot = snapshot?.snapshots.find((candidate) => candidate.track === track);
+    if (!snapshot || !rawTrackSnapshot) {
+        return {
+            available: waniKaniSnapshot?.available,
+            dueCounts,
+            uniqueWords: 0,
+            frequencyBuckets: [],
+        };
+    }
+
+    const { dueByToday, dueByTomorrow, dueByWeek } = waniKaniDueAssignmentSets(waniKaniSnapshot);
+    const sentenceSnapshots = processSentenceSnapshots(rawTrackSnapshot.stats.sentences, 'lemma');
+    const tokens = mergeSentenceTokenSnapshots(sentenceSnapshots);
+    const waniKaniTokenSnapshots: ProcessedTokenSnapshot[] = [];
+
+    for (const [tokenKey, tokenSnapshot] of tokens.entries()) {
+        if (tokenSnapshot.ignored) continue;
+
+        const token = dictionaryTokenForGroupingKey(tokenKey, rawTrackSnapshot.stats.dictionary.tokens);
+        if (token?.states.includes(TokenState.IGNORED)) continue;
+
+        const tokenStatuses = (tokenSnapshot.externalCandidateStatuses ?? token?.statuses ?? []).filter(hasWaniKani);
+        if (!tokenStatuses.length) continue;
+
+        incrementWaniKaniDueCounts(
+            dueCounts,
+            tokenStatuses.filter(hasAssignmentId),
+            dueByToday,
+            dueByTomorrow,
+            dueByWeek
+        );
+        waniKaniTokenSnapshots.push({
+            status: getTokenStatus(tokenStatuses, 'NORMAL'),
+            ignored: false,
+            frequency: tokenSnapshot.frequency,
+            numOccurrences: tokenSnapshot.numOccurrences,
+        });
+    }
+
+    const { consideredTokens, frequencyBuckets } = statusCountsAndFrequenciesForSnapshots(waniKaniTokenSnapshots);
+    return {
+        available: waniKaniSnapshot?.available,
+        dueCounts,
+        uniqueWords: consideredTokens,
+        frequencyBuckets,
+    };
+}
+
 export interface DictionarySimplifiedStatisticsTrackSnapshot {
     comprehensionPercent: number;
     sentenceBuckets: DictionaryStatisticsSentenceBuckets;
@@ -1269,17 +1759,16 @@ export function processSimplifiedDictionaryStatistics(
 function processSimplifiedDictionaryStatisticsTrackSnapshot(
     trackSnapshot: DictionaryStatisticsRawTrackSnapshot
 ): DictionarySimplifiedStatisticsTrackSnapshot {
-    const tokens: ProcessedTokenSnapshots = new Map();
     const { sentences } = trackSnapshot.stats;
-    const sentenceSnapshots = processSentenceSnapshots(sentences);
-    for (const { tokens: sentenceTokens } of sentenceSnapshots) {
-        for (const [k, token] of sentenceTokens.entries()) tokens.set(k, mergeTokenSnapshot(tokens.get(k), token));
-    }
-    const { statusCounts } = statusCountsAndFrequencies(tokens);
-    const evaluatedSentenceSnapshots = sentenceSnapshots.map((sentenceSnapshot) =>
+    const aggregateSentenceSnapshots = processSentenceSnapshots(sentences, 'lemma');
+    const sentenceFilterSnapshots = processSentenceSnapshots(sentences, 'surface');
+    const aggregateTokens = mergeSentenceTokenSnapshots(aggregateSentenceSnapshots);
+    const sentenceFilterTokens = mergeSentenceTokenSnapshots(sentenceFilterSnapshots);
+    const { statusCounts } = statusCountsAndFrequencies(aggregateTokens);
+    const evaluatedSentenceSnapshots = sentenceFilterSnapshots.map((sentenceSnapshot) =>
         evaluateSentenceSnapshot(sentenceSnapshot)
     );
-    const sentenceBuckets = buildSentenceBucketData(evaluatedSentenceSnapshots, tokens);
+    const sentenceBuckets = buildSentenceBucketData(evaluatedSentenceSnapshots, sentenceFilterTokens);
     const comprehensionPercent = comprehensionFromStatusOccurrences(statusCounts);
     const progress = trackSnapshot.progress;
     return { comprehensionPercent, sentenceBuckets, progress };

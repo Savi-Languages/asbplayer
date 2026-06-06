@@ -45,6 +45,7 @@ const defaultDictionaryTrackSettings: DictionaryTrack = {
     dictionaryColorizeOnHoverOnly: false,
     dictionaryHighlightOnHover: true,
     dictionaryTokenMatchStrategy: TokenMatchStrategy.ANY_FORM_COLLECTED,
+    dictionaryMatchAcrossScripts: true,
     dictionaryTokenMatchStrategyPriority: TokenMatchStrategyPriority.EXACT,
     dictionaryYomitanUrl: 'http://127.0.0.1:19633',
     dictionaryYomitanParser: 'scanning-parser',
@@ -58,6 +59,7 @@ const defaultDictionaryTrackSettings: DictionaryTrack = {
     dictionaryAnkiSentenceTokenMatchStrategy: TokenMatchStrategy.EXACT_FORM_COLLECTED,
     dictionaryAnkiMatureCutoff: 21,
     dictionaryAnkiTreatSuspended: 'NORMAL',
+    dictionaryWaniKaniApiToken: '',
     dictionaryTokenStyling: TokenStyling.UNDERLINE,
     dictionaryTokenStylingThickness: 3,
     dictionaryColorizeFullyKnownTokens: false,
@@ -74,6 +76,7 @@ const defaultDictionaryTrackSettings: DictionaryTrack = {
 
 export const defaultSettings: AsbplayerSettings = {
     ankiConnectUrl: 'http://127.0.0.1:8765',
+    ankiConnectApiKey: '',
     deck: '',
     noteType: '',
     sentenceField: '',
@@ -103,6 +106,8 @@ export const defaultSettings: AsbplayerSettings = {
     subtitlePositionOffset: 75,
     topSubtitlePositionOffset: 75,
     subtitleAlignment: 'bottom',
+    subtitleAboveThumbnail: true,
+    thumbnailPreview: false,
     subtitleTracksV2: [],
     subtitlesWidth: -1,
     audioPaddingStart: 0,
@@ -503,6 +508,12 @@ const ensureDictionaryTracksConsistency = ({ dictionaryTracks }: Partial<Asbplay
         if (!dt.dictionaryYomitanParser) (dt as any).dictionaryYomitanParser = defaultTrack.dictionaryYomitanParser;
         if (dt.dictionaryAutoGenerateStatistics === undefined) {
             (dt as any).dictionaryAutoGenerateStatistics = defaultTrack.dictionaryAutoGenerateStatistics;
+        }
+        if (dt.dictionaryWaniKaniApiToken === undefined) {
+            (dt as any).dictionaryWaniKaniApiToken = defaultTrack.dictionaryWaniKaniApiToken;
+        }
+        if (dt.dictionaryMatchAcrossScripts === undefined) {
+            (dt as any).dictionaryMatchAcrossScripts = defaultTrack.dictionaryMatchAcrossScripts;
         }
     }
     while (dictionaryTracks.length < NUM_DICTIONARY_TRACKS) {

@@ -4,7 +4,9 @@ sidebar_position: 5
 
 # Common issues
 
-## asbplayer can't connect to Anki. It shows an error message e.g. 'Failed to fetch.'
+## General
+
+### asbplayer can't connect to Anki. It shows an error message e.g. 'Failed to fetch.'
 
 This can happen due to ad blockers:
 
@@ -66,3 +68,53 @@ This is usually due to insufficient CPU. If you are on a laptop, make sure it's 
 ### When I use a keyboard shortcut to open asbplayer for streaming video, nothing happens and the page becomes unresponsive.
 
 This can happen because `Experimental Web Platform features` is enabled in `chrome://flags`. Make sure it's disabled and try again.
+
+## Annotation
+
+### Enable or disable annotation for a track
+
+Annotation is considered disabled if the following settings are set to these values:
+- [`Colorize subtitles based on known words`](./reference/settings.md#colorize-subtitles-based-on-known-words): **Off**
+- [`Display word readings`](./reference/settings.md#display-word-readings): **Never**
+- [`Display readings for ignored words`](./reference/settings.md#display-readings-for-ignored-words): **Off**
+- [`Display word frequency`](./reference/settings.md#display-word-frequency): **Never**
+
+To enable annotation for a track, set at least one of the above settings to a value other than the disabled value. Also check whether **Only show annotations on hover** is enabled.
+
+:::tip
+The [`Re-build Anki word database`](./reference/settings.md#re-build-anki-word-database) and [`Re-build WaniKani word database`](./reference/settings.md#re-build-wanikani-word-database) buttons will be disabled unless the above settings have specific values that benefit from their integration.
+:::
+
+### Clear Anki word database
+
+To clear the Anki word database entries for a track, set the [`Anki word fields`](./reference/settings.md#anki-word-fields) and [`Anki sentence fields`](./reference/settings.md#anki-sentence-fields) to empty values and use the [`Re-build Anki word database`](./reference/settings.md#re-build-anki-word-database) button. If the button is disabled, [follow these steps](#enable-or-disable-annotation-for-a-track) to enable annotation for the track first.
+
+### Clear WaniKani word database
+
+To clear the WaniKani word database entries for a track, set the [WaniKani API token](./reference/settings.md#wanikani-api-token) to an empty value and use the [`Re-build WaniKani word database`](./reference/settings.md#re-build-wanikani-word-database) button. If the button is disabled, [follow these steps](#enable-or-disable-annotation-for-a-track) to enable annotation for the track first.
+
+### Delete locally tracked words
+
+You can delete a locally tracked word by hovering over it and using the keyboard shortcut to set its status to [**Uncollected**](./reference/settings.md#keyboard-shortcuts) and toggling [**Ignored**](./reference/settings.md#keyboard-shortcuts) if it was set.
+
+To bulk delete locally tracked words, use the [`Word Browser`](./reference/settings.md#word-browser) to mark words as **Uncollected** and remove their states. You can also use the [`Import Words`](./reference/settings.md#import-words) feature.
+
+### Everything is uncollected
+
+If you accidentally enabled annotation, [follow these steps](#enable-or-disable-annotation-for-a-track) to disable it.
+
+If word statuses never change from **Uncollected**:
+- If you rely on local status, import words into the local word database or use the hover + keyboard shortcuts to set statuses.
+- If you rely on Anki for status, make sure Anki is running and your **AnkiConnect URL** is correct.
+    - Configure [`Anki word fields`](./reference/settings.md#anki-word-fields) (recommended) and/or [`Anki sentence fields`](./reference/settings.md#anki-sentence-fields).
+    - Run [`Re-build Anki word database`](./reference/settings.md#re-build-anki-word-database).
+    - You do not need to keep Anki running after the database is built but keeping Anki open during playback will keep asbplayer in sync.
+- If you rely on WaniKani for status, make sure your [`WaniKani API token`](./reference/settings.md#wanikani-api-token) is correct.
+    - Run [`Re-build WaniKani word database`](./reference/settings.md#re-build-wanikani-word-database).
+    - asbplayer will automatically sync with WaniKani during playback.
+
+### Red strikethrough styling appears
+
+If you accidentally enabled annotation, [follow these steps](#enable-or-disable-annotation-for-a-track) to disable it.
+
+This indicates there was an error processing the subtitles, most likely due to an issue connecting to Yomitan. Check the browser console for error messages and seek support in the asbplayer Discord if you can’t resolve the issue.

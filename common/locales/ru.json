@@ -203,7 +203,8 @@
         "subtitleFileNotOpen": "Файл субтитров {{fileName}} не открыт.",
         "unknownExtension": "Невозможно определить расширение файла {{fileName}}",
         "unsupportedExtension": "Неподдерживаемое расширение: {{extension}}",
-        "videoPlayerDragAndDropNotAllowed": "Нельзя перетаскивать файлы в сам видеоплеер. Перетащите и отпустите их вне рамки видео."
+        "videoPlayerDragAndDropNotAllowed": "Нельзя перетаскивать файлы в сам видеоплеер. Перетащите и отпустите их вне рамки видео.",
+        "restoreSessionFailed": "Не удалось восстановить последнюю сессию. Возможно, файлы были перемещены или удалены."
     },
     "extension": {
         "settings": {
@@ -327,7 +328,8 @@
         "extensionUpdateAvailable": "Доступно <1>обновление</1> для расширения.",
         "noSubtitles": "Субтитры отсутствуют",
         "videoElementsDetected": "Загрузите субтитры в видео, чтобы начать использовать asbplayer.",
-        "noVideoElementsDetected": "Видео не обнаружено."
+        "noVideoElementsDetected": "Видео не обнаружено.",
+        "restoreLastSession": "Восстановить последнюю сессию"
     },
     "activeTabPermissionRequest": {
         "title": "Разрешить запись аудио.",
@@ -353,6 +355,7 @@
         "alwaysPlayOnSubtitleRepeat": "Всегда воспроизводить после вызова 'Перемотать к началу текущего/предыдущего субтитра'",
         "anki": "Anki",
         "ankiConnectUrl": "URL Anki Connect",
+        "ankiConnectApiKey": "Anki Connect API Key",
         "audioField": "Поле аудио",
         "audioPaddingEnd": "Отступ аудио в конце",
         "audioPaddingStart": "Отступ аудио в начале",
@@ -428,6 +431,8 @@
         "subtitleAlignment": "Расположение субтитров",
         "subtitleAlignmentBottom": "У нижнего края",
         "subtitleAlignmentTop": "У верхнего края",
+        "subtitleAboveThumbnail": "Subtitle above thumbnail",
+        "thumbnailPreview": "Show preview thumbnails",
         "subtitleBlur": "Размытие субтитров",
         "subtitleTrack": "Дорожка субтитров",
         "allSubtitleTracks": "Все",
@@ -476,8 +481,13 @@
         "buildAnkiCacheHelperText": "The cache is automatically updated during playback when a track is enabled and Anki is connectable.",
         "buildAnkiCacheAnkiEnableHelperText": "Configure word fields and/or sentence fields to use Anki for known words.",
         "ankiCacheDependentSettingsHelperText": "Changing \"{{field}}\" could invalidate the Anki cache, trigger a rebuild now or have it done automatically on your next playback when this track is enabled and Anki is connectable.",
+        "buildWaniKaniCache": "Re-Build WaniKani word database",
+        "buildWaniKaniCacheHelperText": "The WaniKani word database is automatically updated during playback when a track is enabled and a token is configured.",
+        "buildWaniKaniCacheTokenEnableHelperText": "Add a WaniKani API token below to collect your WaniKani vocabulary.",
+        "waniKaniCacheDependentSettingsHelperText": "Changing \"{{field}}\" could invalidate the WaniKani cache, trigger a rebuild now or have it done automatically on your next playback when this track is enabled and a token is configured.",
         "dictionaryLocalWordDatabase": "Local word database",
         "dictionaryAnkiWordDatabase": "Anki word database",
+        "dictionaryWaniKaniWordDatabase": "WaniKani word database",
         "dictionaryColorizeSubtitles": "Colorize subtitles based on known words",
         "dictionaryAutoGenerateStatistics": "Generate statistics automatically",
         "dictionaryColorizeOnHoverOnly": "On Hover Only",
@@ -487,6 +497,7 @@
         "dictionaryTokenMatchStrategyLemmaOrExactFormCollected": "Lemma or exact form collected",
         "dictionaryTokenMatchStrategyLemmaFormCollected": "Lemma form collected",
         "dictionaryTokenMatchStrategyExactFormCollected": "Exact form collected",
+        "dictionaryMatchAcrossScripts": "Match across language scripts",
         "dictionaryTokenMatchStrategyPriority": "Card choice priority",
         "dictionaryTokenMatchStrategyPriorityExact": "Field contains exact form",
         "dictionaryTokenMatchStrategyPriorityLemma": "Field contains lemma",
@@ -519,6 +530,9 @@
         "dictionaryAnkiMatureCutoff": "Mature Anki stability/interval (days)",
         "dictionaryAnkiTreatSuspended": "Treat suspended Anki cards as",
         "dictionaryAnkiTreatSuspendedNormal": "Normal",
+        "dictionaryWaniKaniSection": "WaniKani",
+        "dictionaryWaniKaniApiToken": "WaniKani API token",
+        "dictionaryWaniKaniApiTokenHelperText": "Instructions to get an API token are <0>here</0>.",
         "dictionaryTokenStyling": "Word color style",
         "dictionaryTokenStylingText": "Text",
         "dictionaryTokenStylingBackground": "Background",
@@ -542,12 +556,20 @@
         "dictionaryTokenStatusReading0": "Reading",
         "dictionaryTokenStateIgnored": "Ignored",
         "dictionaryBuildAnkiStarted": "Querying Anki for modified cards",
+        "dictionaryBuildWaniKaniStarted": "Syncing WaniKani vocabulary",
         "dictionaryTokenStatusAlpha": "Alpha",
         "dictionaryBuildAnkiTracks": "Anki track(s): {{tracks}}",
+        "dictionaryBuildWaniKaniTrack": "WaniKani track #{{trackNumber}}",
+        "dictionaryBuildWaniKaniTrackCleared": "cleared",
+        "dictionaryBuildWaniKaniTrackNoChanges": "no changes",
         "dictionaryBuildModifiedCards": "{{numCards}} modified card(s)",
+        "dictionaryBuildWaniKaniTokens": "{{numTokens}} imported word(s)",
+        "dictionaryBuildWaniKaniAssignments": "{{numAssignments}} assignment(s)",
+        "dictionaryBuildWaniKaniSubjects": "{{numSubjects}} subject(s)",
         "dictionaryBuildOrphanedCards": "{{numCards}} deleted card(s) from orphaned track(s): {{tracks}}",
         "dictionaryBuildInProgress": "Build already in progress (expires at {{time}})",
         "dictionaryBuildAnkiError": "Error getting permission from Anki",
+        "dictionaryBuildWaniKaniTokenInvalidError": "Error connecting to WaniKani. Check the API token for track {{trackNumber}}.",
         "dictionaryBuildYomitanError": "Error connecting to Yomitan for track {{trackNumber}} (disable this track to ignore)",
         "dictionaryImportClipboardIgnored": "Mark words as ignored",
         "dictionaryImportClipboardText": "Paste text or one word per line",
@@ -579,13 +601,16 @@
                 "status": "Status",
                 "states": "States",
                 "track": "Track",
+                "assignmentIds": "Assignment IDs",
                 "cardIds": "Card IDs",
+                "subjectIds": "Subject IDs",
                 "noteIds": "Note IDs",
                 "suspended": "Suspended"
             },
             "sources": {
                 "local": "Local",
                 "ankiWord": "Anki word",
+                "waniKani": "WaniKani",
                 "ankiSentence": "Anki sentence"
             },
             "suspended": {
@@ -620,6 +645,7 @@
         "occurrences": "Occurrences",
         "sentenceStatistics": "Sentence statistics",
         "currentWatch": "Current watch",
+        "projected": "Projected",
         "projectedRewatch": "Projected rewatch",
         "rewatchSelect": "Rewatch",
         "rewatchOption": "Rewatch #{{rewatch}}",
@@ -630,6 +656,7 @@
         "noMoreRewatches": "There will be no more mining after all i+1 sentences this session.",
         "totalSentences": "Total sentences",
         "knownSentences": "Known sentences",
+        "projectMature": "Treat upcoming material as mature",
         "anki": {
             "ankiStatistics": "Anki statistics",
             "dueByToday": "Due by today",
@@ -638,10 +665,27 @@
             "suspended": "Suspended",
             "deckBreakdown": "Deck breakdown",
             "modelBreakdown": "Model breakdown",
+            "newCardsCount": "{{count}} new cards",
+            "projectReviewedCards": "Treat all reviewed cards as mature",
+            "knownDeckWords": "Anki known words",
             "ankiNeedsToBeRunning": "Anki needs to be running to load statistics.",
             "noDeckBreakdown": "No matching Anki cards were found for this media.",
             "info": {
-                "ankiStatistics": "How your Anki cards match up with the words in this media."
+                "ankiStatistics": "How your Anki cards match up with the words in this media.",
+                "projectedCards": "Preview your stats by treating past cards or new cards (in the order they will be introduced) as Mature."
+            }
+        },
+        "waniKani": {
+            "waniKaniStatistics": "WaniKani statistics",
+            "projectLevel": "WaniKani level",
+            "projectedWords": "WaniKani known words",
+            "projectedLevel": "Level {{level}}",
+            "currentKnowledge": "Current WaniKani",
+            "waniKaniNeedsToBeAvailable": "WaniKani statistics could not be loaded.",
+            "noWaniKaniBreakdown": "No matching WaniKani vocabulary was found for this media.",
+            "info": {
+                "waniKaniStatistics": "How your upcoming WaniKani reviews match up with the words in this media.",
+                "projectedLevel": "Preview your stats by treating all words at or below a level as Mature."
             }
         },
         "info": {
@@ -669,6 +713,9 @@
         "entries": "Search results",
         "noEntries": "No search results",
         "availableFiles": "Files",
-        "noFiles": "No files"
+        "noFiles": "No files",
+        "searchCategory": "Search category",
+        "categoryAnime": "Anime",
+        "categoryDrama": "Drama"
     }
 }

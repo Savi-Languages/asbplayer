@@ -238,7 +238,7 @@ export default function SidePanel({ dictionaryProvider, settingsProvider, settin
         }
 
         return extension.subscribeTabs(() => {
-            const asbplayer = extension.asbplayers?.find((a) => a.tabId === currentTabId);
+            const asbplayer = extension.asbplayers?.find((a) => a.tabId === currentTabId && !a.videoPlayer);
             if (asbplayer === undefined) {
                 setViewingAsbplayer(undefined);
                 return;

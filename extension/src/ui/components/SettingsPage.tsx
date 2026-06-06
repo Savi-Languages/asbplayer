@@ -120,6 +120,8 @@ const SettingsPage = ({
                         extensionSupportsPageSettings
                         extensionSupportsDictionary
                         extensionSupportsDictionaryBrowser
+                        extensionSupportsDictionaryWaniKani
+                        extensionSupportsDictionaryMatchAcrossScripts
                         extensionSupportsSeekableTrackSetting
                         extensionSupportsAutoCopyableTrackSetting
                         extensionSupportsDictionaryTokenStatusDisplayAlpha
