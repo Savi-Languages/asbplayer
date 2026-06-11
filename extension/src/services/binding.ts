@@ -94,6 +94,7 @@ import { DictionaryProvider } from '@project/common/dictionary-db/dictionary-pro
 import { ExtensionDictionaryStorage } from './extension-dictionary-storage';
 import { HoveredToken } from '@project/common/subtitle-annotations';
 import { v4 as uuidv4 } from 'uuid';
+import { SaviCaptureController } from '../savi/capture-controller';
 
 let netflix = false;
 document.addEventListener('asbplayer-netflix-enabled', (e) => {
@@ -170,6 +171,7 @@ export default class Binding {
     readonly settings: SettingsProvider;
     private readonly _audioRecorder = new AudioRecorder();
     readonly bulkExportController: BulkExportController;
+    readonly saviCaptureController: SaviCaptureController;
 
     private copyToClipboardOnMine: boolean;
     private clickToMineDefaultAction: PostMineAction;
@@ -231,6 +233,13 @@ export default class Binding {
         this.subtitleController.onOffsetChange = () => this.mobileVideoOverlayController.updateModel();
         this.mobileGestureController = new MobileGestureController(this);
         this.bulkExportController = new BulkExportController(this);
+        this.saviCaptureController = new SaviCaptureController({
+            video,
+            settings: this.settings,
+            currentSubtitles: () => this.subtitleController.subtitles,
+            videoSrc: () => this._registeredVideoSrc,
+            notify: (locKey, replacements) => this.subtitleController.notification(locKey, replacements),
+        });
         this.hoveredToken = new HoveredToken();
         this.recordMedia = true;
         this.takeScreenshot = true;
@@ -525,6 +534,7 @@ export default class Binding {
         this.dragController.bind(this);
         this.mobileGestureController.bind();
         this.bulkExportController.bind();
+        this.saviCaptureController.bind();
 
         const seek = (forward: boolean) => {
             const subtitle = adjacentSubtitle(
@@ -1216,6 +1226,7 @@ export default class Binding {
             this.listener = undefined;
         }
 
+        this.saviCaptureController.unbind();
         this.unsubscribeStatisticsSeek?.();
         this.unsubscribeStatisticsSeek = undefined;
         this.unsubscribeStatisticsSubtitleMine?.();
@@ -1651,6 +1662,10 @@ export default class Binding {
         this._syncedTimestamp = Date.now();
         this._lastSyncedLocation = window.location.href;
 
+        if (subtitles.length > 0) {
+            this.saviCaptureController.onSubtitlesLoaded();
+        }
+
         if (this.video.paused) {
             this.mobileVideoOverlayController.show();
         }
@@ -1677,6 +1692,7 @@ export default class Binding {
     }
 
     private _resetSubtitles() {
+        this.saviCaptureController.onSubtitlesReset();
         this.subtitleController.reset();
         this.ankiUiSavedState = undefined;
         this._synced = false;

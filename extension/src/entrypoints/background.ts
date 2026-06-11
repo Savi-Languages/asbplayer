@@ -77,6 +77,7 @@ import BrowserFeaturesHandler from '@/handlers/asbplayerv2/browser-features-hand
 import OpenStatisticsHandler from '@/handlers/video/open-statistics-handler';
 import StatisticsOverlayForwarderHandler from '@/handlers/statistics-overlay/statistics-overlay-forwarder-handler';
 import OpenStatisticsOverlayHandler from '@/handlers/open-statistics-overlay-handler';
+import SaviCommandHandler from '@/savi/background-handler';
 
 export default defineBackground(() => {
     if (!isFirefoxBuild) {
@@ -223,6 +224,7 @@ export default defineBackground(() => {
         new CurrentTabHandler(),
         new MobileOverlayForwarderHandler(),
         new StatisticsOverlayForwarderHandler(),
+        new SaviCommandHandler(settings),
     ];
 
     browser.runtime.onMessage.addListener((request: Command<Message>, sender, sendResponse) => {

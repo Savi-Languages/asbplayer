@@ -188,6 +188,18 @@ export default defineConfig({
                 ...key,
                 minimum_chrome_version: '116',
                 commands,
+                // Savi integration: the savi daemon serves no CORS headers, so
+                // extension-context fetches to it need host permissions. Covers
+                // localhost and mDNS .local hostnames (the daemon's supported
+                // runtime topology — bare LAN IPs are intentionally excluded).
+                host_permissions: [
+                    'http://127.0.0.1/*',
+                    'https://127.0.0.1/*',
+                    'http://localhost/*',
+                    'https://localhost/*',
+                    'http://*.local/*',
+                    'https://*.local/*',
+                ],
             };
         }
 
