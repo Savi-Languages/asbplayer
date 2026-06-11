@@ -467,6 +467,10 @@
         "missingFieldError": "笔记类型中未找到字段“{{field}}”",
         "webSocketClientEnabled": "启用 WebSocket 客户端",
         "webSocketServerUrl": "WebSocket 服务端链接",
+        "saviSection": "Savi capture",
+        "saviCaptureEnabled": "Auto-capture episodes to savi when subtitles load",
+        "saviDaemonUrl": "Savi daemon URL",
+        "saviDaemonToken": "Savi daemon token",
         "firefoxExtensionShortcutHelp": "请在 about:addons 插件管理器中编辑此快捷键。",
         "postMinePlayback": "挖掘后的播放状态",
         "pauseOnHoverMode": "鼠标悬停于字幕时自动暂停",
@@ -717,5 +721,18 @@
         "searchCategory": "Search category",
         "categoryAnime": "Anime",
         "categoryDrama": "Drama"
+    },
+    "savi": {
+        "notConfigured": "Savi: daemon URL/token not configured in settings",
+        "noSubtitles": "Savi: no subtitle track loaded to capture",
+        "captureStarted": "Savi: capturing episode",
+        "captureFinishing": "Savi: finishing episode…",
+        "captureFinished": "Savi: episode saved — {{lines}} lines, {{minutes}} min of dialogue",
+        "captureFailed": "Savi: capture failed — {{message}}",
+        "rateUnsupported": "Savi: playback rate {{rate}} cannot be captured (supported: 0.5–2)",
+        "capturing": "Capturing: {{title}}",
+        "idle": "Savi capture idle",
+        "start": "Capture",
+        "stop": "Stop"
     }
 }

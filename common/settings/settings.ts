@@ -589,6 +589,13 @@ export interface WebSocketClientSettings {
     readonly webSocketClientEnabled: boolean;
 }
 
+// Savi integration: streaming-capture daemon connection (see extension/src/savi)
+export interface SaviSettings {
+    readonly saviCaptureEnabled: boolean;
+    readonly saviDaemonUrl: string;
+    readonly saviDaemonToken: string;
+}
+
 export type ChromeBoundKeyBindName = 'copySubtitle' | 'ankiExport' | 'updateLastCard' | 'exportCard' | 'takeScreenshot';
 export type SubtitleAlignment = 'top' | 'bottom';
 export enum SubtitleListPreference {
@@ -679,7 +686,8 @@ export interface AsbplayerSettings
         SubtitleSettings,
         DictionarySettings,
         StreamingVideoSettings,
-        WebSocketClientSettings {
+        WebSocketClientSettings,
+        SaviSettings {
     readonly subtitlePreview: string;
 }
 

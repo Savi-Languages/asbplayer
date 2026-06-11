@@ -82,6 +82,9 @@ const MiscSettingTab: React.FC<Props> = ({
         pauseOnHoverMode,
         webSocketClientEnabled,
         webSocketServerUrl,
+        saviCaptureEnabled,
+        saviDaemonUrl,
+        saviDaemonToken,
         subtitleAboveThumbnail,
         thumbnailPreview,
     } = settings;
@@ -438,6 +441,32 @@ const MiscSettingTab: React.FC<Props> = ({
                             ),
                         },
                     }}
+                />
+                <SettingsSection>{t('settings.saviSection')}</SettingsSection>
+                <SwitchLabelWithHoverEffect
+                    control={
+                        <Switch
+                            checked={saviCaptureEnabled}
+                            onChange={(e) => onSettingChanged('saviCaptureEnabled', e.target.checked)}
+                        />
+                    }
+                    label={t('settings.saviCaptureEnabled')}
+                    labelPlacement="start"
+                />
+                <SettingsTextField
+                    color="primary"
+                    fullWidth
+                    label={t('settings.saviDaemonUrl')}
+                    value={saviDaemonUrl}
+                    onChange={(e) => onSettingChanged('saviDaemonUrl', e.target.value)}
+                />
+                <SettingsTextField
+                    color="primary"
+                    fullWidth
+                    type="password"
+                    label={t('settings.saviDaemonToken')}
+                    value={saviDaemonToken}
+                    onChange={(e) => onSettingChanged('saviDaemonToken', e.target.value)}
                 />
                 <SettingsSection>{t('settings.mining')}</SettingsSection>
                 <SettingsTextField
