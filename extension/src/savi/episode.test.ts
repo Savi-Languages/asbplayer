@@ -1,4 +1,11 @@
-import { episodeIdForTitle, slugify } from './episode';
+import {
+    deriveEpisodeId,
+    deriveShowAndTitle,
+    netflixShowAndTitleFromDom,
+    showAndTitleFromDocumentTitle,
+    slugify,
+    stripSiteSuffix,
+} from './episode';
 
 describe('slugify', () => {
     it('lowercases and dashes Latin titles', () => {
@@ -26,17 +33,193 @@ describe('slugify', () => {
     });
 });
 
-describe('episodeIdForTitle', () => {
-    it('appends a date-time suffix so same-day same-title captures cannot collide', () => {
-        const at = new Date(2026, 5, 10, 21, 5); // 2026-06-10 21:05 local
-        expect(episodeIdForTitle('Watch Dark | Netflix', at)).toBe('watch-dark-netflix-20260610-2105');
+describe('stripSiteSuffix', () => {
+    it('strips a trailing " - Netflix" / " | Netflix" suffix', () => {
+        expect(stripSiteSuffix('Dark - Netflix')).toBe('Dark');
+        expect(stripSiteSuffix('Dark | Netflix')).toBe('Dark');
     });
 
-    it('produces ids that satisfy the daemon id rules', () => {
-        const id = episodeIdForTitle('日本語/タイトル..テスト', new Date(2026, 0, 2, 3, 4));
+    it('strips a trailing " - YouTube" suffix', () => {
+        expect(stripSiteSuffix('Some Great Video - YouTube')).toBe('Some Great Video');
+    });
+
+    it('leaves an internal dash that is part of the real title alone', () => {
+        expect(stripSiteSuffix('Episode 3 - The Reveal')).toBe('Episode 3 - The Reveal');
+    });
+
+    it('is a no-op for an unknown / missing suffix', () => {
+        expect(stripSiteSuffix('Just A Title')).toBe('Just A Title');
+    });
+});
+
+describe('deriveEpisodeId — Netflix', () => {
+    it('uses the /watch/<videoId> path segment, ignoring trackId', () => {
+        expect(
+            deriveEpisodeId('https://www.netflix.com/watch/81932329?trackId=255824129&tctx=0%2C0%2C', 'Dark | Netflix')
+        ).toBe('netflix:81932329');
+    });
+
+    it('derives the id with no query params at all', () => {
+        expect(deriveEpisodeId('https://www.netflix.com/watch/70143836', 'Breaking Bad | Netflix')).toBe(
+            'netflix:70143836'
+        );
+    });
+
+    it('handles a locale-prefixed watch path', () => {
+        expect(deriveEpisodeId('https://www.netflix.com/gb/watch/81932329?trackId=abc', 'Dark')).toBe(
+            'netflix:81932329'
+        );
+    });
+
+    it('falls back to hostname:slug on a non-watch Netflix page (no videoId)', () => {
+        expect(deriveEpisodeId('https://www.netflix.com/browse', 'Home - Netflix')).toBe('netflix.com:home');
+    });
+});
+
+describe('deriveEpisodeId — YouTube', () => {
+    it('uses the ?v= param on a watch URL', () => {
+        expect(deriveEpisodeId('https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42s', 'Never Gonna - YouTube')).toBe(
+            'youtube:dQw4w9WgXcQ'
+        );
+    });
+
+    it('uses the path segment for a youtu.be short link', () => {
+        expect(deriveEpisodeId('https://youtu.be/dQw4w9WgXcQ?si=xyz', 'Never Gonna')).toBe('youtube:dQw4w9WgXcQ');
+    });
+
+    it('handles music.youtube.com via the ?v= param', () => {
+        expect(deriveEpisodeId('https://music.youtube.com/watch?v=abc123', 'Song')).toBe('youtube:abc123');
+    });
+
+    it('falls back to hostname:slug when ?v= is missing', () => {
+        expect(deriveEpisodeId('https://www.youtube.com/feed/subscriptions', 'Subscriptions - YouTube')).toBe(
+            'youtube.com:subscriptions'
+        );
+    });
+});
+
+describe('deriveEpisodeId — generic fallback', () => {
+    it('uses hostname:slug(title) with no date for an unknown host', () => {
+        expect(
+            deriveEpisodeId('https://www.crunchyroll.com/watch/abc/something', 'Naruto Episode 1 | Crunchyroll')
+        ).toBe('crunchyroll.com:naruto-episode-1');
+    });
+
+    it('strips a leading www. from the hostname namespace', () => {
+        expect(deriveEpisodeId('https://www.example.org/video', 'My Video')).toBe('example.org:my-video');
+    });
+
+    it('is stable across visits (no date component)', () => {
+        const a = deriveEpisodeId('https://www.example.org/video', 'My Video');
+        const b = deriveEpisodeId('https://www.example.org/video', 'My Video');
+        expect(a).toBe(b);
+        expect(a).not.toMatch(/\d{8}/); // no YYYYMMDD date suffix
+    });
+
+    it('falls back to a bare slug when the url is unparseable', () => {
+        expect(deriveEpisodeId('not a url', 'Some Title - Netflix')).toBe('some-title');
+    });
+
+    it('falls back to a bare slug when the url is empty', () => {
+        expect(deriveEpisodeId('', 'Mystery Show')).toBe('mystery-show');
+    });
+
+    it('produces a daemon-safe fallback id (no separators / traversal)', () => {
+        const id = deriveEpisodeId('https://x.test/v', '日本語/タイトル..テスト');
         expect(id.length).toBeGreaterThan(0);
-        expect(id).not.toContain('/');
-        expect(id).not.toContain('\\');
-        expect(id).not.toContain('..');
+        expect(id.split(':').pop()).not.toContain('/');
+        expect(id.split(':').pop()).not.toContain('\\');
+        expect(id.split(':').pop()).not.toContain('..');
+    });
+
+    it('never throws on garbage input', () => {
+        expect(() => deriveEpisodeId(null as unknown as string, undefined as unknown as string)).not.toThrow();
+    });
+});
+
+describe('netflixShowAndTitleFromDom', () => {
+    it('combines series name + episode label into show/title', () => {
+        expect(netflixShowAndTitleFromDom('Dark', 'S1:E3 Secrets')).toEqual({ show: 'Dark', title: 'S1:E3 Secrets' });
+    });
+
+    it('treats a lone series-name (film) as the title with no show', () => {
+        expect(netflixShowAndTitleFromDom('The Irishman', undefined)).toEqual({
+            show: undefined,
+            title: 'The Irishman',
+        });
+    });
+
+    it('uses a lone episode label as the title', () => {
+        expect(netflixShowAndTitleFromDom(undefined, 'Pilot')).toEqual({ show: undefined, title: 'Pilot' });
+    });
+
+    it('returns undefined when neither is present', () => {
+        expect(netflixShowAndTitleFromDom(undefined, undefined)).toBeUndefined();
+        expect(netflixShowAndTitleFromDom('   ', '  ')).toBeUndefined();
+    });
+
+    it('trims surrounding whitespace', () => {
+        expect(netflixShowAndTitleFromDom('  Dark  ', '  Alpha and Omega  ')).toEqual({
+            show: 'Dark',
+            title: 'Alpha and Omega',
+        });
+    });
+});
+
+describe('showAndTitleFromDocumentTitle', () => {
+    it('strips the "Watch " prefix and site suffix', () => {
+        expect(showAndTitleFromDocumentTitle('Watch Dark | Netflix')).toEqual({ show: undefined, title: 'Dark' });
+    });
+
+    it('strips a " - Netflix" suffix', () => {
+        expect(showAndTitleFromDocumentTitle('Dark - Netflix')).toEqual({ show: undefined, title: 'Dark' });
+    });
+
+    it('falls back to the raw title when stripping leaves nothing', () => {
+        expect(showAndTitleFromDocumentTitle('Netflix')).toEqual({ show: undefined, title: 'Netflix' });
+    });
+
+    it('leaves a plain title untouched', () => {
+        expect(showAndTitleFromDocumentTitle('My Home Movie')).toEqual({ show: undefined, title: 'My Home Movie' });
+    });
+});
+
+describe('deriveShowAndTitle', () => {
+    it('prefers the Netflix DOM overlay when present on a netflix page', () => {
+        expect(
+            deriveShowAndTitle('https://www.netflix.com/watch/81932329', 'Watch Dark | Netflix', {
+                seriesName: 'Dark',
+                episodeLabel: 'S1:E3 Secrets',
+            })
+        ).toEqual({ show: 'Dark', title: 'S1:E3 Secrets' });
+    });
+
+    it('falls back to document.title when the Netflix overlay is empty', () => {
+        expect(
+            deriveShowAndTitle('https://www.netflix.com/watch/81932329', 'Watch Dark | Netflix', {
+                seriesName: undefined,
+                episodeLabel: undefined,
+            })
+        ).toEqual({ show: undefined, title: 'Dark' });
+    });
+
+    it('ignores Netflix DOM hints on a non-netflix page', () => {
+        expect(
+            deriveShowAndTitle('https://www.youtube.com/watch?v=abc', 'Cool Video - YouTube', {
+                seriesName: 'Should Be Ignored',
+            })
+        ).toEqual({ show: undefined, title: 'Cool Video' });
+    });
+
+    it('uses document.title when no DOM hints are passed', () => {
+        expect(deriveShowAndTitle('https://www.netflix.com/watch/1', 'Watch Better Call Saul | Netflix')).toEqual({
+            show: undefined,
+            title: 'Better Call Saul',
+        });
+    });
+
+    it('never throws on an unparseable url', () => {
+        expect(() => deriveShowAndTitle('::::', 'whatever')).not.toThrow();
+        expect(deriveShowAndTitle('::::', 'whatever')).toEqual({ show: undefined, title: 'whatever' });
     });
 });

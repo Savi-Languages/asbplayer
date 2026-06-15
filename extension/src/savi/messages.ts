@@ -28,6 +28,10 @@ export interface SaviRequester {
 export interface SaviStartCaptureMessage {
     readonly command: 'savi-start-capture';
     readonly episodeId: string;
+    // Series name (e.g. "Dark"); absent for films / unrecognized pages.
+    readonly show?: string;
+    // Episode label (e.g. "S1:E3 Secrets") or, when no show is known, the
+    // best available page title. Always present.
     readonly title: string;
     readonly lang?: string;
     readonly subtitles: string;
@@ -91,6 +95,7 @@ export interface SaviOffscreenStartMessage {
     readonly streamId: string;
     readonly captureId: string;
     readonly episodeId: string;
+    readonly show?: string;
     readonly title: string;
     readonly baseUrl: string;
     readonly token: string;

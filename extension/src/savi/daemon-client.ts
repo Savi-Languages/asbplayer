@@ -1,7 +1,10 @@
 // Thin HTTP client for the savi daemon's capture API.
 //
 // Contract (savi-server crates/savi-server/src/capture.rs):
-//   POST {base}/api/capture/start     {episodeId, title?, lang?} → {captureId}
+//   POST {base}/api/capture/start     {episodeId, show?, title?, lang?} → {captureId}
+//        Capture v2: episodeId is platform-stable, so captureId is
+//        deterministic (safe(episodeId)) and an existing episode resumes.
+//        show/title are best-effort page metadata for the per-show library.
 //   POST {base}/api/capture/chunk?captureId=&segmentId=&mediaTimeMs=&rate=
 //        raw audio bytes; mediaTimeMs/rate read from a segment's FIRST chunk
 //   POST {base}/api/capture/subtitles {captureId, content, format}
@@ -60,9 +63,9 @@ const jsonInit = (body: any): RequestInit => ({
 
 export const startCapture = async (
     config: SaviDaemonConfig,
-    { episodeId, title, lang }: { episodeId: string; title?: string; lang?: string }
+    { episodeId, show, title, lang }: { episodeId: string; show?: string; title?: string; lang?: string }
 ): Promise<string> => {
-    const body = await request(config, '/api/capture/start', jsonInit({ episodeId, title, lang }));
+    const body = await request(config, '/api/capture/start', jsonInit({ episodeId, show, title, lang }));
     return body.captureId;
 };
 

@@ -104,6 +104,7 @@ export default class SaviCommandHandler implements CommandHandler {
         try {
             captureId = await startCapture(config, {
                 episodeId: message.episodeId,
+                show: message.show,
                 title: message.title,
                 lang: message.lang,
             });
@@ -130,6 +131,7 @@ export default class SaviCommandHandler implements CommandHandler {
                 streamId,
                 captureId,
                 episodeId: message.episodeId,
+                show: message.show,
                 title: message.title,
                 baseUrl: config.baseUrl,
                 token: config.token,

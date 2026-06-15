@@ -15,7 +15,7 @@
 import { SettingsProvider } from '@project/common/settings';
 import { Segmenter, SegmenterOutput } from './segmenter';
 import { serializeToSrt, SerializableSubtitle } from './subtitle-serializer';
-import { episodeIdForTitle } from './episode';
+import { deriveEpisodeId, deriveShowAndTitle } from './episode';
 import {
     SaviCommand,
     SaviSegmentMessage,
@@ -149,14 +149,15 @@ export class SaviCaptureController {
             }
 
             const video = this._host.video;
-            const title = document.title.trim() || 'episode';
+            const { episodeId, show, title } = this._pageMetadata();
             const lang = (streamingLastLanguagesSynced[window.location.host] ?? []).find((l) => l && l !== '-');
 
             const command: SaviCommand<SaviStartCaptureMessage> = {
                 sender: 'savi-video',
                 message: {
                     command: 'savi-start-capture',
-                    episodeId: episodeIdForTitle(title, new Date()),
+                    episodeId,
+                    show,
                     title,
                     lang,
                     subtitles: serializeToSrt(subtitles),
@@ -187,6 +188,74 @@ export class SaviCaptureController {
             this._host.notify('savi.captureFailed', { message: e instanceof Error ? e.message : String(e) });
         } finally {
             this._starting = false;
+        }
+    }
+
+    // Computes the stable episode id + best-effort show/title at capture
+    // start. All DOM reading lives here (content-script context); the
+    // parsing/derivation is delegated to the pure helpers in episode.ts so
+    // it stays unit-tested. Fully defensive — never throws.
+    private _pageMetadata(): { episodeId: string; show?: string; title: string } {
+        const url = this._safeLocationHref();
+        const documentTitle = this._safeDocumentTitle();
+        const netflixDom = this._readNetflixOverlay();
+        const { show, title } = deriveShowAndTitle(url, documentTitle, netflixDom);
+
+        return {
+            episodeId: deriveEpisodeId(url, documentTitle),
+            show,
+            // title is guaranteed non-empty by deriveShowAndTitle, but guard
+            // the daemon's non-empty requirement one more time.
+            title: title.trim() || 'episode',
+        };
+    }
+
+    private _safeLocationHref(): string {
+        try {
+            return window.location.href;
+        } catch (e) {
+            return '';
+        }
+    }
+
+    private _safeDocumentTitle(): string {
+        try {
+            return document.title.trim();
+        } catch (e) {
+            return '';
+        }
+    }
+
+    // Best-effort read of Netflix's player title overlay (series name +
+    // episode label). Netflix's markup is unstable and class-hashed, so this
+    // tries a couple of known structures and silently yields undefined when
+    // none match — the caller then falls back to document.title.
+    private _readNetflixOverlay(): { seriesName?: string; episodeLabel?: string } | undefined {
+        try {
+            if (!/(^|\.)netflix\.com$/i.test(window.location.host)) {
+                return undefined;
+            }
+
+            const text = (selector: string): string | undefined => {
+                const el = document.querySelector(selector);
+                const value = el?.textContent?.trim();
+                return value && value.length > 0 ? value : undefined;
+            };
+
+            // The watch-screen title overlay: series name on top, episode
+            // label below. These data-uia hooks have been the most stable
+            // surface across Netflix's frequent class-name churn.
+            const seriesName =
+                text('[data-uia="video-title"] h4') ?? text('.video-title h4') ?? text('[data-uia="video-title"]');
+            const episodeLabel = text('[data-uia="video-title"] span') ?? text('.video-title span');
+
+            if (seriesName === undefined && episodeLabel === undefined) {
+                return undefined;
+            }
+
+            return { seriesName, episodeLabel };
+        } catch (e) {
+            return undefined;
         }
     }
 

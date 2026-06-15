@@ -35,6 +35,7 @@ const cloneMaxAgeMs = 60000;
 interface ActiveCapture {
     readonly captureId: string;
     readonly episodeId: string;
+    readonly show?: string;
     readonly title: string;
     readonly config: SaviDaemonConfig;
     readonly requester: SaviRequester;
@@ -122,6 +123,7 @@ const startCapture = async (message: SaviOffscreenStartMessage): Promise<void> =
     const capture: ActiveCapture = {
         captureId: message.captureId,
         episodeId: message.episodeId,
+        show: message.show,
         title: message.title,
         config,
         requester: message.requester,
