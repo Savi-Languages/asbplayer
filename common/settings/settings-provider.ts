@@ -24,7 +24,7 @@ import { AutoPausePreference, PostMineAction, PostMinePlayback, SubtitleHtml } f
 const isMacOs = (navigator.userAgentData?.platform ?? navigator.platform)?.toUpperCase()?.indexOf('MAC') > -1;
 
 const defaultSubtitleTextSettings = {
-    subtitleSize: 36,
+    subtitleSize: 28,
     subtitleColor: '#ffffff',
     subtitleThickness: 700,
     subtitleOutlineThickness: 0,
@@ -241,6 +241,7 @@ export const defaultSettings: AsbplayerSettings = {
     saviCaptureEnabled: false,
     saviDaemonUrl: 'http://127.0.0.1:4670',
     saviDaemonToken: '',
+    saviHideNativeSubtitles: true,
     pauseOnHoverMode: 0,
     lastSelectedAnkiExportMode: 'default',
     dictionaryTracks: [defaultDictionaryTrackSettings, defaultDictionaryTrackSettings, defaultDictionaryTrackSettings],

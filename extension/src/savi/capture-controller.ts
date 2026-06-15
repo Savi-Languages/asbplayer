@@ -16,6 +16,7 @@ import { SettingsProvider } from '@project/common/settings';
 import { Segmenter, SegmenterOutput } from './segmenter';
 import { serializeToSrt, SerializableSubtitle } from './subtitle-serializer';
 import { deriveEpisodeId, deriveShowAndTitle } from './episode';
+import { NativeSubtitleHider, nativeSubtitleSelectorForHost } from './native-subtitle-hider';
 import {
     SaviCommand,
     SaviSegmentMessage,
@@ -36,6 +37,7 @@ export interface SaviCaptureHost {
 
 export class SaviCaptureController {
     private readonly _host: SaviCaptureHost;
+    private readonly _nativeSubtitleHider = new NativeSubtitleHider();
     private _segmenter?: Segmenter;
     private _active = false;
     private _starting = false;
@@ -90,6 +92,8 @@ export class SaviCaptureController {
     }
 
     unbind() {
+        this._nativeSubtitleHider.clear();
+
         if (this._messageListener !== undefined) {
             browser.runtime.onMessage.removeListener(this._messageListener);
             this._messageListener = undefined;
@@ -104,17 +108,40 @@ export class SaviCaptureController {
 
     // Called when subtitle tracks have been loaded for the video.
     onSubtitlesLoaded() {
-        this._host.settings.get(['saviCaptureEnabled', 'saviDaemonUrl']).then(({ saviCaptureEnabled }) => {
-            if (saviCaptureEnabled && !this._active && !this._starting) {
-                this.start(false);
-            }
-        });
+        this._host.settings
+            .get(['saviCaptureEnabled', 'saviHideNativeSubtitles', 'saviDaemonUrl'])
+            .then(({ saviCaptureEnabled, saviHideNativeSubtitles }) => {
+                // Hiding the site's own subtitles is independent of capture:
+                // run it first and regardless of whether auto-capture is on.
+                if (saviHideNativeSubtitles) {
+                    const host = this._hostname();
+                    const selector = nativeSubtitleSelectorForHost(host);
+
+                    if (selector !== undefined) {
+                        this._nativeSubtitleHider.apply(selector);
+                    }
+                }
+
+                if (saviCaptureEnabled && !this._active && !this._starting) {
+                    this.start(false);
+                }
+            });
+    }
+
+    private _hostname(): string {
+        try {
+            return new URL(this._safeLocationHref()).host;
+        } catch (e) {
+            return '';
+        }
     }
 
     // Called when subtitles are reset (e.g. SPA navigation to the next
     // episode). Finishes the in-flight capture; a new one auto-starts
     // when the next episode's subtitles load.
     onSubtitlesReset() {
+        this._nativeSubtitleHider.clear();
+
         if (this._active) {
             this.stop();
         }
@@ -135,7 +162,7 @@ export class SaviCaptureController {
             ]);
 
             if (!saviDaemonUrl.trim() || !saviDaemonToken.trim()) {
-                this._host.notify('savi.notConfigured');
+                this._host.notify('Savi: daemon URL/token not configured in settings');
                 return;
             }
 
@@ -143,7 +170,7 @@ export class SaviCaptureController {
 
             if (subtitles.length === 0) {
                 if (manuallyRequested) {
-                    this._host.notify('savi.noSubtitles');
+                    this._host.notify('Savi: no subtitle track loaded to capture');
                 }
                 return;
             }
@@ -179,13 +206,13 @@ export class SaviCaptureController {
                 this._sendSegmentOps(
                     this._opsFromOutputs(segmenter.begin(video.currentTime * 1000, video.playbackRate, video.paused))
                 );
-                this._host.notify('savi.captureStarted');
+                this._host.notify('Savi: capturing episode');
             } else {
-                this._host.notify('savi.captureFailed', { message: response?.errorMessage ?? 'unknown error' });
+                this._host.notify(`Savi: capture failed — ${response?.errorMessage ?? 'unknown error'}`);
             }
         } catch (e) {
             console.error('savi: failed to start capture', e);
-            this._host.notify('savi.captureFailed', { message: e instanceof Error ? e.message : String(e) });
+            this._host.notify(`Savi: capture failed — ${e instanceof Error ? e.message : String(e)}`);
         } finally {
             this._starting = false;
         }
@@ -282,13 +309,13 @@ export class SaviCaptureController {
             if (response?.stopped) {
                 // The episode summary toast follows via 'savi-capture-ended'
                 // once the daemon finishes stitching.
-                this._host.notify('savi.captureFinishing');
+                this._host.notify('Savi: finishing episode…');
             } else {
-                this._host.notify('savi.captureFailed', { message: response?.errorMessage ?? 'unknown error' });
+                this._host.notify(`Savi: capture failed — ${response?.errorMessage ?? 'unknown error'}`);
             }
         } catch (e) {
             console.error('savi: failed to stop capture', e);
-            this._host.notify('savi.captureFailed', { message: e instanceof Error ? e.message : String(e) });
+            this._host.notify(`Savi: capture failed — ${e instanceof Error ? e.message : String(e)}`);
         }
     }
 
@@ -300,16 +327,15 @@ export class SaviCaptureController {
 
     private _notifyFinished(result: { ok: boolean; info?: any; errorMessage?: string; failedSegments?: number }) {
         if (result.ok && result.info !== undefined) {
-            this._host.notify('savi.captureFinished', {
-                lines: String(result.info.totalLines),
-                minutes: (result.info.keptDurationMs / 60000).toFixed(1),
-            });
+            const lines = String(result.info.totalLines);
+            const minutes = (result.info.keptDurationMs / 60000).toFixed(1);
+            this._host.notify(`Savi: episode saved — ${lines} lines, ${minutes} min of dialogue`);
 
             if (result.failedSegments !== undefined && result.failedSegments > 0) {
                 console.warn(`savi: ${result.failedSegments} segment(s) failed to upload and were dropped`);
             }
         } else {
-            this._host.notify('savi.captureFailed', { message: result.errorMessage ?? 'unknown error' });
+            this._host.notify(`Savi: capture failed — ${result.errorMessage ?? 'unknown error'}`);
         }
     }
 
@@ -364,7 +390,7 @@ export class SaviCaptureController {
     private _notifyUnsupportedRate(rate: number) {
         if (this._notifiedUnsupportedRate !== rate) {
             this._notifiedUnsupportedRate = rate;
-            this._host.notify('savi.rateUnsupported', { rate: rate.toFixed(2) });
+            this._host.notify(`Savi: playback rate ${rate.toFixed(2)} cannot be captured (supported: 0.5–2)`);
         }
     }
 

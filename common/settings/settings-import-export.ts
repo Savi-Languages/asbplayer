@@ -556,6 +556,9 @@ const settingsSchema = {
         saviDaemonToken: {
             type: 'string',
         },
+        saviHideNativeSubtitles: {
+            type: 'boolean',
+        },
         pauseOnHoverMode: {
             type: 'number',
         },

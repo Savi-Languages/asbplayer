@@ -85,6 +85,7 @@ const MiscSettingTab: React.FC<Props> = ({
         saviCaptureEnabled,
         saviDaemonUrl,
         saviDaemonToken,
+        saviHideNativeSubtitles,
         subtitleAboveThumbnail,
         thumbnailPreview,
     } = settings;
@@ -442,7 +443,7 @@ const MiscSettingTab: React.FC<Props> = ({
                         },
                     }}
                 />
-                <SettingsSection>{t('settings.saviSection')}</SettingsSection>
+                <SettingsSection>{'Savi capture'}</SettingsSection>
                 <SwitchLabelWithHoverEffect
                     control={
                         <Switch
@@ -450,13 +451,23 @@ const MiscSettingTab: React.FC<Props> = ({
                             onChange={(e) => onSettingChanged('saviCaptureEnabled', e.target.checked)}
                         />
                     }
-                    label={t('settings.saviCaptureEnabled')}
+                    label={'Auto-capture episodes to savi when subtitles load'}
+                    labelPlacement="start"
+                />
+                <SwitchLabelWithHoverEffect
+                    control={
+                        <Switch
+                            checked={saviHideNativeSubtitles}
+                            onChange={(e) => onSettingChanged('saviHideNativeSubtitles', e.target.checked)}
+                        />
+                    }
+                    label={"Hide the streaming site's own subtitles"}
                     labelPlacement="start"
                 />
                 <SettingsTextField
                     color="primary"
                     fullWidth
-                    label={t('settings.saviDaemonUrl')}
+                    label={'Savi daemon URL'}
                     value={saviDaemonUrl}
                     onChange={(e) => onSettingChanged('saviDaemonUrl', e.target.value)}
                 />
@@ -464,7 +475,7 @@ const MiscSettingTab: React.FC<Props> = ({
                     color="primary"
                     fullWidth
                     type="password"
-                    label={t('settings.saviDaemonToken')}
+                    label={'Savi daemon token'}
                     value={saviDaemonToken}
                     onChange={(e) => onSettingChanged('saviDaemonToken', e.target.value)}
                 />

@@ -594,6 +594,7 @@ export interface SaviSettings {
     readonly saviCaptureEnabled: boolean;
     readonly saviDaemonUrl: string;
     readonly saviDaemonToken: string;
+    readonly saviHideNativeSubtitles: boolean;
 }
 
 export type ChromeBoundKeyBindName = 'copySubtitle' | 'ankiExport' | 'updateLastCard' | 'exportCard' | 'takeScreenshot';

@@ -11,7 +11,6 @@ import Typography from '@mui/material/Typography';
 import Paper from '@mui/material/Paper';
 import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
 import StopIcon from '@mui/icons-material/Stop';
-import { useTranslation } from 'react-i18next';
 import { AsbplayerSettings } from '@project/common/settings';
 import { SaviCaptureState, SaviCommand, SaviCaptureStateMessage, SaviRequestStartMessage } from '../messages';
 
@@ -33,7 +32,6 @@ const queryCaptureState = async (): Promise<SaviCaptureState> => {
 };
 
 const SaviCapturePanel = ({ settings }: Props) => {
-    const { t } = useTranslation();
     const [captureState, setCaptureState] = useState<SaviCaptureState>({ active: false });
     const [lastResult, setLastResult] = useState<string>();
 
@@ -62,11 +60,11 @@ const SaviCapturePanel = ({ settings }: Props) => {
         const response = await browser.runtime.sendMessage(command);
 
         if (response?.requested !== true) {
-            setLastResult(t('savi.noSubtitles')!);
+            setLastResult('Savi: no subtitle track loaded to capture');
         }
 
         refreshState();
-    }, [refreshState, t]);
+    }, [refreshState]);
 
     const handleStop = useCallback(async () => {
         const command: SaviCommand<{ command: 'savi-stop-capture' }> = {
@@ -78,13 +76,13 @@ const SaviCapturePanel = ({ settings }: Props) => {
         if (response?.stopped) {
             // The episode summary is shown as a toast in the captured tab
             // once the daemon finishes stitching.
-            setLastResult(t('savi.captureFinishing')!);
+            setLastResult('Savi: finishing episode…');
         } else {
-            setLastResult(t('savi.captureFailed', { message: response?.errorMessage ?? 'unknown error' })!);
+            setLastResult(`Savi: capture failed — ${response?.errorMessage ?? 'unknown error'}`);
         }
 
         refreshState();
-    }, [refreshState, t]);
+    }, [refreshState]);
 
     if (!settings.saviDaemonUrl.trim() || !settings.saviDaemonToken.trim()) {
         return null;
@@ -96,16 +94,16 @@ const SaviCapturePanel = ({ settings }: Props) => {
                 <FiberManualRecordIcon color={captureState.active ? 'error' : 'disabled'} fontSize="small" />
                 <Typography variant="body2" sx={{ flexGrow: 1, overflow: 'hidden', textOverflow: 'ellipsis' }} noWrap>
                     {captureState.active
-                        ? (t('savi.capturing', { title: captureState.title ?? '' }) as string)
-                        : (lastResult ?? (t('savi.idle') as string))}
+                        ? `Capturing: ${captureState.title ?? ''}`
+                        : (lastResult ?? 'Savi capture idle')}
                 </Typography>
                 {captureState.active ? (
                     <Button size="small" variant="contained" startIcon={<StopIcon />} onClick={handleStop}>
-                        {t('savi.stop')}
+                        {'Stop'}
                     </Button>
                 ) : (
                     <Button size="small" variant="outlined" startIcon={<FiberManualRecordIcon />} onClick={handleStart}>
-                        {t('savi.start')}
+                        {'Capture'}
                     </Button>
                 )}
             </Stack>
