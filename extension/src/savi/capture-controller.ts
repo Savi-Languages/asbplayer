@@ -207,6 +207,16 @@ export class SaviCaptureController {
                     this._opsFromOutputs(segmenter.begin(video.currentTime * 1000, video.playbackRate, video.paused))
                 );
                 this._host.notify('Savi: capturing episode');
+            } else if (response?.errorCode === 'no-active-tab') {
+                // Browsers only grant tab-audio capture after a user gesture
+                // on the extension. Auto-start (on subtitle load) has none, so
+                // the recorder can't grab audio — tell the user the one thing
+                // that fixes it. One click arms the whole tab session
+                // (active-tab permission persists until the tab reloads), so
+                // auto-capture works for every episode after the first click.
+                this._host.notify(
+                    'Savi: click the savi toolbar icon, then Start, to record this tab. One click enables audio for the whole session.'
+                );
             } else {
                 this._host.notify(`Savi: capture failed — ${response?.errorMessage ?? 'unknown error'}`);
             }
