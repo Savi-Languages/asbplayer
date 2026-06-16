@@ -15,7 +15,7 @@
 import { SettingsProvider } from '@project/common/settings';
 import { Segmenter, SegmenterOutput } from './segmenter';
 import { serializeToSrt, SerializableSubtitle } from './subtitle-serializer';
-import { deriveEpisodeId, deriveShowAndTitle } from './episode';
+import { deriveEpisodeId, deriveShowAndTitle, deriveShowAndTitleFromBasename } from './episode';
 import { NativeSubtitleHider, nativeSubtitleSelectorForHost } from './native-subtitle-hider';
 import {
     SaviCommand,
@@ -32,6 +32,11 @@ export interface SaviCaptureHost {
     readonly settings: SettingsProvider;
     currentSubtitles: () => SerializableSubtitle[];
     videoSrc: () => string;
+    // asbplayer's own detected name for the loaded subtitle track, e.g.
+    // "<Show> S<NN>E<NN> <Episode Title>" (films: just "<Show>"). Derived from
+    // the streaming site's video metadata API, so it's the most reliable
+    // source of show/title — preferred over DOM/document.title scraping.
+    subtitleFileName: () => string;
     notify: (locKey: string, replacements?: { [key: string]: string }) => void;
 }
 
@@ -235,16 +240,40 @@ export class SaviCaptureController {
     private _pageMetadata(): { episodeId: string; show?: string; title: string } {
         const url = this._safeLocationHref();
         const documentTitle = this._safeDocumentTitle();
-        const netflixDom = this._readNetflixOverlay();
-        const { show, title } = deriveShowAndTitle(url, documentTitle, netflixDom);
+
+        // Prefer asbplayer's own detected subtitle name — it comes from the
+        // streaming site's video metadata API ("<Show> S<NN>E<NN> <Episode
+        // Title>"), not a flaky DOM/document.title scrape (document.title is
+        // frequently just "Netflix" at capture time). Fall back to the DOM /
+        // document.title path only when the basename yields nothing usable.
+        const { show, title } = this._resolveShowAndTitle(url, documentTitle);
 
         return {
             episodeId: deriveEpisodeId(url, documentTitle),
             show,
-            // title is guaranteed non-empty by deriveShowAndTitle, but guard
+            // title is guaranteed non-empty by the resolvers below, but guard
             // the daemon's non-empty requirement one more time.
             title: title.trim() || 'episode',
         };
+    }
+
+    // Picks the best {show, title}: the asbplayer subtitle basename first, the
+    // existing DOM/document.title derivation second. Never throws.
+    private _resolveShowAndTitle(url: string, documentTitle: string): { show?: string; title: string } {
+        const fromBasename = deriveShowAndTitleFromBasename(this._safeSubtitleFileName());
+        if (fromBasename.title.trim().length > 0) {
+            return fromBasename;
+        }
+
+        return deriveShowAndTitle(url, documentTitle, this._readNetflixOverlay());
+    }
+
+    private _safeSubtitleFileName(): string {
+        try {
+            return this._host.subtitleFileName();
+        } catch (e) {
+            return '';
+        }
     }
 
     private _safeLocationHref(): string {

@@ -238,6 +238,7 @@ export default class Binding {
             settings: this.settings,
             currentSubtitles: () => this.subtitleController.subtitles,
             videoSrc: () => this._registeredVideoSrc,
+            subtitleFileName: () => this.subtitleFileName(),
             notify: (locKey, replacements) => this.subtitleController.notification(locKey, replacements),
         });
         this.hoveredToken = new HoveredToken();

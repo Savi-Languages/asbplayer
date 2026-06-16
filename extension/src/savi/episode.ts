@@ -185,3 +185,61 @@ export const deriveShowAndTitle = (
 
     return showAndTitleFromDocumentTitle(documentTitle);
 };
+
+// ── show + title from asbplayer's detected subtitle basename ──────────────
+//
+// asbplayer derives its own basename from the streaming site's video metadata
+// API (see netflix-page.ts → determineBasename): for a series it is
+// "<Show> S<NN>E<NN> <Episode Title>" and for a film it is just "<Show>". That
+// basename is FAR more reliable than scraping the player DOM or document.title
+// (which is often just "Netflix" at capture time), so the savi capture host
+// prefers it. This helper turns the basename back into {show, title} and is
+// pure/total: it coerces non-strings to '' and never throws.
+
+// A trailing subtitle-container extension the basename may pick up once it has
+// flowed through subtitle bookkeeping (".srt"/".vtt"/".ass").
+const subtitleExtensionSuffix = /\.(?:srt|vtt|ass)$/i;
+
+// A trailing language tag that subtitle filenames sometimes carry. Kept
+// deliberately narrow so a real (non-Latin) episode title is never mistaken
+// for a language suffix:
+//   - " (English)" / " (English [CC])" — parenthesized language label, OR
+//   - " .en" / " .en-US" / " .jpn" — a dotted 2–3 letter ISO-ish code,
+// each anchored to the end. A bare " English" (no parens, no dot) is NOT
+// stripped, because that is indistinguishable from a real title word.
+const languageTagSuffix = /(?:\s*\([A-Za-z][A-Za-z ]*(?:\[CC\])?\)|\s+\.[A-Za-z]{2,3}(?:-[A-Za-z]{2,4})?)$/;
+
+const stripSubtitleFileSuffix = (value: string): string => {
+    // Strip at most one extension, then at most one language tag. Order
+    // matters: "Foo .en.srt" → drop ".srt" → "Foo .en" → drop " .en".
+    const withoutExtension = value.replace(subtitleExtensionSuffix, '');
+    return withoutExtension.replace(languageTagSuffix, '').trim();
+};
+
+// Series form: "<Show> S<NN>E<NN> <rest>". Show is everything before the
+// season/episode marker; title keeps the "S##E##" label plus any trailing
+// episode title. Season is 1–3 digits, episode 1–4. The `\b` after the
+// episode number prevents matching e.g. "S01E099999".
+const seriesBasenamePattern = /^(.*?)\s+S(\d{1,3})E(\d{1,4})\b(.*)$/;
+
+export const deriveShowAndTitleFromBasename = (basename: string): ShowAndTitle => {
+    const cleaned = stripSubtitleFileSuffix(asString(basename).trim());
+
+    if (cleaned.length === 0) {
+        return { title: '' };
+    }
+
+    const match = cleaned.match(seriesBasenamePattern);
+
+    if (match) {
+        const show = match[1].trim();
+        // Keep the canonical "S##E##" label (re-emitted from the captured
+        // groups so it is consistently formatted) followed by the episode
+        // title remainder. e.g. groups → "S01E09 ライオンを助けたい!".
+        const title = `S${match[2]}E${match[3]}${match[4]}`.trim();
+        return { show: show.length > 0 ? show : undefined, title };
+    }
+
+    // No season/episode marker → treat the whole thing as a film title.
+    return { show: undefined, title: cleaned };
+};

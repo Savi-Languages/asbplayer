@@ -1,6 +1,7 @@
 import {
     deriveEpisodeId,
     deriveShowAndTitle,
+    deriveShowAndTitleFromBasename,
     netflixShowAndTitleFromDom,
     showAndTitleFromDocumentTitle,
     slugify,
@@ -221,5 +222,87 @@ describe('deriveShowAndTitle', () => {
     it('never throws on an unparseable url', () => {
         expect(() => deriveShowAndTitle('::::', 'whatever')).not.toThrow();
         expect(deriveShowAndTitle('::::', 'whatever')).toEqual({ show: undefined, title: 'whatever' });
+    });
+});
+
+describe('deriveShowAndTitleFromBasename', () => {
+    it('splits a Japanese series basename into show + S##E## title', () => {
+        expect(deriveShowAndTitleFromBasename('ライオンの隠れ家 S01E09 ライオンを助けたい!')).toEqual({
+            show: 'ライオンの隠れ家',
+            title: 'S01E09 ライオンを助けたい!',
+        });
+    });
+
+    it('splits a Latin series basename into show + S##E## title', () => {
+        expect(deriveShowAndTitleFromBasename('Alice in Borderland S02E03 Knight of Swords')).toEqual({
+            show: 'Alice in Borderland',
+            title: 'S02E03 Knight of Swords',
+        });
+    });
+
+    it('treats a film basename (no S##E##) as the title with no show', () => {
+        expect(deriveShowAndTitleFromBasename('君の名は。')).toEqual({ show: undefined, title: '君の名は。' });
+    });
+
+    it('returns an empty title for an empty basename', () => {
+        expect(deriveShowAndTitleFromBasename('')).toEqual({ title: '' });
+    });
+
+    it('strips a trailing subtitle-file extension', () => {
+        expect(deriveShowAndTitleFromBasename('Alice in Borderland S02E03 Knight of Swords.srt')).toEqual({
+            show: 'Alice in Borderland',
+            title: 'S02E03 Knight of Swords',
+        });
+        // A film basename with an extension stays a film.
+        expect(deriveShowAndTitleFromBasename('君の名は。.vtt')).toEqual({ show: undefined, title: '君の名は。' });
+        expect(deriveShowAndTitleFromBasename('Some Movie.ass')).toEqual({ show: undefined, title: 'Some Movie' });
+    });
+
+    it('handles a single-digit season/episode form', () => {
+        expect(deriveShowAndTitleFromBasename('Show S1E9 Foo')).toEqual({ show: 'Show', title: 'S1E9 Foo' });
+    });
+
+    it('keeps an S##E## label with no trailing episode title', () => {
+        expect(deriveShowAndTitleFromBasename('Dark S01E03')).toEqual({ show: 'Dark', title: 'S01E03' });
+    });
+
+    it('strips a parenthesized language tag without touching a non-Latin title', () => {
+        expect(deriveShowAndTitleFromBasename('君の名は。 (English)')).toEqual({
+            show: undefined,
+            title: '君の名は。',
+        });
+        expect(deriveShowAndTitleFromBasename('Alice in Borderland S02E03 Knight of Swords (English [CC])')).toEqual({
+            show: 'Alice in Borderland',
+            title: 'S02E03 Knight of Swords',
+        });
+    });
+
+    it('strips a dotted ISO language code suffix', () => {
+        expect(deriveShowAndTitleFromBasename('Alice in Borderland S02E03 Knight of Swords .en-US.srt')).toEqual({
+            show: 'Alice in Borderland',
+            title: 'S02E03 Knight of Swords',
+        });
+    });
+
+    it('does NOT over-strip a real trailing word that is not a language tag', () => {
+        // No parens and no dot → "English" here is just a title word, kept.
+        expect(deriveShowAndTitleFromBasename('An English Affair')).toEqual({
+            show: undefined,
+            title: 'An English Affair',
+        });
+    });
+
+    it('coerces non-string input to an empty title and never throws', () => {
+        expect(() => deriveShowAndTitleFromBasename(undefined as unknown as string)).not.toThrow();
+        expect(deriveShowAndTitleFromBasename(undefined as unknown as string)).toEqual({ title: '' });
+        expect(deriveShowAndTitleFromBasename(null as unknown as string)).toEqual({ title: '' });
+        expect(deriveShowAndTitleFromBasename(42 as unknown as string)).toEqual({ title: '' });
+    });
+
+    it('trims surrounding whitespace before parsing', () => {
+        expect(deriveShowAndTitleFromBasename('   Alice in Borderland S02E03 Knight of Swords   ')).toEqual({
+            show: 'Alice in Borderland',
+            title: 'S02E03 Knight of Swords',
+        });
     });
 });
