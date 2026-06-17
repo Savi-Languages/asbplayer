@@ -50,22 +50,31 @@ subtitle** → Yomitan pops the definition. Works the same on Netflix and YouTub
 
 All customizable in **asbplayer → Settings → Keyboard shortcuts**. Defaults:
 
+savi rebinds the subtitle controls to a **WASD-style** layout (defaults below;
+all editable in **Settings → Keyboard shortcuts**):
+
 | Want | Key | Notes |
 |------|-----|-------|
-| **Pause after every line** (LR's `Q`) | `Shift+P` | Toggles auto-pause; it stops at the **end** of each subtitle. Press `Space` to continue to the next line. |
-| **Replay the current line** | `↑` | Seeks to the start of the current subtitle. |
-| Previous / next line | `←` / `→` | |
+| **Pause after every line** (LR's `Q`) | `Q` | Toggles auto-pause; it stops at the **end** of each subtitle. Press `Space` to continue to the next line. |
+| **Previous line** | `A` | |
+| **Replay the current line** | `S` | Seeks to the start of the current subtitle. |
+| **Next line** | `D` | |
 | **Copy the subtitle text** | `Ctrl+Shift+Z` | |
 | **Mine a card** (Anki) | `Ctrl+Shift+X` | Opens the card creator for the current line. |
-| Mark a hovered word's status | `Q+0` … `Q+5` | `Q+I` ignore, `Q+S` stats. asbplayer's own word-status marking. |
+| Seek ±2s | `←` / `→` | (the old 5-second seek, moved off A/D) |
 | **Condensed playback** (skip silence) | `Shift+O` | Plays only subtitled spans. |
 | Fast-forward non-dialogue | `Shift+F` | |
 | Toggle subtitles / tracks | `↓` / `1` `2` `3` | |
 | Repeat current line | `Shift+R` | |
 
-So the study loop you showed from LR is: **`Shift+P`** to arm auto-pause →
-watch → it pauses at each line → hover words (Yomitan) / **`↑`** to replay /
-**`Ctrl+Shift+X`** to mine → **`Space`** to continue.
+> Q is now a clean auto-pause toggle, so asbplayer's `Q+0`…`Q+5` hover
+> word-marking is unbound by default — savi tracks word status in its own
+> buckets (+ Yomitan for lookups). Rebind it in Settings if you want it.
+
+So the study loop you showed from LR is: **`Q`** to arm auto-pause →
+watch → it pauses at each line → hover words (Yomitan) / **`S`** to replay /
+**`Ctrl+Shift+X`** to mine → **`Space`** to continue. **`A`**/**`D`** step
+between lines.
 
 ## Bilingual (dual) subtitles
 
