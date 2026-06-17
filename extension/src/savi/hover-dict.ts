@@ -1,35 +1,74 @@
 // Live-subtitle hover dictionary: hover a word on the video's asbplayer
-// subtitle overlay and see its dictionary entry in a popup.
+// subtitle overlay and see (a) the word boxed under the cursor, Language
+// Reactor-style, and (b) its dictionary entry in a popup.
 //
 // asbplayer renders subtitles as plain text for savi users (its own per-word
 // tokenization needs the Yomitan-based dictionary pipeline we don't use), so
 // we locate the word under the cursor with caretRangeFromPoint + the daemon's
-// tokenizer, then draw our own popup. Daemon calls go through the background
-// (MV3 blocks cross-origin fetches from content scripts).
+// tokenizer, draw our own outline over that word's DOM range, and show our own
+// popup. Daemon calls go through the background (MV3 blocks cross-origin
+// fetches from content scripts).
 
 import { SaviDictEntry, SaviToken } from './daemon-client';
 import { SaviCommand, SaviDictMessage, SaviDictResponse, SaviTokenizeMessage, SaviTokenizeResponse } from './messages';
 
-const SUBTITLE_SELECTOR = '.asbplayer-subtitles';
-// The embedded dictionary is Japanese; other languages tokenize to nothing
-// usable and simply show no popup.
+// The overlay that stacks subtitle lines (the target language AND its
+// translation). We never tokenize this whole thing — we resolve the single
+// line under the cursor below — but we use it to confirm a [data-track] span is
+// actually a subtitle line.
+const SUBTITLE_CONTAINER = '.asbplayer-subtitles';
+// The embedded dictionary is Japanese; lines without any Japanese (e.g. the
+// English translation track) are skipped so we never box or tokenize them.
 const LANG = 'ja';
+// Hiragana, katakana, CJK (+ Ext. A), compatibility ideographs, halfwidth kana.
+const JAPANESE = /[぀-ヿ㐀-䶿一-鿿豈-﫿ｦ-ﾟ]/;
 const HOVER_DEBOUNCE_MS = 50;
 const TOKENIZE_CACHE_MAX = 64;
 
-/**
- * The token whose `[start, start+len)` range contains `offset`, or null. Tokens
- * concatenate back to the line, so a running sum of surface lengths locates the
- * word under a character offset. Pure — unit-tested without the DOM.
- */
-export function tokenAtOffset(tokens: SaviToken[], offset: number): SaviToken | null {
+/** The token whose `[start, start+len)` range contains `offset`, plus that
+ *  span — tokens concatenate back to the line (the daemon emits gap tokens for
+ *  any whitespace it would otherwise drop), so a running sum of surface lengths
+ *  locates the word under a character offset. Pure — unit-tested without the
+ *  DOM. */
+export function tokenSpanAtOffset(
+    tokens: SaviToken[],
+    offset: number
+): { token: SaviToken; start: number; end: number } | null {
     let start = 0;
     for (const token of tokens) {
         const end = start + token.text.length;
         if (offset >= start && offset < end) {
-            return token;
+            return { token, start, end };
         }
         start = end;
+    }
+    return null;
+}
+
+/** The token under `offset`, or null. Thin wrapper over {@link tokenSpanAtOffset}. */
+export function tokenAtOffset(tokens: SaviToken[], offset: number): SaviToken | null {
+    return tokenSpanAtOffset(tokens, offset)?.token ?? null;
+}
+
+/** A DOM Range covering characters `[start, end)` of `root`'s text, walking
+ *  across nested text nodes (asbplayer may wrap a line in inner spans). Null if
+ *  the span runs past the available text. Used to box the hovered word. */
+export function rangeForCharSpan(root: HTMLElement, start: number, end: number): Range | null {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const range = document.createRange();
+    let acc = 0;
+    let started = false;
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const len = node.textContent?.length ?? 0;
+        if (!started && acc + len > start) {
+            range.setStart(node, start - acc);
+            started = true;
+        }
+        if (started && acc + len >= end) {
+            range.setEnd(node, end - acc);
+            return range;
+        }
+        acc += len;
     }
     return null;
 }
@@ -38,6 +77,24 @@ const sendToBackground = <R>(message: SaviTokenizeMessage | SaviDictMessage): Pr
     const command: SaviCommand<SaviTokenizeMessage | SaviDictMessage> = { sender: 'savi-video', message };
     return browser.runtime.sendMessage(command) as Promise<R>;
 };
+
+/** The single subtitle line under the event target — the inner text span when
+ *  present (Yomitan rich-text path), else the per-track line span — NOT the
+ *  container that stacks the line above its translation. Null off a subtitle. */
+function lineElement(target: EventTarget | null): HTMLElement | null {
+    if (!(target instanceof Element)) {
+        return null;
+    }
+    const text = target.closest('.asbplayer-subtitle-text');
+    if (text instanceof HTMLElement) {
+        return text;
+    }
+    const line = target.closest('[data-track]');
+    if (line instanceof HTMLElement && line.closest(SUBTITLE_CONTAINER)) {
+        return line;
+    }
+    return null;
+}
 
 /** Char offset of (x,y) within `el`'s text, or null if the caret isn't inside. */
 function caretOffsetWithin(el: HTMLElement, x: number, y: number): number | null {
@@ -90,6 +147,20 @@ const POPUP_STYLE: Partial<CSSStyleDeclaration> = {
     display: 'none',
 };
 
+// A soft box that glides between words as the cursor moves, like Language
+// Reactor. Non-interactive so it never eats the caret hit-test under it.
+const HIGHLIGHT_STYLE: Partial<CSSStyleDeclaration> = {
+    position: 'fixed',
+    zIndex: '2147483646', // just beneath the popup
+    pointerEvents: 'none',
+    boxSizing: 'border-box',
+    border: '2px solid rgba(96, 165, 250, 0.95)',
+    borderRadius: '6px',
+    background: 'rgba(96, 165, 250, 0.20)',
+    transition: 'left 60ms linear, top 60ms linear, width 60ms linear, height 60ms linear',
+    display: 'none',
+};
+
 function renderEntry(term: string, token: SaviToken, entries: SaviDictEntry[]): HTMLElement {
     const root = document.createElement('div');
 
@@ -129,7 +200,7 @@ function renderEntry(term: string, token: SaviToken, entries: SaviDictEntry[]): 
     return root;
 }
 
-function position(popup: HTMLDivElement, x: number, y: number) {
+function positionPopup(popup: HTMLDivElement, x: number, y: number) {
     const rect = popup.getBoundingClientRect();
     const margin = 8;
     let left = x - rect.width / 2;
@@ -142,14 +213,15 @@ function position(popup: HTMLDivElement, x: number, y: number) {
     popup.style.top = `${top}px`;
 }
 
-/** Attaches a hover handler over subtitle text and shows a daemon-backed
- *  dictionary popup for the word under the cursor. */
+/** Attaches a hover handler over subtitle text: boxes the word under the
+ *  cursor and shows a daemon-backed dictionary popup for it. */
 export class SaviHoverDictionary {
     private readonly _tokenizeCache = new Map<string, SaviToken[]>();
     private _popup: HTMLDivElement | null = null;
+    private _highlight: HTMLDivElement | null = null;
     private _currentTerm: string | null = null;
     private _hoverTimer: ReturnType<typeof setTimeout> | undefined;
-    private _generation = 0; // bumps to cancel stale async lookups
+    private _generation = 0; // bumps to cancel stale async work
     private _bound = false;
 
     start() {
@@ -162,55 +234,74 @@ export class SaviHoverDictionary {
         if (!this._bound) return;
         this._bound = false;
         document.removeEventListener('mousemove', this._onMouseMove, true);
-        this._hide();
+        this._clear();
     }
 
     private _onMouseMove = (event: MouseEvent) => {
-        const target = event.target;
-        const subtitle = target instanceof Element ? target.closest(SUBTITLE_SELECTOR) : null;
-        if (!(subtitle instanceof HTMLElement)) {
-            // Off the subtitle: drop the popup unless the cursor is on it.
-            if (this._popup && !(target instanceof Node && this._popup.contains(target))) {
-                this._hide();
+        const line = lineElement(event.target);
+        if (!line) {
+            // Off any subtitle line: keep things up only while the cursor is on
+            // the popup itself (so it stays readable); otherwise clear.
+            const target = event.target;
+            if (this._popup && target instanceof Node && this._popup.contains(target)) {
+                return;
             }
+            this._clear();
             return;
         }
         const { clientX, clientY } = event;
         clearTimeout(this._hoverTimer);
-        this._hoverTimer = setTimeout(() => void this._handleHover(subtitle, clientX, clientY), HOVER_DEBOUNCE_MS);
+        this._hoverTimer = setTimeout(() => void this._handleHover(line, clientX, clientY), HOVER_DEBOUNCE_MS);
     };
 
-    private async _handleHover(subtitle: HTMLElement, x: number, y: number) {
-        const offset = caretOffsetWithin(subtitle, x, y);
-        const text = (subtitle.textContent ?? '').replace(/\s+$/, '');
-        if (offset === null || !text) {
-            this._hide();
+    private async _handleHover(line: HTMLElement, x: number, y: number) {
+        const generation = ++this._generation;
+        const text = (line.textContent ?? '').replace(/\s+$/, '');
+        const offset = caretOffsetWithin(line, x, y);
+        if (offset === null || !text || !JAPANESE.test(text)) {
+            this._clear();
             return;
         }
         const tokens = await this._tokenize(text);
-        const token = tokenAtOffset(tokens, offset);
-        const term = token?.lemma; // only content words carry a lemma
-        if (!term || !token) {
-            this._hide();
+        if (generation !== this._generation) {
+            return; // a newer hover (or a clear) superseded this one
+        }
+        const span = tokenSpanAtOffset(tokens, offset);
+        if (!span || !span.token.text.trim()) {
+            this._clear(); // between words / on whitespace
+            return;
+        }
+
+        // Box the word under the cursor whether or not it resolves to an entry
+        // — every word gets the outline, like Language Reactor.
+        const range = rangeForCharSpan(line, span.start, span.end);
+        if (range) {
+            this._highlightRange(range);
+        } else {
+            this._hideHighlight();
+        }
+
+        const term = span.token.lemma; // only content words carry a lemma
+        if (!term) {
+            this._hidePopup(); // function word: keep the box, drop the definition
             return;
         }
         if (term === this._currentTerm) {
-            return; // already showing this word
+            return; // already showing this word's definition
         }
-        const generation = ++this._generation;
         const res = await sendToBackground<SaviDictResponse>({ command: 'savi-dict', lang: LANG, term });
         if (generation !== this._generation) {
-            return; // a newer hover superseded this lookup
+            return;
         }
         if (!res.entries || res.entries.length === 0) {
-            this._hide();
+            this._hidePopup();
             return;
         }
         this._currentTerm = term;
         const popup = this._ensurePopup();
-        popup.replaceChildren(renderEntry(term, token, res.entries));
+        popup.replaceChildren(renderEntry(term, span.token, res.entries));
         popup.style.display = 'block';
-        position(popup, x, y);
+        positionPopup(popup, x, y);
     }
 
     private async _tokenize(text: string): Promise<SaviToken[]> {
@@ -226,10 +317,34 @@ export class SaviHoverDictionary {
         return tokens;
     }
 
-    private _hide() {
+    private _highlightRange(range: Range) {
+        const rect = range.getBoundingClientRect();
+        if (rect.width === 0 && rect.height === 0) {
+            this._hideHighlight();
+            return;
+        }
+        const pad = 2;
+        const el = this._ensureHighlight();
+        el.style.left = `${rect.left - pad}px`;
+        el.style.top = `${rect.top - pad}px`;
+        el.style.width = `${rect.width + pad * 2}px`;
+        el.style.height = `${rect.height + pad * 2}px`;
+        el.style.display = 'block';
+    }
+
+    private _clear() {
+        this._hidePopup();
+        this._hideHighlight();
+    }
+
+    private _hidePopup() {
         this._currentTerm = null;
         this._generation++;
         if (this._popup) this._popup.style.display = 'none';
+    }
+
+    private _hideHighlight() {
+        if (this._highlight) this._highlight.style.display = 'none';
     }
 
     private _ensurePopup(): HTMLDivElement {
@@ -242,5 +357,15 @@ export class SaviHoverDictionary {
         document.body.appendChild(popup);
         this._popup = popup;
         return popup;
+    }
+
+    private _ensureHighlight(): HTMLDivElement {
+        if (this._highlight) return this._highlight;
+        const el = document.createElement('div');
+        el.className = 'savi-dict-highlight';
+        Object.assign(el.style, HIGHLIGHT_STYLE);
+        document.body.appendChild(el);
+        this._highlight = el;
+        return el;
     }
 }
