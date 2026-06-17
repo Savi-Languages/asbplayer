@@ -95,6 +95,7 @@ import { ExtensionDictionaryStorage } from './extension-dictionary-storage';
 import { HoveredToken } from '@project/common/subtitle-annotations';
 import { v4 as uuidv4 } from 'uuid';
 import { SaviCaptureController } from '../savi/capture-controller';
+import { SaviHoverDictionary } from '../savi/hover-dict';
 
 let netflix = false;
 document.addEventListener('asbplayer-netflix-enabled', (e) => {
@@ -172,6 +173,7 @@ export default class Binding {
     private readonly _audioRecorder = new AudioRecorder();
     readonly bulkExportController: BulkExportController;
     readonly saviCaptureController: SaviCaptureController;
+    readonly saviHoverDictionary: SaviHoverDictionary;
 
     private copyToClipboardOnMine: boolean;
     private clickToMineDefaultAction: PostMineAction;
@@ -241,6 +243,7 @@ export default class Binding {
             subtitleFileName: () => this.subtitleFileName(),
             notify: (locKey, replacements) => this.subtitleController.notification(locKey, replacements),
         });
+        this.saviHoverDictionary = new SaviHoverDictionary();
         this.hoveredToken = new HoveredToken();
         this.recordMedia = true;
         this.takeScreenshot = true;
@@ -536,6 +539,7 @@ export default class Binding {
         this.mobileGestureController.bind();
         this.bulkExportController.bind();
         this.saviCaptureController.bind();
+        this.saviHoverDictionary.start();
 
         const seek = (forward: boolean) => {
             const subtitle = adjacentSubtitle(
@@ -1228,6 +1232,7 @@ export default class Binding {
         }
 
         this.saviCaptureController.unbind();
+        this.saviHoverDictionary.stop();
         this.unsubscribeStatisticsSeek?.();
         this.unsubscribeStatisticsSeek = undefined;
         this.unsubscribeStatisticsSubtitleMine?.();

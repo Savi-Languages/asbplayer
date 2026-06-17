@@ -18,12 +18,23 @@ import {
     SaviOffscreenStartMessage,
     SaviOffscreenStateMessage,
     SaviOffscreenStopMessage,
+    SaviDictMessage,
+    SaviDictResponse,
     SaviRequestStartMessage,
     SaviStartCaptureMessage,
     SaviStartCaptureResponse,
     SaviStopCaptureResponse,
+    SaviTokenizeMessage,
+    SaviTokenizeResponse,
 } from './messages';
-import { normalizedBaseUrl, postSubtitles, startCapture } from './daemon-client';
+import {
+    lookupDict,
+    normalizedBaseUrl,
+    postSubtitles,
+    SaviDaemonConfig,
+    startCapture,
+    tokenize,
+} from './daemon-client';
 
 export default class SaviCommandHandler implements CommandHandler {
     private readonly _settings: SettingsProvider;
@@ -63,12 +74,54 @@ export default class SaviCommandHandler implements CommandHandler {
             case 'savi-request-start':
                 this._requestStart(command.message as SaviRequestStartMessage).then(sendResponse);
                 return true;
+            case 'savi-tokenize':
+                this._tokenize(command.message as SaviTokenizeMessage)
+                    .then(sendResponse)
+                    .catch(() => sendResponse({ tokens: [] }));
+                return true;
+            case 'savi-dict':
+                this._lookupDict(command.message as SaviDictMessage)
+                    .then(sendResponse)
+                    .catch(() => sendResponse({ entries: [] }));
+                return true;
             case 'savi-capture-ended':
                 this._forwardCaptureEnded(command.message as SaviCaptureEndedMessage);
                 break;
         }
 
         return false;
+    }
+
+    private async _daemonConfig(): Promise<SaviDaemonConfig | null> {
+        const { saviDaemonUrl, saviDaemonToken } = await this._settings.get(['saviDaemonUrl', 'saviDaemonToken']);
+        if (!saviDaemonUrl.trim() || !saviDaemonToken.trim()) {
+            return null;
+        }
+        return { baseUrl: normalizedBaseUrl(saviDaemonUrl), token: saviDaemonToken.trim() };
+    }
+
+    private async _tokenize(message: SaviTokenizeMessage): Promise<SaviTokenizeResponse> {
+        const config = await this._daemonConfig();
+        if (!config) {
+            return { tokens: [] };
+        }
+        try {
+            return { tokens: await tokenize(config, message.lang, message.text) };
+        } catch (e) {
+            return { tokens: [] };
+        }
+    }
+
+    private async _lookupDict(message: SaviDictMessage): Promise<SaviDictResponse> {
+        const config = await this._daemonConfig();
+        if (!config) {
+            return { entries: [] };
+        }
+        try {
+            return { entries: await lookupDict(config, message.lang, message.term) };
+        } catch (e) {
+            return { entries: [] };
+        }
     }
 
     private async _startCapture(

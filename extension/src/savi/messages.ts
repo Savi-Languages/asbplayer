@@ -12,7 +12,7 @@
 //   'savi-extension-to-video'   background → content script
 
 import { SegmentMeta } from './segmenter';
-import { CaptureFinishInfo } from './daemon-client';
+import { CaptureFinishInfo, SaviDictEntry, SaviToken } from './daemon-client';
 
 export interface SaviRequester {
     readonly tabId: number;
@@ -75,6 +75,30 @@ export interface SaviCaptureState {
     readonly episodeId?: string;
     readonly title?: string;
     readonly tabId?: number;
+}
+
+// ── content script → background (hover dictionary) ──────────────────────
+// Daemon access goes through the background because MV3 blocks cross-origin
+// fetches from content scripts (the daemon serves no CORS headers).
+
+export interface SaviTokenizeMessage {
+    readonly command: 'savi-tokenize';
+    readonly lang: string;
+    readonly text: string;
+}
+
+export interface SaviTokenizeResponse {
+    readonly tokens: SaviToken[];
+}
+
+export interface SaviDictMessage {
+    readonly command: 'savi-dict';
+    readonly lang: string;
+    readonly term: string;
+}
+
+export interface SaviDictResponse {
+    readonly entries: SaviDictEntry[];
 }
 
 // ── content script → offscreen document ─────────────────────────────────

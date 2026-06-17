@@ -99,6 +99,39 @@ export const postChunk = async (
     });
 };
 
+// ── Hover dictionary ────────────────────────────────────────────────────
+
+export interface SaviToken {
+    readonly text: string;
+    readonly reading?: string;
+    readonly lemma?: string;
+}
+
+export interface SaviDictSense {
+    readonly pos: string[];
+    readonly glosses: string[];
+}
+
+export interface SaviDictEntry {
+    readonly kanji: string[];
+    readonly readings: string[];
+    readonly senses: SaviDictSense[];
+}
+
+/** Tokenize a line; tokens concatenate back to the input so the caller can
+ *  map a cursor offset to a token. Empty when the daemon has no analyzer. */
+export const tokenize = async (config: SaviDaemonConfig, lang: string, text: string): Promise<SaviToken[]> => {
+    const body = await request(config, '/api/tokenize', jsonInit({ lang, text }));
+    return body.tokens ?? [];
+};
+
+/** JP→EN dictionary lookup; empty when nothing matches or no dictionary. */
+export const lookupDict = async (config: SaviDaemonConfig, lang: string, term: string): Promise<SaviDictEntry[]> => {
+    const path = `/api/dict/${encodeURIComponent(lang)}/${encodeURIComponent(term)}`;
+    const body = await request(config, path, { method: 'GET' });
+    return body.entries ?? [];
+};
+
 export const finishCapture = async (config: SaviDaemonConfig, captureId: string): Promise<CaptureFinishInfo> => {
     const body = await request(config, '/api/capture/finish', jsonInit({ captureId }));
     return {
