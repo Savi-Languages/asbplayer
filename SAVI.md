@@ -18,14 +18,25 @@ strictly more capable than LR's built-in dictionary.
 
 **Setup (once):**
 
-1. Install the **Yomitan** browser extension.
-2. Import dictionaries (Yomitan → Settings → Dictionaries → Import):
-   - Japanese: **JMdict** (definitions) + **JMdict (English)**; optionally a
-     frequency dict and a pitch-accent dict.
-   - Spanish (for Leon): a Spanish→English Yomitan dictionary (e.g. from the
-     Yomitan dictionary collections).
-3. Yomitan → Settings → Scanning: confirm hover/scan is enabled (default: hold
-   no key, or Shift — your preference).
+1. Install **Yomitan** from your browser's add-on store — [Chrome Web
+   Store](https://chromewebstore.google.com/detail/yomitan/likgccmbimhjbgkjambclfkhldnlhbnn),
+   [Edge Add-ons](https://microsoftedge.microsoft.com/addons/search?q=yomitan),
+   or [Firefox AMO](https://addons.mozilla.org/firefox/addon/yomitan/). (On Edge
+   you can also install from the Chrome Web Store once you allow extensions from
+   other stores.)
+2. Import dictionaries — Yomitan → Settings → **Dictionaries → Import a
+   dictionary**. The `.zip` imports directly; no need to unzip.
+   - **Japanese:** [**Jitendex**](https://jitendex.org/pages/downloads.html) —
+     the modern, better-formatted JMdict build for Yomitan (recommended over raw
+     JMdict). Optionally add a frequency dictionary and a **pitch-accent**
+     dictionary from [MarvNC/yomitan-dictionaries](https://github.com/MarvNC/yomitan-dictionaries#japanese)
+     — pitch accent is worth it given the N1 goal.
+   - **Spanish (Leon):** a Spanish→English (`es→en`) dictionary from
+     [MarvNC/yomitan-dictionaries → Spanish](https://github.com/MarvNC/yomitan-dictionaries#spanish).
+   - Prefer raw JMdict (covers many target languages incl. Spanish glosses)?
+     [yomidevs/jmdict-yomitan releases](https://github.com/yomidevs/jmdict-yomitan/releases).
+3. Yomitan → Settings → **Scanning**: confirm hover/scan is enabled (default:
+   hold no key, or Shift — your preference).
 
 **Use:** with asbplayer subtitles showing on the video, **hover a word in the
 subtitle** → Yomitan pops the definition. Works the same on Netflix and YouTube.
