@@ -1,4 +1,4 @@
-import { rangeForCharSpan, tokenAtOffset, tokenSpanAtOffset } from './hover-dict';
+import { lookupTermFor, rangeForCharSpan, tokenAtOffset, tokenSpanAtOffset } from './hover-dict';
 import { SaviToken } from './daemon-client';
 
 const tok = (text: string, lemma?: string): SaviToken => ({ text, lemma });
@@ -48,6 +48,21 @@ describe('tokenSpanAtOffset', () => {
         expect(tokenSpanAtOffset(withGap, 0)).toEqual({ token: withGap[0], start: 0, end: 2 });
         expect(tokenSpanAtOffset(withGap, 2)).toEqual({ token: withGap[1], start: 2, end: 3 });
         expect(tokenSpanAtOffset(withGap, 3)).toEqual({ token: withGap[2], start: 3, end: 5 });
+    });
+});
+
+describe('lookupTermFor', () => {
+    it('uses the lemma to un-inflect verbs/adjectives', () => {
+        expect(lookupTermFor(tok('続け', '続ける'))).toBe('続ける');
+        expect(lookupTermFor(tok('国立', '国立'))).toBe('国立');
+    });
+
+    it('falls back to the surface for words with no lemma (the しかし bug)', () => {
+        // Conjunctions/pronouns/proper nouns are not "reportable", so they
+        // carry no lemma — but they ARE in the dictionary. Look up the surface.
+        expect(lookupTermFor(tok('しかし'))).toBe('しかし');
+        expect(lookupTermFor(tok('そこ'))).toBe('そこ');
+        expect(lookupTermFor(tok('東京'))).toBe('東京');
     });
 });
 

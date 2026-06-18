@@ -50,6 +50,16 @@ export function tokenAtOffset(tokens: SaviToken[], offset: number): SaviToken | 
     return tokenSpanAtOffset(tokens, offset)?.token ?? null;
 }
 
+/** The term to look up for a token: its dictionary form (lemma) when the
+ *  analyzer supplied one — needed to un-inflect verbs/adjectives (続け → 続ける)
+ *  — otherwise its surface. Crucial for the surface fallback: conjunctions,
+ *  pronouns, and proper nouns (しかし, そこ, 東京) carry no lemma (they're not
+ *  "reportable" content words for bucket coloring) but ARE in the dictionary,
+ *  so looking up the surface defines them instead of silently skipping them. */
+export function lookupTermFor(token: SaviToken): string {
+    return token.lemma ?? token.text;
+}
+
 /** A DOM Range covering characters `[start, end)` of `root`'s text, walking
  *  across nested text nodes (asbplayer may wrap a line in inner spans). Null if
  *  the span runs past the available text. Used to box the hovered word. */
@@ -268,8 +278,8 @@ export class SaviHoverDictionary {
             return; // a newer hover (or a clear) superseded this one
         }
         const span = tokenSpanAtOffset(tokens, offset);
-        if (!span || !span.token.text.trim()) {
-            this._clear(); // between words / on whitespace
+        if (!span || !JAPANESE.test(span.token.text)) {
+            this._clear(); // between words / on whitespace / punctuation
             return;
         }
 
@@ -282,11 +292,9 @@ export class SaviHoverDictionary {
             this._hideHighlight();
         }
 
-        const term = span.token.lemma; // only content words carry a lemma
-        if (!term) {
-            this._hidePopup(); // function word: keep the box, drop the definition
-            return;
-        }
+        // Look up the dictionary form — and fall back to the surface so words
+        // without a lemma (しかし, そこ, 東京) get defined instead of skipped.
+        const term = lookupTermFor(span.token);
         if (term === this._currentTerm) {
             return; // already showing this word's definition
         }
