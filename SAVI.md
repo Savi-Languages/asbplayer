@@ -91,9 +91,16 @@ bound (another extension claimed it). Set it at **`edge://extensions/shortcuts`*
 (or `chrome://extensions/shortcuts`) under _"Savi: grant audio permission and
 start recording this tab"_.
 
-You only need this for the **audio** capture. Subtitles, the hover dictionary,
-furigana, and pause-on-hover all work without it — and savi no longer pops the
-"enable audio recording" dialog on reload.
+There's also a **Record button** on the video (bottom-left) — click it to
+start/stop, and it turns into a pulsing red "Recording" while live. One catch
+the browser forces on everyone: a _click in the page_ can't grant the audio
+permission (only the shortcut / toolbar icon can), so the **first** record of a
+page load needs `Ctrl+Shift+S` once; after that the button starts/stops freely
+for the rest of the session.
+
+You only need any of this for the **audio** capture. Subtitles, the hover
+dictionary, furigana, and pause-on-hover all work without it — and savi no
+longer pops the "enable audio recording" dialog on reload.
 
 ## Bilingual (dual) subtitles
 

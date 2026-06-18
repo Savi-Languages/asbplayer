@@ -6,7 +6,6 @@
 // daemon for capture start (the offscreen document owns chunk upload and
 // finish so captures survive service-worker sleep).
 
-import { ExtensionToVideoCommand, RequestActiveTabPermissionMessage } from '@project/common';
 import { SettingsProvider } from '@project/common/settings';
 import { CommandHandler } from '@/handlers/command-handler';
 import { ensureOffscreenAudioServiceDocument } from '@/services/offscreen-document';
@@ -198,14 +197,10 @@ export default class SaviCommandHandler implements CommandHandler {
         };
 
         if (!response?.started) {
-            // Only nag for the audio-recording permission when the user
-            // explicitly started a capture. The auto-start that runs every time
-            // subtitles load (i.e. every reload) stays silent — otherwise the
-            // "enable audio recording" dialog pops on each page load.
-            if (response?.errorCode === 'no-active-tab' && message.manuallyRequested) {
-                this._requestActiveTab(tabId, message.src);
-            }
-
+            // No heavy "enable audio recording" modal here anymore — the
+            // content-side capture controller shows a light toast (pointing at
+            // the Ctrl+Shift+S shortcut) only when the user explicitly asked to
+            // record, and stays silent on the every-reload auto-start.
             return {
                 started: false,
                 errorCode: response?.errorCode === 'no-active-tab' ? 'no-active-tab' : 'other',
@@ -273,16 +268,5 @@ export default class SaviCommandHandler implements CommandHandler {
         return new Promise((resolve) => {
             browser.tabCapture.getMediaStreamId({ targetTabId: tabId }, (streamId) => resolve(streamId));
         });
-    }
-
-    private _requestActiveTab(tabId: number, src: string) {
-        const command: ExtensionToVideoCommand<RequestActiveTabPermissionMessage> = {
-            sender: 'asbplayer-extension-to-video',
-            message: {
-                command: 'request-active-tab-permission',
-            },
-            src,
-        };
-        browser.tabs.sendMessage(tabId, command);
     }
 }

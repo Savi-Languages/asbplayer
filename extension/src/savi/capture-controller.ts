@@ -17,6 +17,7 @@ import { Segmenter, SegmenterOutput } from './segmenter';
 import { serializeToSrt, SerializableSubtitle } from './subtitle-serializer';
 import { deriveEpisodeId, deriveShowAndTitle, deriveShowAndTitleFromBasename } from './episode';
 import { NativeSubtitleHider, nativeSubtitleSelectorForHost } from './native-subtitle-hider';
+import { SaviRecordButton } from './record-button';
 import {
     SaviCommand,
     SaviSegmentMessage,
@@ -43,6 +44,7 @@ export interface SaviCaptureHost {
 export class SaviCaptureController {
     private readonly _host: SaviCaptureHost;
     private readonly _nativeSubtitleHider = new NativeSubtitleHider();
+    private readonly _recordButton = new SaviRecordButton(() => this._toggleCapture());
     private _segmenter?: Segmenter;
     private _active = false;
     private _starting = false;
@@ -98,6 +100,7 @@ export class SaviCaptureController {
 
     unbind() {
         this._nativeSubtitleHider.clear();
+        this._recordButton.destroy();
 
         if (this._messageListener !== undefined) {
             browser.runtime.onMessage.removeListener(this._messageListener);
@@ -127,8 +130,16 @@ export class SaviCaptureController {
                     }
                 }
 
-                if (saviCaptureEnabled && !this._active && !this._starting) {
-                    this.start(false);
+                if (saviCaptureEnabled) {
+                    // Surface the Record control whenever capture is on offer,
+                    // and auto-start (silently — see start()'s no-active-tab
+                    // branch) for the no-friction case.
+                    this._recordButton.show();
+                    if (!this._active && !this._starting) {
+                        this.start(false);
+                    }
+                } else {
+                    this._recordButton.hide();
                 }
             });
     }
@@ -146,9 +157,18 @@ export class SaviCaptureController {
     // when the next episode's subtitles load.
     onSubtitlesReset() {
         this._nativeSubtitleHider.clear();
+        this._recordButton.hide();
 
         if (this._active) {
             this.stop();
+        }
+    }
+
+    private _toggleCapture() {
+        if (this._active) {
+            this.stop();
+        } else {
+            this.start(true);
         }
     }
 
@@ -213,16 +233,19 @@ export class SaviCaptureController {
                     this._opsFromOutputs(segmenter.begin(video.currentTime * 1000, video.playbackRate, video.paused))
                 );
                 this._host.notify('Savi: capturing episode');
+                this._recordButton.setState('recording');
             } else if (response?.errorCode === 'no-active-tab') {
-                // Browsers only grant tab-audio capture after a user gesture
-                // on the extension. Auto-start (on subtitle load) has none, so
-                // the recorder can't grab audio — tell the user the one thing
-                // that fixes it. One click arms the whole tab session
-                // (active-tab permission persists until the tab reloads), so
-                // auto-capture works for every episode after the first click.
-                this._host.notify(
-                    'Savi: click the savi toolbar icon, then Start, to record this tab. One click enables audio for the whole session.'
-                );
+                // Browsers only grant tab-audio capture after a user gesture on
+                // the extension (a button click in the page doesn't count), so
+                // the auto-start on every reload can't grab audio. Stay silent
+                // there; only guide the user when they explicitly asked to
+                // record — and point them at the one-press path. One grant arms
+                // the whole tab session (the permission lasts until reload).
+                if (manuallyRequested) {
+                    this._host.notify(
+                        'Savi: press Ctrl+Shift+S (or click the savi toolbar icon) to enable audio recording for this tab.'
+                    );
+                }
             } else {
                 this._host.notify(`Savi: capture failed — ${response?.errorMessage ?? 'unknown error'}`);
             }
@@ -363,6 +386,7 @@ export class SaviCaptureController {
         this._active = false;
         this._segmenter = undefined;
         this._detachVideoListeners();
+        this._recordButton.setState('idle');
     }
 
     private _notifyFinished(result: { ok: boolean; info?: any; errorMessage?: string; failedSegments?: number }) {
