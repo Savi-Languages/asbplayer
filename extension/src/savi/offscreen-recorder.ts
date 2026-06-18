@@ -54,6 +54,10 @@ interface CheckedOutClone {
 }
 
 let activeCapture: ActiveCapture | undefined;
+// The finish of a just-stopped capture (drain uploads + daemon stitch, which
+// can take seconds) runs in the background; a new start waits on this so it
+// doesn't collide with the still-finishing one.
+let finishInFlight: Promise<void> | undefined;
 let liveClones: CheckedOutClone[] = [];
 let cloneWatchInterval: NodeJS.Timeout | undefined;
 
@@ -109,6 +113,15 @@ const endSegment = (capture: ActiveCapture): Promise<void> => {
 };
 
 const startCapture = async (message: SaviOffscreenStartMessage): Promise<void> => {
+    // A capture that was just stopped may still be finishing (draining its
+    // upload queue + the daemon stitch). Wait for it to fully release the tab's
+    // single tabCapture and clear the slot, or the restart throws "already in
+    // progress" right after a stop.
+    if (finishInFlight !== undefined) {
+        await finishInFlight.catch(() => {});
+        finishInFlight = undefined;
+    }
+
     if (activeCapture !== undefined) {
         throw new Error('savi capture already in progress');
     }
@@ -148,7 +161,7 @@ const startCapture = async (message: SaviOffscreenStartMessage): Promise<void> =
     for (const track of stream.getTracks()) {
         track.onended = () => {
             if (activeCapture === capture && !capture.finishing) {
-                finishAndNotify();
+                finishInFlight = finishAndNotify();
             }
         };
     }
@@ -203,7 +216,7 @@ const stopCapture = (): SaviStopCaptureResponse => {
         return { stopped: false, errorMessage: 'savi capture already finishing' };
     }
 
-    finishAndNotify();
+    finishInFlight = finishAndNotify();
     return { stopped: true };
 };
 

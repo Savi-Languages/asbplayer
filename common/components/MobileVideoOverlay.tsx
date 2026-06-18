@@ -66,7 +66,7 @@ const GridContainer = React.forwardRef<HTMLDivElement, GridContainerProps>(funct
     ref
 ) {
     return (
-        <Grid ref={ref} container alignContent="center" justifyContent="center" {...props}>
+        <Grid ref={ref} container alignItems="center" alignContent="center" justifyContent="center" {...props}>
             {children}
         </Grid>
     );
