@@ -22,8 +22,9 @@ const SUBTITLE_CONTAINER = '.asbplayer-subtitles';
 const LANG = 'ja';
 // Hiragana, katakana, CJK (+ Ext. A), compatibility ideographs, halfwidth kana.
 const JAPANESE = /[぀-ヿ㐀-䶿一-鿿豈-﫿ｦ-ﾟ]/;
-const HOVER_DEBOUNCE_MS = 50;
+const HOVER_DEBOUNCE_MS = 0; // fire as good as immediately; tokenize/dict are cached
 const TOKENIZE_CACHE_MAX = 64;
+const DICT_CACHE_MAX = 300;
 
 /** The token whose `[start, start+len)` range contains `offset`, plus that
  *  span — tokens concatenate back to the line (the daemon emits gap tokens for
@@ -253,6 +254,7 @@ function positionPopup(popup: HTMLDivElement, arrow: HTMLDivElement, word: DOMRe
  *  cursor and shows a daemon-backed dictionary popup for it. */
 export class SaviHoverDictionary {
     private readonly _tokenizeCache = new Map<string, SaviToken[]>();
+    private readonly _dictCache = new Map<string, SaviDictEntry[]>();
     private _popup: HTMLDivElement | null = null;
     private _popupContent: HTMLDivElement | null = null;
     private _arrow: HTMLDivElement | null = null;
@@ -327,17 +329,17 @@ export class SaviHoverDictionary {
         if (term === this._currentTerm) {
             return; // already showing this word's definition
         }
-        const res = await sendToBackground<SaviDictResponse>({ command: 'savi-dict', lang: LANG, term });
+        const entries = await this._lookupDict(term);
         if (generation !== this._generation) {
             return;
         }
-        if (!res.entries || res.entries.length === 0) {
+        if (entries.length === 0) {
             this._hidePopup();
             return;
         }
         this._currentTerm = term;
         const popup = this._ensurePopup();
-        this._popupContent!.replaceChildren(renderEntry(term, span.token, res.entries));
+        this._popupContent!.replaceChildren(renderEntry(term, span.token, entries));
         popup.style.display = 'block';
         // Anchor to the word so the arrow points at it; fall back to the cursor.
         positionPopup(popup, this._arrow!, wordRect ?? new DOMRect(x, y, 0, 0));
@@ -354,6 +356,19 @@ export class SaviHoverDictionary {
         }
         this._tokenizeCache.set(text, tokens);
         return tokens;
+    }
+
+    private async _lookupDict(term: string): Promise<SaviDictEntry[]> {
+        const cached = this._dictCache.get(term);
+        if (cached) return cached; // re-hovers / common words are instant
+        const res = await sendToBackground<SaviDictResponse>({ command: 'savi-dict', lang: LANG, term });
+        const entries = res.entries ?? [];
+        if (this._dictCache.size >= DICT_CACHE_MAX) {
+            const oldest = this._dictCache.keys().next().value;
+            if (oldest !== undefined) this._dictCache.delete(oldest);
+        }
+        this._dictCache.set(term, entries);
+        return entries;
     }
 
     private _highlightRect(line: HTMLElement, rect: DOMRect) {

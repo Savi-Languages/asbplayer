@@ -48,9 +48,13 @@ const BOUNDING_BOX_PADDING = 25;
 // over the settings-derived weight, and the native (English) line is left
 // normal. Content-based, so it doesn't depend on which track is which.
 const HAS_JAPANESE = /[぀-ヿ㐀-鿿ｦ-ﾟ]/;
+// The bigger/bold Japanese box is taller than the base line-height's leading,
+// so its own wrapped lines overlapped — give the Japanese cue a roomier
+// line-height too. line-height is set inline here (not in CSS) so the English
+// line keeps the tighter base spacing.
 const saviSubtitleStyle = (text: string): string =>
     HAS_JAPANESE.test(text)
-        ? 'font-size:28px !important;font-weight:700 !important;letter-spacing:0.08em !important;'
+        ? 'font-size:32px !important;font-weight:700 !important;letter-spacing:0.08em !important;line-height:1.6 !important;'
         : '';
 
 const _intersects = (clientX: number, clientY: number, element: HTMLElement): boolean => {
