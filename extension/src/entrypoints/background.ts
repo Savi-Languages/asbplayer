@@ -78,6 +78,7 @@ import OpenStatisticsHandler from '@/handlers/video/open-statistics-handler';
 import StatisticsOverlayForwarderHandler from '@/handlers/statistics-overlay/statistics-overlay-forwarder-handler';
 import OpenStatisticsOverlayHandler from '@/handlers/open-statistics-overlay-handler';
 import SaviCommandHandler from '@/savi/background-handler';
+import { SaviCommand } from '@/savi/messages';
 
 export default defineBackground(() => {
     if (!isFirefoxBuild) {
@@ -430,6 +431,20 @@ export default defineBackground(() => {
                         },
                     });
                     break;
+                case 'savi-record': {
+                    // The keypress just granted activeTab for this tab; ask the
+                    // savi capture controller to start (manually requested), so
+                    // tabCapture succeeds without the user clicking the icon.
+                    const tabId = tabs[0]?.id;
+                    if (tabId !== undefined) {
+                        const startCommand: SaviCommand<{ command: 'savi-request-start' }> = {
+                            sender: 'savi-extension-to-video',
+                            message: { command: 'savi-request-start' },
+                        };
+                        browser.tabs.sendMessage(tabId, startCommand).catch(() => {});
+                    }
+                    break;
+                }
                 default:
                     throw new Error('Unknown command ' + command);
             }

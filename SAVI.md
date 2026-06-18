@@ -76,6 +76,25 @@ watch → it pauses at each line → hover words (Yomitan) / **`S`** to replay /
 **`Ctrl+Shift+X`** to mine → **`Space`** to continue. **`A`**/**`D`** step
 between lines.
 
+## Recording audio for an episode
+
+savi's condensed-audio feature records the tab's audio. Browsers require a
+fresh user gesture to grant tab-audio access **on every page load** — a
+security rule no extension can bypass — so after a reload you arm recording
+with one keypress:
+
+**`Ctrl+Shift+S`** (Mac: `Control+Shift+S`) — grants the audio permission **and**
+starts the savi capture in a single gesture. No hunting for the toolbar icon.
+
+It's a browser-level command, so if nothing happens the key probably wasn't
+bound (another extension claimed it). Set it at **`edge://extensions/shortcuts`**
+(or `chrome://extensions/shortcuts`) under *"Savi: grant audio permission and
+start recording this tab"*.
+
+You only need this for the **audio** capture. Subtitles, the hover dictionary,
+furigana, and pause-on-hover all work without it — and savi no longer pops the
+"enable audio recording" dialog on reload.
+
 ## Bilingual (dual) subtitles
 
 Load a second subtitle track (your native language) alongside the target track

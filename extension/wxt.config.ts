@@ -160,6 +160,16 @@ export default defineConfig({
             'toggle-recording': {
                 description: '__MSG_shortcutToggleRecordingDescription__',
             },
+            // savi: one keypress grants the per-tab audio permission (a command
+            // gesture grants activeTab) AND starts the savi capture — so the
+            // user never has to hunt for the toolbar icon after a reload.
+            'savi-record': {
+                suggested_key: {
+                    default: 'Ctrl+Shift+S',
+                    mac: 'MacCtrl+Shift+S',
+                },
+                description: 'Savi: grant audio permission and start recording this tab',
+            },
         };
 
         if (isDev) {
