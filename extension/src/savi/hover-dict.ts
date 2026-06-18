@@ -152,7 +152,7 @@ const POPUP_STYLE: Partial<CSSStyleDeclaration> = {
     color: '#e8eaed',
     border: '1px solid #2a313c',
     borderRadius: '12px',
-    padding: '12px 16px',
+    padding: '15px 18px',
     boxShadow: '0 8px 30px rgba(0,0,0,0.5)',
     font: '14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Sans", "Noto Sans JP", sans-serif',
     pointerEvents: 'auto',
@@ -177,7 +177,7 @@ function renderEntry(term: string, token: SaviToken, entries: SaviDictEntry[]): 
     const root = document.createElement('div');
 
     const head = document.createElement('div');
-    Object.assign(head.style, { fontSize: '20px', fontWeight: '650', marginBottom: '4px' });
+    Object.assign(head.style, { fontSize: '20px', fontWeight: '650', lineHeight: '1.3', marginBottom: '6px' });
     head.textContent = term;
     if (token.reading && token.reading !== term) {
         const reading = document.createElement('span');

@@ -24,10 +24,9 @@
     cursor: text !important;
     /* savi: roomier vertical rhythm — line-height spaces wrapped lines within
        a cue; the margin opens a gap between stacked cues (the target line and
-       its translation). letter-spacing gives the Japanese characters room so
-       words don't read cramped (e.g. の after 国立). */
+       its translation). Character spacing is applied per-cue to Japanese only
+       (see saviSubtitleStyle), so English letters stay normal. */
     line-height: 1.4 !important;
-    letter-spacing: 0.08em !important;
     margin: 6px 0 !important;
     white-space: pre-wrap !important;
 }

@@ -42,6 +42,15 @@ import Binding from '@/services/binding';
 
 const BOUNDING_BOX_PADDING = 25;
 
+// savi: a cue gets the "target language" treatment — bold + character spacing,
+// so it stands out from the lighter native-language line — when its text
+// contains Japanese. Appended to the cue's inline style; inline !important wins
+// over the settings-derived weight, and the native (English) line is left
+// normal. Content-based, so it doesn't depend on which track is which.
+const HAS_JAPANESE = /[぀-ヿ㐀-鿿ｦ-ﾟ]/;
+const saviSubtitleStyle = (text: string): string =>
+    HAS_JAPANESE.test(text) ? 'font-weight:700 !important;letter-spacing:0.08em !important;' : '';
+
 const _intersects = (clientX: number, clientY: number, element: HTMLElement): boolean => {
     const rect = element.getBoundingClientRect();
     return (
@@ -573,10 +582,11 @@ export default class SubtitleController {
     }
 
     private _buildTextHtml(text: string, track?: number, richText?: string) {
+        const styles = `${this._subtitleStyles(track)};${saviSubtitleStyle(text)}`;
         if (richText && this.subtitleAnnotations.hoverOnly(track!)) {
-            return `<span data-track="${track!}" class="${this._subtitleClasses(track)}" style="${this._subtitleStyles(track)}"><span class="asbplayer-subtitle-text">${text}</span><span class="asbplayer-subtitle-rich">${richText}</span></span>`;
+            return `<span data-track="${track!}" class="${this._subtitleClasses(track)}" style="${styles}"><span class="asbplayer-subtitle-text">${text}</span><span class="asbplayer-subtitle-rich">${richText}</span></span>`;
         }
-        return `<span data-track="${track ?? 0}" class="${this._subtitleClasses(track)}" style="${this._subtitleStyles(track)}">${richText ?? text}</span>`;
+        return `<span data-track="${track ?? 0}" class="${this._subtitleClasses(track)}" style="${styles}">${richText ?? text}</span>`;
     }
 
     unbind() {
