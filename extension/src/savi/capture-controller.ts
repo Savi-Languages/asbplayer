@@ -18,6 +18,7 @@ import { serializeToSrt, SerializableSubtitle } from './subtitle-serializer';
 import { deriveEpisodeId, deriveShowAndTitle, deriveShowAndTitleFromBasename } from './episode';
 import { NativeSubtitleHider, nativeSubtitleSelectorForHost } from './native-subtitle-hider';
 import { SaviRecordButton } from './record-button';
+import { SaviSpeedControl } from './speed-control';
 import {
     SaviCommand,
     SaviSegmentMessage,
@@ -45,6 +46,7 @@ export class SaviCaptureController {
     private readonly _host: SaviCaptureHost;
     private readonly _nativeSubtitleHider = new NativeSubtitleHider();
     private readonly _recordButton = new SaviRecordButton(() => this._toggleCapture());
+    private readonly _speedControl = new SaviSpeedControl(() => this._host.video);
     private _segmenter?: Segmenter;
     private _active = false;
     private _starting = false;
@@ -101,6 +103,7 @@ export class SaviCaptureController {
     unbind() {
         this._nativeSubtitleHider.clear();
         this._recordButton.destroy();
+        this._speedControl.destroy();
 
         if (this._messageListener !== undefined) {
             browser.runtime.onMessage.removeListener(this._messageListener);
@@ -119,6 +122,10 @@ export class SaviCaptureController {
         this._host.settings
             .get(['saviCaptureEnabled', 'saviHideNativeSubtitles', 'saviDaemonUrl'])
             .then(({ saviCaptureEnabled, saviHideNativeSubtitles }) => {
+                // Playback-speed control is useful whenever you're studying,
+                // independent of capture.
+                this._speedControl.show();
+
                 // Hiding the site's own subtitles is independent of capture:
                 // run it first and regardless of whether auto-capture is on.
                 if (saviHideNativeSubtitles) {
@@ -158,6 +165,7 @@ export class SaviCaptureController {
     onSubtitlesReset() {
         this._nativeSubtitleHider.clear();
         this._recordButton.hide();
+        this._speedControl.hide();
 
         if (this._active) {
             this.stop();

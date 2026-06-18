@@ -102,6 +102,14 @@ You only need any of this for the **audio** capture. Subtitles, the hover
 dictionary, furigana, and pause-on-hover all work without it — and savi no
 longer pops the "enable audio recording" dialog on reload.
 
+## Playback speed
+
+A speed selector sits at the **top-center** of the video — **0.5× · 0.75× · 1× ·
+1.25× · 1.5×**. Click a rate to set it; the active one is highlighted. (Idle
+it's faint; hover to bring it forward.) These all sit inside the 0.5–2.0× range
+savi's capture tempo-corrects, so slowing down to study **while recording** is
+fine — the condensed audio comes back at normal speed.
+
 ## Bilingual (dual) subtitles
 
 Load a second subtitle track (your native language) alongside the target track
