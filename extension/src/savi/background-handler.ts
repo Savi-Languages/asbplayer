@@ -37,6 +37,7 @@ import {
     startCapture,
     tokenize,
 } from './daemon-client';
+import { getCachedDict, getCachedTokens, putCachedDict, putCachedTokens } from './persistent-cache';
 
 export default class SaviCommandHandler implements CommandHandler {
     private readonly _settings: SettingsProvider;
@@ -115,25 +116,38 @@ export default class SaviCommandHandler implements CommandHandler {
     private async _tokenize(message: SaviTokenizeMessage): Promise<SaviTokenizeResponse> {
         const config = await this._daemonConfig();
         if (!config) {
-            return { tokens: [] };
+            // No daemon configured — serve anything we tokenized before.
+            return { tokens: (await getCachedTokens(message.lang, message.text)) ?? [] };
         }
         try {
-            return { tokens: await tokenize(config, message.lang, message.text) };
+            const tokens = await tokenize(config, message.lang, message.text);
+            if (tokens.length > 0) {
+                await putCachedTokens(message.lang, message.text, tokens);
+            }
+            return { tokens };
         } catch (e) {
-            return { tokens: [] };
+            // Daemon unreachable — fall back to the persistent cache so a
+            // previously-seen line still hovers offline.
+            return { tokens: (await getCachedTokens(message.lang, message.text)) ?? [] };
         }
     }
 
     private async _lookupDict(message: SaviDictMessage): Promise<SaviDictResponse> {
         const config = await this._daemonConfig();
         if (!config) {
-            return { entries: [], kanji: [] };
+            const cached = await getCachedDict(message.lang, message.term);
+            return cached ?? { entries: [], kanji: [] };
         }
         try {
             const result = await lookupDict(config, message.lang, message.term);
+            // Persist non-empty results so they survive reloads + a daemon-down spell.
+            if (result.entries.length > 0 || result.kanji.length > 0) {
+                await putCachedDict(message.lang, message.term, result.entries, result.kanji);
+            }
             return { entries: result.entries, kanji: result.kanji };
         } catch (e) {
-            return { entries: [], kanji: [] };
+            const cached = await getCachedDict(message.lang, message.term);
+            return cached ?? { entries: [], kanji: [] };
         }
     }
 

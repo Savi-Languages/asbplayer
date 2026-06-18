@@ -20,6 +20,7 @@ import {
     SaviTokenizeResponse,
 } from './messages';
 import { deriveEpisodeId } from './episode';
+import { friendlySaviError } from './savi-errors';
 
 // The overlay that stacks subtitle lines (the target language AND its
 // translation). We never tokenize this whole thing — we resolve the single
@@ -202,21 +203,6 @@ const MINE_BTN_STYLE: Partial<CSSStyleDeclaration> = {
     borderRadius: '7px',
     cursor: 'pointer',
 };
-
-/** A short, friendly label for a mine failure (the daemon's raw error is for
- *  logs, not the button). Lesson 4 generalizes this into a shared mapper. */
-function mineErrorLabel(message: string | undefined): string {
-    if (message && /duplicate/i.test(message)) {
-        return '✓ Already in Anki';
-    }
-    if (message && /url\/token not set|not-configured/i.test(message)) {
-        return 'Set daemon URL/token';
-    }
-    if (message && /AnkiConnect|refused|unreachable|failed to/i.test(message)) {
-        return 'Is Anki open? Retry';
-    }
-    return 'Failed — click to retry';
-}
 
 function renderEntry(
     term: string,
@@ -488,7 +474,7 @@ export class SaviHoverDictionary {
                 button.style.color = '#fff';
             } else {
                 button.disabled = false;
-                button.textContent = mineErrorLabel(res.errorMessage);
+                button.textContent = friendlySaviError(res.errorMessage);
             }
         } catch (e) {
             button.disabled = false;
