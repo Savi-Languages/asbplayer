@@ -198,7 +198,11 @@ export default class SaviCommandHandler implements CommandHandler {
         };
 
         if (!response?.started) {
-            if (response?.errorCode === 'no-active-tab') {
+            // Only nag for the audio-recording permission when the user
+            // explicitly started a capture. The auto-start that runs every time
+            // subtitles load (i.e. every reload) stays silent — otherwise the
+            // "enable audio recording" dialog pops on each page load.
+            if (response?.errorCode === 'no-active-tab' && message.manuallyRequested) {
                 this._requestActiveTab(tabId, message.src);
             }
 

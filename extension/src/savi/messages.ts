@@ -37,6 +37,11 @@ export interface SaviStartCaptureMessage {
     readonly subtitles: string;
     readonly subtitleFormat: 'srt' | 'vtt';
     readonly src: string;
+    // True only when the user explicitly started this capture. On the
+    // auto-start that fires every time subtitles load (i.e. every reload), this
+    // is false, so the background suppresses the "enable audio recording"
+    // permission prompt instead of nagging on each reload.
+    readonly manuallyRequested: boolean;
 }
 
 export interface SaviStopCaptureMessage {

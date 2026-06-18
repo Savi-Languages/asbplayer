@@ -195,6 +195,7 @@ export class SaviCaptureController {
                     subtitles: serializeToSrt(subtitles),
                     subtitleFormat: 'srt',
                     src: this._host.videoSrc(),
+                    manuallyRequested,
                 },
             };
             const response = (await browser.runtime.sendMessage(command)) as SaviStartCaptureResponse;
