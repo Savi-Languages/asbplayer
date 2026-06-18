@@ -1,6 +1,7 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import Grid, { GridProps } from '@mui/material/Grid';
 import IconButton from '@mui/material/IconButton';
+import Button from '@mui/material/Button';
 import NoteAddIcon from '@mui/icons-material/NoteAdd';
 import NavigateBeforeIcon from '@mui/icons-material/NavigateBefore';
 import NavigateNextIcon from '@mui/icons-material/NavigateNext';
@@ -385,17 +386,7 @@ const MobileVideoOverlay = React.forwardRef<HTMLDivElement, Props>(function Mobi
     return (
         <>
             <GridContainer ref={ref} direction="row" wrap="nowrap" className={containerClassName}>
-                {onLoadSubtitles && (
-                    <Grid item>
-                        <Tooltip {...defaultTooltipProps} title={t('action.loadSubtitles')!}>
-                            <span>
-                                <IconButton disabled={model.recording} onClick={onLoadSubtitles}>
-                                    <LogoIcon className={model.recording ? classes.inactiveButton : classes.button} />
-                                </IconButton>
-                            </span>
-                        </Tooltip>
-                    </Grid>
-                )}
+                {/* savi: load-subtitles (logo) button removed per user request. */}
                 <Grid item>
                     <Tooltip {...defaultTooltipProps} title={miningButtonTooltip(model)!}>
                         {model.emptySubtitleTrack && model.recordingEnabled ? (
@@ -438,70 +429,29 @@ const MobileVideoOverlay = React.forwardRef<HTMLDivElement, Props>(function Mobi
                         </Tooltip>
                     </Grid>
                 )}
-                {!model.emptySubtitleTrack && (
-                    <Grid item>
-                        <Tooltip {...defaultTooltipProps} title={t('controls.playbackMode')!}>
-                            <span>
-                                <IconButton disabled={model.recording} onClick={handleOpenPlayModeSelector}>
-                                    <TuneIcon className={model.recording ? classes.inactiveButton : classes.button} />
-                                </IconButton>
-                            </span>
-                        </Tooltip>
-                    </Grid>
-                )}
-                {!model.recording && (
-                    <>
-                        <Grid item>
-                            <Tooltip {...defaultTooltipProps} title={leftNumberControlTitle}>
-                                <span>
-                                    <HoldableIconButton
-                                        onClick={handleLeftNumberControl}
-                                        onHold={handleHoldLeftNumberControl}
-                                        disabled={leftNumberControlDisabled}
-                                    >
-                                        <NavigateBeforeIcon
-                                            className={
-                                                leftNumberControlDisabled ? classes.inactiveButton : classes.button
-                                            }
-                                        />
-                                    </HoldableIconButton>
-                                </span>
-                            </Tooltip>
-                        </Grid>
-                        <Tooltip {...defaultTooltipProps} title={numberControlTitle}>
-                            <Grid item>
-                                <ScrollableNumberControls
-                                    offsetInputRef={offsetInputRef}
-                                    playbackRateInputRef={playbackInputRef}
-                                    offset={model.offset}
-                                    onOffset={onOffset}
-                                    playbackRate={model.playbackRate}
-                                    onPlaybackRate={onPlaybackRate}
-                                    initialControlType={initialControlType}
-                                    onScrollTo={handleScrollToControlType}
-                                    currentMilliseconds={model.currentTimestamp}
-                                />
+                {/* savi: "Playback Mode" and the offset/playback-rate number
+                    control removed per user request; pick a speed directly. */}
+                {!model.recording &&
+                    [0.5, 0.75, 1, 1.25, 1.5].map((rate) => {
+                        const active = Math.abs(model.playbackRate - rate) < 0.001;
+                        return (
+                            <Grid item key={rate}>
+                                <Button
+                                    size="small"
+                                    onClick={() => onPlaybackRate(rate)}
+                                    style={{
+                                        minWidth: 0,
+                                        padding: '2px 7px',
+                                        fontWeight: active ? 700 : 500,
+                                        color: active ? '#fff' : 'rgba(255, 255, 255, 0.6)',
+                                        backgroundColor: active ? 'rgba(255, 255, 255, 0.16)' : 'transparent',
+                                    }}
+                                >
+                                    {rate}×
+                                </Button>
                             </Grid>
-                        </Tooltip>
-                        <Grid item>
-                            <Tooltip {...defaultTooltipProps} title={rightNumberControlTitle}>
-                                <span>
-                                    <HoldableIconButton
-                                        onClick={handleRightNumberControl}
-                                        onHold={handleHoldRightNumberControl}
-                                        disabled={rightNumberControlDisabled}
-                                    >
-                                        <NavigateNextIcon
-                                            className={
-                                                rightNumberControlDisabled ? classes.inactiveButton : classes.button
-                                            }
-                                        />
-                                    </HoldableIconButton>
-                                </span>
-                            </Tooltip>
-                        </Grid>
-                    </>
-                )}
+                        );
+                    })}
             </GridContainer>
             {playModeSelectorOpen && (
                 <PlayModeSelector

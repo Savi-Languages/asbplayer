@@ -122,9 +122,9 @@ export class SaviCaptureController {
         this._host.settings
             .get(['saviCaptureEnabled', 'saviHideNativeSubtitles', 'saviDaemonUrl'])
             .then(({ saviCaptureEnabled, saviHideNativeSubtitles }) => {
-                // Playback-speed control is useful whenever you're studying,
-                // independent of capture.
-                this._speedControl.show();
+                // Speed selection now lives in asbplayer's own top control bar
+                // (MobileVideoOverlay), so the separate floating control stays
+                // hidden — kept around only as a fallback.
 
                 // Hiding the site's own subtitles is independent of capture:
                 // run it first and regardless of whether auto-capture is on.
