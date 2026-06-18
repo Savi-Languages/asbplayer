@@ -9,7 +9,7 @@
 // popup. Daemon calls go through the background (MV3 blocks cross-origin
 // fetches from content scripts).
 
-import { SaviDictEntry, SaviToken } from './daemon-client';
+import { SaviDictEntry, SaviKanjiInfo, SaviToken } from './daemon-client';
 import {
     SaviCommand,
     SaviDictMessage,
@@ -222,6 +222,7 @@ function renderEntry(
     term: string,
     token: SaviToken,
     entries: SaviDictEntry[],
+    kanji: SaviKanjiInfo[],
     onMine: (button: HTMLButtonElement) => void
 ): HTMLElement {
     const root = document.createElement('div');
@@ -258,6 +259,37 @@ function renderEntry(
         if (ol.childElementCount > 0) {
             root.appendChild(ol);
         }
+    }
+
+    // Kanji breakdown — compact (char + Heisig keyword + components). The full
+    // mnemonic story is reserved for the mined card so the popup stays small.
+    if (kanji.length > 0) {
+        const box = document.createElement('div');
+        Object.assign(box.style, {
+            marginTop: '6px',
+            paddingTop: '6px',
+            borderTop: '1px solid #2a313c',
+            fontSize: '13px',
+            lineHeight: '1.55',
+        });
+        for (const k of kanji) {
+            const row = document.createElement('div');
+            const ch = document.createElement('span');
+            Object.assign(ch.style, { color: '#ffd166', fontSize: '15px', marginRight: '7px' });
+            ch.textContent = k.kanji;
+            row.appendChild(ch);
+            const kw = document.createElement('span');
+            kw.textContent = k.keyword;
+            row.appendChild(kw);
+            if (k.components && k.components.length > 0) {
+                const comp = document.createElement('span');
+                Object.assign(comp.style, { color: '#8a93a0', marginLeft: '6px' });
+                comp.textContent = `(${k.components.join(', ')})`;
+                row.appendChild(comp);
+            }
+            box.appendChild(row);
+        }
+        root.appendChild(box);
     }
 
     const mine = document.createElement('button');
@@ -315,7 +347,7 @@ function positionPopup(popup: HTMLDivElement, arrow: HTMLDivElement, word: DOMRe
  *  cursor and shows a daemon-backed dictionary popup for it. */
 export class SaviHoverDictionary {
     private readonly _tokenizeCache = new Map<string, SaviToken[]>();
-    private readonly _dictCache = new Map<string, SaviDictEntry[]>();
+    private readonly _dictCache = new Map<string, SaviDictResponse>();
     private _popup: HTMLDivElement | null = null;
     private _popupContent: HTMLDivElement | null = null;
     private _arrow: HTMLDivElement | null = null;
@@ -390,18 +422,26 @@ export class SaviHoverDictionary {
         if (term === this._currentTerm) {
             return; // already showing this word's definition
         }
-        const entries = await this._lookupDict(term);
+        const result = await this._lookupDict(term);
         if (generation !== this._generation) {
             return;
         }
-        if (entries.length === 0) {
+        // Show the popup when there's anything useful — a definition OR just a
+        // kanji breakdown (so even an unknown compound still teaches its kanji).
+        if (result.entries.length === 0 && result.kanji.length === 0) {
             this._hidePopup();
             return;
         }
         this._currentTerm = term;
         const popup = this._ensurePopup();
         this._popupContent!.replaceChildren(
-            renderEntry(term, span.token, entries, (button) => void this._mine(text, span.token, term, button))
+            renderEntry(
+                term,
+                span.token,
+                result.entries,
+                result.kanji,
+                (button) => void this._mine(text, span.token, term, button)
+            )
         );
         popup.style.display = 'block';
         // Anchor to the word so the arrow points at it; fall back to the cursor.
@@ -456,17 +496,17 @@ export class SaviHoverDictionary {
         }
     }
 
-    private async _lookupDict(term: string): Promise<SaviDictEntry[]> {
+    private async _lookupDict(term: string): Promise<SaviDictResponse> {
         const cached = this._dictCache.get(term);
         if (cached) return cached; // re-hovers / common words are instant
         const res = await sendToBackground<SaviDictResponse>({ command: 'savi-dict', lang: LANG, term });
-        const entries = res.entries ?? [];
+        const result: SaviDictResponse = { entries: res.entries ?? [], kanji: res.kanji ?? [] };
         if (this._dictCache.size >= DICT_CACHE_MAX) {
             const oldest = this._dictCache.keys().next().value;
             if (oldest !== undefined) this._dictCache.delete(oldest);
         }
-        this._dictCache.set(term, entries);
-        return entries;
+        this._dictCache.set(term, result);
+        return result;
     }
 
     private _highlightRect(line: HTMLElement, rect: DOMRect) {

@@ -118,6 +118,19 @@ export interface SaviDictEntry {
     readonly senses: SaviDictSense[];
 }
 
+/** Per-kanji breakdown (Heisig keyword + components + mnemonic) for the term. */
+export interface SaviKanjiInfo {
+    readonly kanji: string;
+    readonly keyword: string;
+    readonly components: string[];
+    readonly story?: string;
+}
+
+export interface SaviDictResult {
+    readonly entries: SaviDictEntry[];
+    readonly kanji: SaviKanjiInfo[];
+}
+
 /** Tokenize a line; tokens concatenate back to the input so the caller can
  *  map a cursor offset to a token. Empty when the daemon has no analyzer. */
 export const tokenize = async (config: SaviDaemonConfig, lang: string, text: string): Promise<SaviToken[]> => {
@@ -125,11 +138,12 @@ export const tokenize = async (config: SaviDaemonConfig, lang: string, text: str
     return body.tokens ?? [];
 };
 
-/** JP→EN dictionary lookup; empty when nothing matches or no dictionary. */
-export const lookupDict = async (config: SaviDaemonConfig, lang: string, term: string): Promise<SaviDictEntry[]> => {
+/** JP→EN dictionary lookup + per-kanji breakdown; both empty when nothing
+ *  matches or no dictionary is loaded. */
+export const lookupDict = async (config: SaviDaemonConfig, lang: string, term: string): Promise<SaviDictResult> => {
     const path = `/api/dict/${encodeURIComponent(lang)}/${encodeURIComponent(term)}`;
     const body = await request(config, path, { method: 'GET' });
-    return body.entries ?? [];
+    return { entries: body.entries ?? [], kanji: body.kanji ?? [] };
 };
 
 // ── Mine to Anki ────────────────────────────────────────────────────────

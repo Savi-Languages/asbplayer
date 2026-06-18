@@ -84,7 +84,7 @@ export default class SaviCommandHandler implements CommandHandler {
             case 'savi-dict':
                 this._lookupDict(command.message as SaviDictMessage)
                     .then(sendResponse)
-                    .catch(() => sendResponse({ entries: [] }));
+                    .catch(() => sendResponse({ entries: [], kanji: [] }));
                 return true;
             case 'savi-mine-line':
                 this._mineLine(command.message as SaviMineLineMessage)
@@ -127,12 +127,13 @@ export default class SaviCommandHandler implements CommandHandler {
     private async _lookupDict(message: SaviDictMessage): Promise<SaviDictResponse> {
         const config = await this._daemonConfig();
         if (!config) {
-            return { entries: [] };
+            return { entries: [], kanji: [] };
         }
         try {
-            return { entries: await lookupDict(config, message.lang, message.term) };
+            const result = await lookupDict(config, message.lang, message.term);
+            return { entries: result.entries, kanji: result.kanji };
         } catch (e) {
-            return { entries: [] };
+            return { entries: [], kanji: [] };
         }
     }
 

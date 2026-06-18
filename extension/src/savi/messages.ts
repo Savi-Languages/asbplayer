@@ -12,7 +12,7 @@
 //   'savi-extension-to-video'   background → content script
 
 import { SegmentMeta } from './segmenter';
-import { CaptureFinishInfo, SaviDictEntry, SaviToken } from './daemon-client';
+import { CaptureFinishInfo, SaviDictEntry, SaviKanjiInfo, SaviToken } from './daemon-client';
 
 export interface SaviRequester {
     readonly tabId: number;
@@ -104,6 +104,7 @@ export interface SaviDictMessage {
 
 export interface SaviDictResponse {
     readonly entries: SaviDictEntry[];
+    readonly kanji: SaviKanjiInfo[];
 }
 
 // Mine the hovered line+word into an Anki card. The daemon owns the episode
