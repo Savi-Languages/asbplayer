@@ -257,9 +257,29 @@ export default defineBackground(() => {
             title: browser.i18n.getMessage('contextMenuMineSubtitle'),
             contexts: ['page', 'video'],
         });
+
+        // savi: a context-menu click is one of the gestures that grants the
+        // tab-audio permission, so this can start recording from the page.
+        browser.contextMenus?.create({
+            id: 'savi-record',
+            title: 'Start savi recording',
+            contexts: ['page', 'video'],
+        });
     });
 
-    browser.contextMenus?.onClicked.addListener((info) => {
+    browser.contextMenus?.onClicked.addListener((info, tab) => {
+        if (info.menuItemId === 'savi-record') {
+            // The click just granted activeTab for this tab; ask the savi
+            // capture controller to start (tabCapture will succeed now).
+            if (tab?.id !== undefined) {
+                const startCommand: SaviCommand<{ command: 'savi-request-start' }> = {
+                    sender: 'savi-extension-to-video',
+                    message: { command: 'savi-request-start' },
+                };
+                browser.tabs.sendMessage(tab.id, startCommand).catch(() => {});
+            }
+            return;
+        }
         if (info.menuItemId === 'load-subtitles') {
             const toggleVideoSelectCommand: ExtensionToVideoCommand<ToggleVideoSelectMessage> = {
                 sender: 'asbplayer-extension-to-video',
