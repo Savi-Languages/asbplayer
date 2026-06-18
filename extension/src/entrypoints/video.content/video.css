@@ -340,12 +340,13 @@
     }
 }
 
-/* savi: playback-speed quick-select, top-center of the video (managed by
-   speed-control.ts). Semi-transparent until hovered; the active rate is a
-   filled pill. */
+/* savi: playback-speed quick-select (managed by speed-control.ts). Sits just
+   BELOW asbplayer's own top control bar (logo / mine / subtitles / playback
+   mode / offset) so the two don't collide — both are centered at the top.
+   Semi-transparent until hovered; the active rate is a filled pill. */
 .savi-speed-control {
     position: fixed;
-    top: 12px;
+    top: 84px;
     left: 50%;
     transform: translateX(-50%);
     z-index: 2147483640;
