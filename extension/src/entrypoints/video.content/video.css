@@ -316,7 +316,7 @@
     width: 11px;
     height: 11px;
     border-radius: 50%;
-    background: #ff3b30;
+    background: #9aa0a6; /* gray when idle (not recording) */
 }
 
 .savi-record-button.recording {
@@ -325,7 +325,14 @@
 }
 
 .savi-record-button.recording .savi-record-dot {
+    background: #ff3b30; /* red + pulsing while live */
     animation: savi-rec-pulse 1.4s ease-in-out infinite;
+}
+
+/* Transient "you need to do something" state (e.g. press Ctrl+Shift+S). */
+.savi-record-button.hint {
+    opacity: 1;
+    background: rgba(62, 46, 12, 0.95);
 }
 
 @keyframes savi-rec-pulse {

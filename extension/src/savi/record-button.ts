@@ -6,8 +6,9 @@
 // Note: clicking an in-page button does NOT grant the per-tab audio permission
 // (the browser only grants that for action/command/context-menu gestures), so
 // the first start of a page load still needs the Ctrl+Shift+S shortcut or the
-// toolbar icon. This button is the visible control + a stop button, and works
-// directly once the permission is in place.
+// toolbar icon. When a click can't start, the controller calls flashHint() to
+// say so on the button itself. Once the permission is in place, the button
+// starts/stops directly.
 
 export type RecordButtonState = 'idle' | 'recording';
 
@@ -16,6 +17,7 @@ export class SaviRecordButton {
     private _button: HTMLButtonElement | null = null;
     private _label: HTMLSpanElement | null = null;
     private _state: RecordButtonState = 'idle';
+    private _hintTimer: ReturnType<typeof setTimeout> | undefined;
 
     constructor(onToggle: () => void) {
         this._onToggle = onToggle;
@@ -34,16 +36,39 @@ export class SaviRecordButton {
 
     setState(state: RecordButtonState) {
         this._state = state;
+        clearTimeout(this._hintTimer); // a real state change supersedes any hint
         if (!this._button || !this._label) {
             return;
         }
         const recording = state === 'recording';
         this._button.classList.toggle('recording', recording);
-        this._label.textContent = recording ? 'Recording' : 'Record';
-        this._button.title = recording ? 'Stop savi recording' : 'Record this tab for savi (or press Ctrl+Shift+S)';
+        this._button.classList.remove('hint');
+        // Show both the state and the action: idle invites a start; recording
+        // says so plainly and that clicking stops it.
+        this._label.textContent = recording ? 'Recording — Stop' : 'Start recording';
+        this._button.title = recording
+            ? 'Recording this tab for savi — click to stop'
+            : 'Start recording this tab for savi (first start of a page load needs Ctrl+Shift+S)';
+    }
+
+    /** Briefly replace the label with a hint (e.g. how to enable recording),
+     *  then restore the current state's label. Used when a start can't proceed
+     *  — most often because the audio permission hasn't been granted yet. */
+    flashHint(text: string) {
+        clearTimeout(this._hintTimer);
+        if (!this._button || !this._label) {
+            return;
+        }
+        this._button.classList.add('hint');
+        this._label.textContent = text;
+        this._hintTimer = setTimeout(() => {
+            this._button?.classList.remove('hint');
+            this.setState(this._state);
+        }, 3500);
     }
 
     destroy() {
+        clearTimeout(this._hintTimer);
         this._button?.remove();
         this._button = null;
         this._label = null;

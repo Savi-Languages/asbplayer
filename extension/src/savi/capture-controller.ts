@@ -253,6 +253,7 @@ export class SaviCaptureController {
                     this._host.notify(
                         'Savi: press Ctrl+Shift+S (or click the savi toolbar icon) to enable audio recording for this tab.'
                     );
+                    this._recordButton.flashHint('Press Ctrl+Shift+S to enable');
                 }
             } else {
                 this._host.notify(`Savi: capture failed — ${response?.errorMessage ?? 'unknown error'}`);
