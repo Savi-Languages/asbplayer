@@ -89,3 +89,20 @@ The savi player (served by the daemon at `http://localhost:4670`) shows the
 learning bucket** (new = highlight, learning = amber, known = dimmed). Toggle
 **Furigana** / **Colors** above the transcript. This is for *review /
 re-listening*; Yomitan above is for *live watching*.
+
+## Subtitle styling (Language Reactor look)
+
+savi ships Language Reactor-style subtitle defaults (in
+`common/settings/settings-provider.ts`): **soft white**, **regular weight**,
+**no black outline/shadow**, on a **dark rounded box** (the box fill is
+`subtitleBackgroundOpacity`; `video.content/video.css` rounds it). Hovering a
+word draws a **gray box** around it and shows a **pointer** cursor, and
+`pauseOnHoverMode` defaults to **inAndOut** so the video **pauses while you
+hover a word** and resumes when you move away.
+
+These are *defaults* — if you've already customized subtitle appearance in
+Settings, your saved values win. To get the savi look back, reset Subtitle
+appearance (or clear those fields). To make the **native (English) line
+smaller than the target line**, give it its own size under Settings → Subtitle
+appearance → the second track's tab (per-track styling); savi can't guess which
+track is your native one.

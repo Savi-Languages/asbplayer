@@ -24,15 +24,18 @@ import { AutoPausePreference, PostMineAction, PostMinePlayback, SubtitleHtml } f
 const isMacOs = (navigator.userAgentData?.platform ?? navigator.platform)?.toUpperCase()?.indexOf('MAC') > -1;
 
 const defaultSubtitleTextSettings = {
-    subtitleSize: 28,
-    subtitleColor: '#ffffff',
-    subtitleThickness: 700,
+    // savi defaults tuned to look like Language Reactor: soft white, regular
+    // weight, no black outline/shadow, sitting on a dark rounded box (the box
+    // fill is this opacity; video.css rounds it). See the SAVI.md styling note.
+    subtitleSize: 24,
+    subtitleColor: '#e8e8e8',
+    subtitleThickness: 400,
     subtitleOutlineThickness: 0,
     subtitleOutlineColor: '#000000',
-    subtitleShadowThickness: 3,
+    subtitleShadowThickness: 0,
     subtitleShadowColor: '#000000',
     subtitleBackgroundColor: '#000000',
-    subtitleBackgroundOpacity: 0,
+    subtitleBackgroundOpacity: 0.75,
     subtitleFontFamily: '',
     subtitlePreview: 'アあ安Aa',
     subtitleCustomStyles: [],
@@ -245,7 +248,9 @@ export const defaultSettings: AsbplayerSettings = {
     saviDaemonUrl: 'http://127.0.0.1:4670',
     saviDaemonToken: '',
     saviHideNativeSubtitles: true,
-    pauseOnHoverMode: 0,
+    // PauseOnHoverMode.inAndOut: hovering a subtitle word pauses the video and
+    // moving away resumes it (Language Reactor behavior). 0 = disabled.
+    pauseOnHoverMode: 1,
     lastSelectedAnkiExportMode: 'default',
     dictionaryTracks: [defaultDictionaryTrackSettings, defaultDictionaryTrackSettings, defaultDictionaryTrackSettings],
 };

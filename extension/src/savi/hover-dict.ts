@@ -147,16 +147,16 @@ const POPUP_STYLE: Partial<CSSStyleDeclaration> = {
     display: 'none',
 };
 
-// A soft box that glides between words as the cursor moves, like Language
+// A soft gray box that glides between words as the cursor moves, like Language
 // Reactor. Non-interactive so it never eats the caret hit-test under it.
 const HIGHLIGHT_STYLE: Partial<CSSStyleDeclaration> = {
     position: 'fixed',
     zIndex: '2147483646', // just beneath the popup
     pointerEvents: 'none',
     boxSizing: 'border-box',
-    border: '2px solid rgba(96, 165, 250, 0.95)',
-    borderRadius: '6px',
-    background: 'rgba(96, 165, 250, 0.20)',
+    border: '1.5px solid rgba(255, 255, 255, 0.7)',
+    borderRadius: '5px',
+    background: 'rgba(255, 255, 255, 0.12)',
     transition: 'left 60ms linear, top 60ms linear, width 60ms linear, height 60ms linear',
     display: 'none',
 };
@@ -219,6 +219,7 @@ export class SaviHoverDictionary {
     private readonly _tokenizeCache = new Map<string, SaviToken[]>();
     private _popup: HTMLDivElement | null = null;
     private _highlight: HTMLDivElement | null = null;
+    private _cursorLine: HTMLElement | null = null; // line we set cursor:pointer on
     private _currentTerm: string | null = null;
     private _hoverTimer: ReturnType<typeof setTimeout> | undefined;
     private _generation = 0; // bumps to cancel stale async work
@@ -276,7 +277,7 @@ export class SaviHoverDictionary {
         // — every word gets the outline, like Language Reactor.
         const range = rangeForCharSpan(line, span.start, span.end);
         if (range) {
-            this._highlightRange(range);
+            this._highlightRange(line, range);
         } else {
             this._hideHighlight();
         }
@@ -317,7 +318,7 @@ export class SaviHoverDictionary {
         return tokens;
     }
 
-    private _highlightRange(range: Range) {
+    private _highlightRange(line: HTMLElement, range: Range) {
         const rect = range.getBoundingClientRect();
         if (rect.width === 0 && rect.height === 0) {
             this._hideHighlight();
@@ -330,6 +331,13 @@ export class SaviHoverDictionary {
         el.style.width = `${rect.width + pad * 2}px`;
         el.style.height = `${rect.height + pad * 2}px`;
         el.style.display = 'block';
+        // The subtitle container forces cursor:text; signal the word is
+        // clickable with a pointer while it's boxed.
+        if (this._cursorLine !== line) {
+            if (this._cursorLine) this._cursorLine.style.cursor = '';
+            line.style.cursor = 'pointer';
+            this._cursorLine = line;
+        }
     }
 
     private _clear() {
@@ -345,6 +353,10 @@ export class SaviHoverDictionary {
 
     private _hideHighlight() {
         if (this._highlight) this._highlight.style.display = 'none';
+        if (this._cursorLine) {
+            this._cursorLine.style.cursor = '';
+            this._cursorLine = null;
+        }
     }
 
     private _ensurePopup(): HTMLDivElement {

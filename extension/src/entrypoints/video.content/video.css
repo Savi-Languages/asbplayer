@@ -26,6 +26,17 @@
     white-space: pre-wrap !important;
 }
 
+/* savi: round each per-line subtitle background into a Language Reactor-style
+   box and give the text a little breathing room. The dark fill comes from the
+   subtitleBackgroundOpacity setting; box-decoration-break keeps each line
+   rounded when a subtitle wraps instead of one ragged shape. */
+.asbplayer-subtitles span[data-track] {
+    border-radius: 6px;
+    padding: 0.08em 0.4em;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+}
+
 .asbplayer-subtitles-blurred {
     display: inline-block; /* Blur ruby annotations as well */
     filter: blur(10px);
