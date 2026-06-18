@@ -357,12 +357,18 @@ export class SaviHoverDictionary {
     }
 
     private _highlightRect(line: HTMLElement, rect: DOMRect) {
-        const pad = 2;
+        // Japanese cues carry letter-spacing, which the word's rect includes as
+        // trailing space on the right — drop it so the box ends at the last
+        // glyph instead of reaching into the next word. Small horizontal room,
+        // a touch more vertical.
+        const trailing = parseFloat(getComputedStyle(line).letterSpacing) || 0;
+        const padX = 1;
+        const padY = 3;
         const el = this._ensureHighlight();
-        el.style.left = `${rect.left - pad}px`;
-        el.style.top = `${rect.top - pad}px`;
-        el.style.width = `${rect.width + pad * 2}px`;
-        el.style.height = `${rect.height + pad * 2}px`;
+        el.style.left = `${rect.left - padX}px`;
+        el.style.top = `${rect.top - padY}px`;
+        el.style.width = `${Math.max(0, rect.width - trailing + padX * 2)}px`;
+        el.style.height = `${rect.height + padY * 2}px`;
         el.style.display = 'block';
         // The subtitle container forces cursor:text; signal the word is
         // clickable with a pointer while it's boxed.

@@ -49,7 +49,9 @@ const BOUNDING_BOX_PADDING = 25;
 // normal. Content-based, so it doesn't depend on which track is which.
 const HAS_JAPANESE = /[぀-ヿ㐀-鿿ｦ-ﾟ]/;
 const saviSubtitleStyle = (text: string): string =>
-    HAS_JAPANESE.test(text) ? 'font-weight:700 !important;letter-spacing:0.08em !important;' : '';
+    HAS_JAPANESE.test(text)
+        ? 'font-size:28px !important;font-weight:700 !important;letter-spacing:0.08em !important;'
+        : '';
 
 const _intersects = (clientX: number, clientY: number, element: HTMLElement): boolean => {
     const rect = element.getBoundingClientRect();
