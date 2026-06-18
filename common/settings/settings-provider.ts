@@ -35,7 +35,7 @@ const defaultSubtitleTextSettings = {
     subtitleShadowThickness: 0,
     subtitleShadowColor: '#000000',
     subtitleBackgroundColor: '#000000',
-    subtitleBackgroundOpacity: 0.75,
+    subtitleBackgroundOpacity: 0.55,
     subtitleFontFamily: '',
     subtitlePreview: 'アあ安Aa',
     subtitleCustomStyles: [],
@@ -112,7 +112,9 @@ export const defaultSettings: AsbplayerSettings = {
     subtitleAboveThumbnail: true,
     thumbnailPreview: false,
     subtitleTracksV2: [],
-    subtitlesWidth: -1,
+    // savi: use most of the video width so long lines wrap less and the
+    // subtitle stack stays short (-1 = shrink-to-content, which wrapped early).
+    subtitlesWidth: 85,
     audioPaddingStart: 0,
     audioPaddingEnd: 500,
     maxImageWidth: 0,

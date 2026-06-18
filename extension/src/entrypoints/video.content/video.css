@@ -22,17 +22,23 @@
     padding-right: 10px;
     user-select: text !important;
     cursor: text !important;
-    line-height: normal !important;
+    /* savi: roomier vertical rhythm — line-height spaces wrapped lines within
+       a cue; the margin opens a gap between stacked cues (the target line and
+       its translation). letter-spacing gives the Japanese characters room so
+       words don't read cramped (e.g. の after 国立). */
+    line-height: 1.4 !important;
+    letter-spacing: 0.08em !important;
+    margin: 6px 0 !important;
     white-space: pre-wrap !important;
 }
 
 /* savi: round each per-line subtitle background into a Language Reactor-style
-   box and give the text a little breathing room. The dark fill comes from the
-   subtitleBackgroundOpacity setting; box-decoration-break keeps each line
-   rounded when a subtitle wraps instead of one ragged shape. */
+   box and give the text comfortable breathing room inside it. The dark fill
+   comes from the subtitleBackgroundOpacity setting; box-decoration-break keeps
+   each line rounded when a subtitle wraps instead of one ragged shape. */
 .asbplayer-subtitles span[data-track] {
-    border-radius: 6px;
-    padding: 0.08em 0.4em;
+    border-radius: 7px;
+    padding: 0.16em 0.6em;
     -webkit-box-decoration-break: clone;
     box-decoration-break: clone;
 }

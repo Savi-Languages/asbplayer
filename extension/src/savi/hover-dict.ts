@@ -140,17 +140,19 @@ function caretRangeFromPoint(x: number, y: number): Range | null {
     return null;
 }
 
+const POPUP_BG = '#171b22';
+const ARROW_SIZE = 7; // px; the triangle that points from the popup to the word
+const POPUP_GAP = 12; // px of clear space between the word and the popup body
+
 const POPUP_STYLE: Partial<CSSStyleDeclaration> = {
     position: 'fixed',
     zIndex: '2147483647',
     maxWidth: '360px',
-    maxHeight: '40vh',
-    overflowY: 'auto',
-    background: '#171b22',
+    background: POPUP_BG,
     color: '#e8eaed',
     border: '1px solid #2a313c',
     borderRadius: '12px',
-    padding: '10px 14px',
+    padding: '12px 16px',
     boxShadow: '0 8px 30px rgba(0,0,0,0.5)',
     font: '14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Sans", "Noto Sans JP", sans-serif',
     pointerEvents: 'auto',
@@ -210,17 +212,41 @@ function renderEntry(term: string, token: SaviToken, entries: SaviDictEntry[]): 
     return root;
 }
 
-function positionPopup(popup: HTMLDivElement, x: number, y: number) {
-    const rect = popup.getBoundingClientRect();
+// Anchor the popup to the WORD (not the cursor), centered above it with a clear
+// gap, and point the arrow at the word's center. Flips below when there's no
+// room above.
+function positionPopup(popup: HTMLDivElement, arrow: HTMLDivElement, word: DOMRect) {
+    const pr = popup.getBoundingClientRect();
     const margin = 8;
-    let left = x - rect.width / 2;
-    left = Math.max(margin, Math.min(left, window.innerWidth - rect.width - margin));
-    let top = y - rect.height - 14; // prefer above the cursor (subtitles sit low)
-    if (top < margin) {
-        top = y + 18; // not enough room above → below
+    const wordCenterX = word.left + word.width / 2;
+
+    let left = wordCenterX - pr.width / 2;
+    left = Math.max(margin, Math.min(left, window.innerWidth - pr.width - margin));
+
+    let top = word.top - pr.height - POPUP_GAP - ARROW_SIZE; // prefer above
+    const below = top < margin;
+    if (below) {
+        top = word.bottom + POPUP_GAP + ARROW_SIZE;
     }
+
     popup.style.left = `${left}px`;
     popup.style.top = `${top}px`;
+
+    // Arrow tracks the word's center even when the popup is clamped to an edge.
+    const arrowLeft = Math.max(ARROW_SIZE + 6, Math.min(wordCenterX - left, pr.width - ARROW_SIZE - 6));
+    arrow.style.left = `${arrowLeft}px`;
+    arrow.style.transform = 'translateX(-50%)';
+    if (below) {
+        arrow.style.top = `-${ARROW_SIZE}px`;
+        arrow.style.bottom = '';
+        arrow.style.borderTop = '';
+        arrow.style.borderBottom = `${ARROW_SIZE}px solid ${POPUP_BG}`;
+    } else {
+        arrow.style.bottom = `-${ARROW_SIZE}px`;
+        arrow.style.top = '';
+        arrow.style.borderBottom = '';
+        arrow.style.borderTop = `${ARROW_SIZE}px solid ${POPUP_BG}`;
+    }
 }
 
 /** Attaches a hover handler over subtitle text: boxes the word under the
@@ -228,6 +254,8 @@ function positionPopup(popup: HTMLDivElement, x: number, y: number) {
 export class SaviHoverDictionary {
     private readonly _tokenizeCache = new Map<string, SaviToken[]>();
     private _popup: HTMLDivElement | null = null;
+    private _popupContent: HTMLDivElement | null = null;
+    private _arrow: HTMLDivElement | null = null;
     private _highlight: HTMLDivElement | null = null;
     private _cursorLine: HTMLElement | null = null; // line we set cursor:pointer on
     private _currentTerm: string | null = null;
@@ -286,8 +314,9 @@ export class SaviHoverDictionary {
         // Box the word under the cursor whether or not it resolves to an entry
         // — every word gets the outline, like Language Reactor.
         const range = rangeForCharSpan(line, span.start, span.end);
-        if (range) {
-            this._highlightRange(line, range);
+        const wordRect = range ? range.getBoundingClientRect() : null;
+        if (wordRect && (wordRect.width > 0 || wordRect.height > 0)) {
+            this._highlightRect(line, wordRect);
         } else {
             this._hideHighlight();
         }
@@ -308,9 +337,10 @@ export class SaviHoverDictionary {
         }
         this._currentTerm = term;
         const popup = this._ensurePopup();
-        popup.replaceChildren(renderEntry(term, span.token, res.entries));
+        this._popupContent!.replaceChildren(renderEntry(term, span.token, res.entries));
         popup.style.display = 'block';
-        positionPopup(popup, x, y);
+        // Anchor to the word so the arrow points at it; fall back to the cursor.
+        positionPopup(popup, this._arrow!, wordRect ?? new DOMRect(x, y, 0, 0));
     }
 
     private async _tokenize(text: string): Promise<SaviToken[]> {
@@ -326,12 +356,7 @@ export class SaviHoverDictionary {
         return tokens;
     }
 
-    private _highlightRange(line: HTMLElement, range: Range) {
-        const rect = range.getBoundingClientRect();
-        if (rect.width === 0 && rect.height === 0) {
-            this._hideHighlight();
-            return;
-        }
+    private _highlightRect(line: HTMLElement, rect: DOMRect) {
         const pad = 2;
         const el = this._ensureHighlight();
         el.style.left = `${rect.left - pad}px`;
@@ -374,8 +399,26 @@ export class SaviHoverDictionary {
         Object.assign(popup.style, POPUP_STYLE);
         // Keep it alive while the cursor is on the popup itself.
         popup.addEventListener('mouseenter', () => clearTimeout(this._hoverTimer));
+
+        const content = document.createElement('div');
+        popup.appendChild(content);
+
+        // Triangle that points from the popup to the word (border colors set in
+        // positionPopup depending on whether the popup sits above or below).
+        const arrow = document.createElement('div');
+        Object.assign(arrow.style, {
+            position: 'absolute',
+            width: '0',
+            height: '0',
+            borderLeft: `${ARROW_SIZE}px solid transparent`,
+            borderRight: `${ARROW_SIZE}px solid transparent`,
+        });
+        popup.appendChild(arrow);
+
         document.body.appendChild(popup);
         this._popup = popup;
+        this._popupContent = content;
+        this._arrow = arrow;
         return popup;
     }
 
