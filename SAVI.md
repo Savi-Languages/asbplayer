@@ -4,7 +4,7 @@ This fork adds **savi capture** to asbplayer: while you watch on Netflix/YouTube
 it records the tab audio in media-time-keyed segments and ships them to the
 savi daemon, which stitches a **condensed, dialogue-only re-listening track**
 per episode and tracks your **known-words buckets**. The daemon + player live
-in the `savi` repo; this doc covers the *watching* side.
+in the `savi` repo; this doc covers the _watching_ side.
 
 Most of what people want from Language Reactor is already in asbplayer — it's
 just behind keybinds. This is the map.
@@ -26,22 +26,22 @@ strictly more capable than LR's built-in dictionary.
    other stores.)
 2. Import dictionaries — Yomitan → Settings → **Dictionaries → Import a
    dictionary**. The `.zip` imports directly; no need to unzip.
-   - **Japanese:** [**Jitendex**](https://jitendex.org/pages/downloads.html) —
-     the modern, better-formatted JMdict build for Yomitan (recommended over raw
-     JMdict). Optionally add a frequency dictionary and a **pitch-accent**
-     dictionary from [MarvNC/yomitan-dictionaries](https://github.com/MarvNC/yomitan-dictionaries#japanese)
-     — pitch accent is worth it given the N1 goal.
-   - **Spanish (Leon):** a Spanish→English (`es→en`) dictionary from
-     [MarvNC/yomitan-dictionaries → Spanish](https://github.com/MarvNC/yomitan-dictionaries#spanish).
-   - Prefer raw JMdict (covers many target languages incl. Spanish glosses)?
-     [yomidevs/jmdict-yomitan releases](https://github.com/yomidevs/jmdict-yomitan/releases).
+    - **Japanese:** [**Jitendex**](https://jitendex.org/pages/downloads.html) —
+      the modern, better-formatted JMdict build for Yomitan (recommended over raw
+      JMdict). Optionally add a frequency dictionary and a **pitch-accent**
+      dictionary from [MarvNC/yomitan-dictionaries](https://github.com/MarvNC/yomitan-dictionaries#japanese)
+      — pitch accent is worth it given the N1 goal.
+    - **Spanish (Leon):** a Spanish→English (`es→en`) dictionary from
+      [MarvNC/yomitan-dictionaries → Spanish](https://github.com/MarvNC/yomitan-dictionaries#spanish).
+    - Prefer raw JMdict (covers many target languages incl. Spanish glosses)?
+      [yomidevs/jmdict-yomitan releases](https://github.com/yomidevs/jmdict-yomitan/releases).
 3. Yomitan → Settings → **Scanning**: confirm hover/scan is enabled (default:
    hold no key, or Shift — your preference).
 
 **Use:** with asbplayer subtitles showing on the video, **hover a word in the
 subtitle** → Yomitan pops the definition. Works the same on Netflix and YouTube.
 
-> savi's native-subtitle-hider only hides the *streaming site's own* captions
+> savi's native-subtitle-hider only hides the _streaming site's own_ captions
 > (`.player-timedtext` / `.ytp-caption-window-container`), never asbplayer's
 > overlay — so scanning is unaffected. If a word won't scan, make sure
 > asbplayer's subtitle appearance isn't in an image/SVG mode.
@@ -53,19 +53,19 @@ All customizable in **asbplayer → Settings → Keyboard shortcuts**. Defaults:
 savi rebinds the subtitle controls to a **WASD-style** layout (defaults below;
 all editable in **Settings → Keyboard shortcuts**):
 
-| Want | Key | Notes |
-|------|-----|-------|
-| **Pause after every line** (LR's `Q`) | `Q` | Toggles auto-pause; it stops at the **end** of each subtitle. Press `Space` to continue to the next line. |
-| **Previous line** | `A` | |
-| **Replay the current line** | `S` | Seeks to the start of the current subtitle. |
-| **Next line** | `D` | |
-| **Copy the subtitle text** | `Ctrl+Shift+Z` | |
-| **Mine a card** (Anki) | `Ctrl+Shift+X` | Opens the card creator for the current line. |
-| Seek ±2s | `←` / `→` | (the old 5-second seek, moved off A/D) |
-| **Condensed playback** (skip silence) | `Shift+O` | Plays only subtitled spans. |
-| Fast-forward non-dialogue | `Shift+F` | |
-| Toggle subtitles / tracks | `↓` / `1` `2` `3` | |
-| Repeat current line | `Shift+R` | |
+| Want                                  | Key               | Notes                                                                                                     |
+| ------------------------------------- | ----------------- | --------------------------------------------------------------------------------------------------------- |
+| **Pause after every line** (LR's `Q`) | `Q`               | Toggles auto-pause; it stops at the **end** of each subtitle. Press `Space` to continue to the next line. |
+| **Previous line**                     | `A`               |                                                                                                           |
+| **Replay the current line**           | `S`               | Seeks to the start of the current subtitle.                                                               |
+| **Next line**                         | `D`               |                                                                                                           |
+| **Copy the subtitle text**            | `Ctrl+Shift+Z`    |                                                                                                           |
+| **Mine a card** (Anki)                | `Ctrl+Shift+X`    | Opens the card creator for the current line.                                                              |
+| Seek ±2s                              | `←` / `→`         | (the old 5-second seek, moved off A/D)                                                                    |
+| **Condensed playback** (skip silence) | `Shift+O`         | Plays only subtitled spans.                                                                               |
+| Fast-forward non-dialogue             | `Shift+F`         |                                                                                                           |
+| Toggle subtitles / tracks             | `↓` / `1` `2` `3` |                                                                                                           |
+| Repeat current line                   | `Shift+R`         |                                                                                                           |
 
 > Q is now a clean auto-pause toggle, so asbplayer's `Q+0`…`Q+5` hover
 > word-marking is unbound by default — savi tracks word status in its own
@@ -88,8 +88,8 @@ starts the savi capture in a single gesture. No hunting for the toolbar icon.
 
 It's a browser-level command, so if nothing happens the key probably wasn't
 bound (another extension claimed it). Set it at **`edge://extensions/shortcuts`**
-(or `chrome://extensions/shortcuts`) under *"Savi: grant audio permission and
-start recording this tab"*.
+(or `chrome://extensions/shortcuts`) under _"Savi: grant audio permission and
+start recording this tab"_.
 
 You only need this for the **audio** capture. Subtitles, the hover dictionary,
 furigana, and pause-on-hover all work without it — and savi no longer pops the
@@ -106,8 +106,8 @@ This gives the LR-style target + native view.
 The savi player (served by the daemon at `http://localhost:4670`) shows the
 **condensed transcript with furigana over kanji** and **words colored by your
 learning bucket** (new = highlight, learning = amber, known = dimmed). Toggle
-**Furigana** / **Colors** above the transcript. This is for *review /
-re-listening*; Yomitan above is for *live watching*.
+**Furigana** / **Colors** above the transcript. This is for _review /
+re-listening_; Yomitan above is for _live watching_.
 
 ## Subtitle styling (Language Reactor look)
 
@@ -119,7 +119,7 @@ word draws a **gray box** around it and shows a **pointer** cursor, and
 `pauseOnHoverMode` defaults to **inAndOut** so the video **pauses while you
 hover a word** and resumes when you move away.
 
-These are *defaults* — if you've already customized subtitle appearance in
+These are _defaults_ — if you've already customized subtitle appearance in
 Settings, your saved values win. To get the savi look back, reset Subtitle
 appearance (or clear those fields). To make the **native (English) line
 smaller than the target line**, give it its own size under Settings → Subtitle
