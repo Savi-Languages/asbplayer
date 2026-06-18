@@ -106,6 +106,28 @@ export interface SaviDictResponse {
     readonly entries: SaviDictEntry[];
 }
 
+// Mine the hovered line+word into an Anki card. The daemon owns the episode
+// audio + per-line timings, so it clips the line and writes the note; the
+// content script only supplies what it can see (the line + the token).
+export interface SaviMineLineMessage {
+    readonly command: 'savi-mine-line';
+    readonly episodeId: string;
+    readonly lineText: string;
+    // The inflected surface under the cursor (bolded in the card sentence).
+    readonly surface?: string;
+    // The headword to define (lemma when the analyzer supplied one, else surface).
+    readonly term: string;
+    readonly reading?: string;
+    readonly deck?: string;
+}
+
+export interface SaviMineLineResponse {
+    readonly ok: boolean;
+    readonly noteId?: number;
+    readonly hadAudio?: boolean;
+    readonly errorMessage?: string;
+}
+
 // ── content script → offscreen document ─────────────────────────────────
 
 export type SaviSegmentOp =

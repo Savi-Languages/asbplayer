@@ -19,6 +19,8 @@ import {
     SaviOffscreenStopMessage,
     SaviDictMessage,
     SaviDictResponse,
+    SaviMineLineMessage,
+    SaviMineLineResponse,
     SaviRequestStartMessage,
     SaviStartCaptureMessage,
     SaviStartCaptureResponse,
@@ -28,6 +30,7 @@ import {
 } from './messages';
 import {
     lookupDict,
+    mineLine,
     normalizedBaseUrl,
     postSubtitles,
     SaviDaemonConfig,
@@ -83,6 +86,16 @@ export default class SaviCommandHandler implements CommandHandler {
                     .then(sendResponse)
                     .catch(() => sendResponse({ entries: [] }));
                 return true;
+            case 'savi-mine-line':
+                this._mineLine(command.message as SaviMineLineMessage)
+                    .then(sendResponse)
+                    .catch((e) =>
+                        sendResponse({
+                            ok: false,
+                            errorMessage: e instanceof Error ? e.message : String(e),
+                        } as SaviMineLineResponse)
+                    );
+                return true;
             case 'savi-capture-ended':
                 this._forwardCaptureEnded(command.message as SaviCaptureEndedMessage);
                 break;
@@ -120,6 +133,26 @@ export default class SaviCommandHandler implements CommandHandler {
             return { entries: await lookupDict(config, message.lang, message.term) };
         } catch (e) {
             return { entries: [] };
+        }
+    }
+
+    private async _mineLine(message: SaviMineLineMessage): Promise<SaviMineLineResponse> {
+        const config = await this._daemonConfig();
+        if (!config) {
+            return { ok: false, errorMessage: 'savi daemon URL/token not set' };
+        }
+        try {
+            const result = await mineLine(config, {
+                episodeId: message.episodeId,
+                lineText: message.lineText,
+                surface: message.surface,
+                term: message.term,
+                reading: message.reading,
+                deck: message.deck,
+            });
+            return { ok: result.ok, noteId: result.noteId, hadAudio: result.hadAudio };
+        } catch (e) {
+            return { ok: false, errorMessage: e instanceof Error ? e.message : String(e) };
         }
     }
 

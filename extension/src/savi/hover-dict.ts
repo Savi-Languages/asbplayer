@@ -10,7 +10,16 @@
 // fetches from content scripts).
 
 import { SaviDictEntry, SaviToken } from './daemon-client';
-import { SaviCommand, SaviDictMessage, SaviDictResponse, SaviTokenizeMessage, SaviTokenizeResponse } from './messages';
+import {
+    SaviCommand,
+    SaviDictMessage,
+    SaviDictResponse,
+    SaviMineLineMessage,
+    SaviMineLineResponse,
+    SaviTokenizeMessage,
+    SaviTokenizeResponse,
+} from './messages';
+import { deriveEpisodeId } from './episode';
 
 // The overlay that stacks subtitle lines (the target language AND its
 // translation). We never tokenize this whole thing — we resolve the single
@@ -84,8 +93,11 @@ export function rangeForCharSpan(root: HTMLElement, start: number, end: number):
     return null;
 }
 
-const sendToBackground = <R>(message: SaviTokenizeMessage | SaviDictMessage): Promise<R> => {
-    const command: SaviCommand<SaviTokenizeMessage | SaviDictMessage> = { sender: 'savi-video', message };
+const sendToBackground = <R>(message: SaviTokenizeMessage | SaviDictMessage | SaviMineLineMessage): Promise<R> => {
+    const command: SaviCommand<SaviTokenizeMessage | SaviDictMessage | SaviMineLineMessage> = {
+        sender: 'savi-video',
+        message,
+    };
     return browser.runtime.sendMessage(command) as Promise<R>;
 };
 
@@ -174,7 +186,44 @@ const HIGHLIGHT_STYLE: Partial<CSSStyleDeclaration> = {
     display: 'none',
 };
 
-function renderEntry(term: string, token: SaviToken, entries: SaviDictEntry[]): HTMLElement {
+// The "+ Add to Anki" button at the bottom of the popup. The popup itself is
+// interactive (pointer-events:auto) and stays alive while hovered, so the
+// button is clickable without the popup vanishing.
+const MINE_BTN_STYLE: Partial<CSSStyleDeclaration> = {
+    display: 'block',
+    width: '100%',
+    marginTop: '10px',
+    padding: '6px 12px',
+    fontSize: '13px',
+    fontWeight: '600',
+    color: '#171b22',
+    background: '#ffd166',
+    border: 'none',
+    borderRadius: '7px',
+    cursor: 'pointer',
+};
+
+/** A short, friendly label for a mine failure (the daemon's raw error is for
+ *  logs, not the button). Lesson 4 generalizes this into a shared mapper. */
+function mineErrorLabel(message: string | undefined): string {
+    if (message && /duplicate/i.test(message)) {
+        return '✓ Already in Anki';
+    }
+    if (message && /url\/token not set|not-configured/i.test(message)) {
+        return 'Set daemon URL/token';
+    }
+    if (message && /AnkiConnect|refused|unreachable|failed to/i.test(message)) {
+        return 'Is Anki open? Retry';
+    }
+    return 'Failed — click to retry';
+}
+
+function renderEntry(
+    term: string,
+    token: SaviToken,
+    entries: SaviDictEntry[],
+    onMine: (button: HTMLButtonElement) => void
+): HTMLElement {
     const root = document.createElement('div');
 
     const head = document.createElement('div');
@@ -210,6 +259,18 @@ function renderEntry(term: string, token: SaviToken, entries: SaviDictEntry[]): 
             root.appendChild(ol);
         }
     }
+
+    const mine = document.createElement('button');
+    mine.className = 'savi-mine-btn';
+    mine.textContent = '+ Add to Anki';
+    Object.assign(mine.style, MINE_BTN_STYLE);
+    mine.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        onMine(mine);
+    });
+    root.appendChild(mine);
+
     return root;
 }
 
@@ -339,7 +400,9 @@ export class SaviHoverDictionary {
         }
         this._currentTerm = term;
         const popup = this._ensurePopup();
-        this._popupContent!.replaceChildren(renderEntry(term, span.token, entries));
+        this._popupContent!.replaceChildren(
+            renderEntry(term, span.token, entries, (button) => void this._mine(text, span.token, term, button))
+        );
         popup.style.display = 'block';
         // Anchor to the word so the arrow points at it; fall back to the cursor.
         positionPopup(popup, this._arrow!, wordRect ?? new DOMRect(x, y, 0, 0));
@@ -356,6 +419,41 @@ export class SaviHoverDictionary {
         }
         this._tokenizeCache.set(text, tokens);
         return tokens;
+    }
+
+    /** Mine the hovered line + word into Anki. The daemon derives the episode
+     *  from the same platform-stable id the capture used, clips the line's
+     *  audio, and writes the note. Feedback lives on the button itself so the
+     *  popup stays put. */
+    private async _mine(lineText: string, token: SaviToken, term: string, button: HTMLButtonElement) {
+        if (button.dataset.saviMined === 'true') {
+            return; // already added — don't create a duplicate on a second click
+        }
+        button.disabled = true;
+        button.textContent = 'Adding…';
+        try {
+            const episodeId = deriveEpisodeId(location.href, document.title);
+            const res = await sendToBackground<SaviMineLineResponse>({
+                command: 'savi-mine-line',
+                episodeId,
+                lineText,
+                surface: token.text,
+                term,
+                reading: token.reading,
+            });
+            if (res.ok) {
+                button.dataset.saviMined = 'true';
+                button.textContent = res.hadAudio ? '✓ Added (with audio)' : '✓ Added';
+                button.style.background = '#3fb950';
+                button.style.color = '#fff';
+            } else {
+                button.disabled = false;
+                button.textContent = mineErrorLabel(res.errorMessage);
+            }
+        } catch (e) {
+            button.disabled = false;
+            button.textContent = 'Failed — click to retry';
+        }
     }
 
     private async _lookupDict(term: string): Promise<SaviDictEntry[]> {

@@ -132,6 +132,46 @@ export const lookupDict = async (config: SaviDaemonConfig, lang: string, term: s
     return body.entries ?? [];
 };
 
+// ── Mine to Anki ────────────────────────────────────────────────────────
+
+export interface MineLineResult {
+    readonly ok: boolean;
+    readonly noteId?: number;
+    // True when the daemon found the captured episode and clipped the line's
+    // audio into the card; false for a text-only card (no capture on disk).
+    readonly hadAudio?: boolean;
+}
+
+/** Mine the hovered line+word into an Anki card. The daemon clips the line's
+ *  audio from the captured episode (best-effort) and creates the note via
+ *  AnkiConnect. Throws on daemon/Anki error — the caller maps it to a
+ *  user-facing message. */
+export const mineLine = async (
+    config: SaviDaemonConfig,
+    {
+        episodeId,
+        lineText,
+        surface,
+        term,
+        reading,
+        deck,
+    }: {
+        episodeId: string;
+        lineText: string;
+        surface?: string;
+        term: string;
+        reading?: string;
+        deck?: string;
+    }
+): Promise<MineLineResult> => {
+    const body = await request(
+        config,
+        '/api/anki/mine',
+        jsonInit({ episodeId, lineText, surface, term, reading, deck })
+    );
+    return { ok: body.ok === true, noteId: body.noteId, hadAudio: body.hadAudio };
+};
+
 export const finishCapture = async (config: SaviDaemonConfig, captureId: string): Promise<CaptureFinishInfo> => {
     const body = await request(config, '/api/capture/finish', jsonInit({ captureId }));
     return {
