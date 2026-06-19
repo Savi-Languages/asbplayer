@@ -36,11 +36,6 @@ const HOVER_DEBOUNCE_MS = 0; // fire as good as immediately; tokenize/dict are c
 // Grace period before hiding once the cursor leaves the subtitle line, so the
 // visible gap between the word and the popup can be crossed to click a button.
 const HIDE_GRACE_MS = 250;
-// When a popup is already open, delay switching to a DIFFERENT subtitle line.
-// Moving up to a bottom line's popup passes over the top line; a moving cursor
-// keeps resetting this timer so the transit never hijacks the hover — it only
-// switches when the cursor dwells on the other line.
-const POPUP_SWITCH_DELAY_MS = 180;
 const TOKENIZE_CACHE_MAX = 64;
 const DICT_CACHE_MAX = 300;
 
@@ -346,9 +341,9 @@ export class SaviHoverDictionary {
     private _popupContent: HTMLDivElement | null = null;
     private _arrow: HTMLDivElement | null = null;
     private _highlight: HTMLDivElement | null = null;
+    private _bridge: HTMLDivElement | null = null; // transparent gap-cover from word up to popup
     private _cursorLine: HTMLElement | null = null; // line we set cursor:pointer on
     private _currentTerm: string | null = null;
-    private _popupLine: HTMLElement | null = null; // the line the open popup belongs to
     private _hoverTimer: ReturnType<typeof setTimeout> | undefined;
     private _hideTimer: ReturnType<typeof setTimeout> | undefined; // delayed hide, cancellable
     private _generation = 0; // bumps to cancel stale async work
@@ -371,15 +366,18 @@ export class SaviHoverDictionary {
         const line = lineElement(event.target);
         if (!line) {
             const target = event.target;
-            if (this._popup && target instanceof Node && this._popup.contains(target)) {
-                // On the popup itself — keep it up so its buttons are clickable.
+            const onPopup = !!this._popup && target instanceof Node && this._popup.contains(target);
+            const onBridge = target === this._bridge;
+            if (onPopup || onBridge) {
+                // On the popup, or the invisible bridge spanning the gap up to it
+                // — keep things up so the buttons stay reachable. Travelling the
+                // bridge is what stops the OTHER subtitle line (which sits in that
+                // gap for a bottom-line word) from stealing the hover.
                 this._cancelHide();
                 return;
             }
-            // Off the line and not (yet) on the popup. Don't clear instantly:
-            // there's a visible gap between the word and the popup, and clearing
-            // the moment the cursor enters that gap makes the popup impossible to
-            // reach. Give the cursor a beat to bridge it.
+            // Off the line and not on the popup/bridge: give the cursor a beat to
+            // reach the popup before hiding.
             this._scheduleHide();
             return;
         }
@@ -387,12 +385,7 @@ export class SaviHoverDictionary {
         this._cancelHide();
         const { clientX, clientY } = event;
         clearTimeout(this._hoverTimer);
-        // Instant for the first hover and for scanning words on the SAME line;
-        // debounced only when an open popup would be replaced by a different
-        // line (the transit-over-the-other-line case).
-        const switching = this._currentTerm !== null && line !== this._popupLine;
-        const delay = switching ? POPUP_SWITCH_DELAY_MS : HOVER_DEBOUNCE_MS;
-        this._hoverTimer = setTimeout(() => void this._handleHover(line, clientX, clientY), delay);
+        this._hoverTimer = setTimeout(() => void this._handleHover(line, clientX, clientY), HOVER_DEBOUNCE_MS);
     };
 
     private _scheduleHide() {
@@ -455,7 +448,6 @@ export class SaviHoverDictionary {
             return;
         }
         this._currentTerm = term;
-        this._popupLine = line; // so a move to a *different* line debounces
         const popup = this._ensurePopup();
         this._popupContent!.replaceChildren(
             renderEntry(
@@ -468,7 +460,11 @@ export class SaviHoverDictionary {
         );
         popup.style.display = 'block';
         // Anchor to the word so the arrow points at it; fall back to the cursor.
-        positionPopup(popup, this._arrow!, wordRect ?? new DOMRect(x, y, 0, 0));
+        const anchor = wordRect ?? new DOMRect(x, y, 0, 0);
+        positionPopup(popup, this._arrow!, anchor);
+        // Lay the invisible bridge over the gap so the path to the popup never
+        // crosses (and triggers) the other subtitle line.
+        this._positionBridge(anchor);
     }
 
     private async _tokenize(text: string): Promise<SaviToken[]> {
@@ -563,9 +559,9 @@ export class SaviHoverDictionary {
 
     private _hidePopup() {
         this._currentTerm = null;
-        this._popupLine = null;
         this._generation++;
         if (this._popup) this._popup.style.display = 'none';
+        if (this._bridge) this._bridge.style.display = 'none';
     }
 
     private _hideHighlight() {
@@ -617,5 +613,50 @@ export class SaviHoverDictionary {
         document.body.appendChild(el);
         this._highlight = el;
         return el;
+    }
+
+    private _ensureBridge(): HTMLDivElement {
+        if (this._bridge) return this._bridge;
+        const el = document.createElement('div');
+        el.className = 'savi-dict-bridge';
+        Object.assign(el.style, {
+            position: 'fixed',
+            zIndex: '2147483646', // just below the popup, above the subtitles
+            pointerEvents: 'auto',
+            background: 'transparent',
+            display: 'none',
+        });
+        document.body.appendChild(el);
+        this._bridge = el;
+        return el;
+    }
+
+    // Cover the gap between the hovered word and its popup with a transparent,
+    // interactive strip. The cursor travels over this on its way to the popup,
+    // and `_onMouseMove` treats the bridge as "on the popup" — so reaching the
+    // buttons never crosses the OTHER subtitle line that sits in that gap for a
+    // bottom-line word. Geometry-driven, so it needs no hover timing.
+    private _positionBridge(word: DOMRect) {
+        const popup = this._popup;
+        const bridge = this._ensureBridge();
+        if (!popup) return;
+        const pr = popup.getBoundingClientRect();
+        const left = Math.min(word.left, pr.left);
+        const right = Math.max(word.right, pr.right);
+        let top: number;
+        let height: number;
+        if (pr.top >= word.bottom) {
+            top = word.bottom; // popup sits below the word
+            height = pr.top - word.bottom;
+        } else {
+            top = pr.bottom; // popup sits above the word (the usual case)
+            height = word.top - pr.bottom;
+        }
+        const pad = 2; // overlap the word + popup so there's no 1px dead seam
+        bridge.style.left = `${left}px`;
+        bridge.style.top = `${top - pad}px`;
+        bridge.style.width = `${Math.max(0, right - left)}px`;
+        bridge.style.height = `${Math.max(0, height) + pad * 2}px`;
+        bridge.style.display = 'block';
     }
 }
