@@ -20,6 +20,8 @@ import {
     SaviOffscreenStopMessage,
     SaviDictMessage,
     SaviDictResponse,
+    SaviEpisodeTranscriptMessage,
+    SaviEpisodeTranscriptResponse,
     SaviMineLineMessage,
     SaviMineLineResponse,
     SaviRequestStartMessage,
@@ -33,6 +35,7 @@ import {
     lookupDict,
     mineLine,
     normalizedBaseUrl,
+    postEpisodeTranscript,
     postSubtitles,
     SaviDaemonConfig,
     startCapture,
@@ -88,6 +91,10 @@ export default class SaviCommandHandler implements CommandHandler {
                 this._lookupDict(command.message as SaviDictMessage)
                     .then(sendResponse)
                     .catch(() => sendResponse({ entries: [], kanji: [] }));
+                return true;
+            case 'savi-episode-transcript':
+                this._storeEpisodeTranscript(command.message as SaviEpisodeTranscriptMessage)
+                    .then(sendResponse);
                 return true;
             case 'savi-mine-line':
                 this._mineLine(command.message as SaviMineLineMessage)
@@ -155,6 +162,26 @@ export default class SaviCommandHandler implements CommandHandler {
         } catch (e) {
             const cached = await getCachedDict(message.lang, message.term);
             return cached ?? { entries: [], kanji: [] };
+        }
+    }
+
+    private async _storeEpisodeTranscript(
+        message: SaviEpisodeTranscriptMessage
+    ): Promise<SaviEpisodeTranscriptResponse> {
+        const config = await this._daemonConfig();
+        if (!config) {
+            return { ok: false };
+        }
+        try {
+            await postEpisodeTranscript(config, {
+                episodeId: message.episodeId,
+                content: message.subtitles,
+                format: message.subtitleFormat,
+            });
+            return { ok: true };
+        } catch (e) {
+            // Best-effort — without it the card just falls back to the scene window.
+            return { ok: false };
         }
     }
 

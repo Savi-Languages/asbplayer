@@ -132,6 +132,21 @@ export interface SaviMineLineResponse {
     readonly errorMessage?: string;
 }
 
+// Upload the episode's FULL subtitle track (every cue — the player loads the
+// whole file up front, not as you watch). The daemon summarizes it once into a
+// whole-episode gist that grounds the card's scene-level context, so this works
+// even when the user only hover-mines and never records. Sent once per episode.
+export interface SaviEpisodeTranscriptMessage {
+    readonly command: 'savi-episode-transcript';
+    readonly episodeId: string;
+    readonly subtitles: string;
+    readonly subtitleFormat: 'srt' | 'vtt';
+}
+
+export interface SaviEpisodeTranscriptResponse {
+    readonly ok: boolean;
+}
+
 // Capture a JPEG of the current video frame for a mined card. A content script
 // can't call tabs.captureVisibleTab (background-only), so it asks the
 // background for the full-tab data URL, then crops it locally to the video.

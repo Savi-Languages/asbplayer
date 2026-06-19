@@ -76,6 +76,16 @@ export const postSubtitles = async (
     await request(config, '/api/capture/subtitles', jsonInit({ captureId, content, format }));
 };
 
+// POST {base}/api/episode/transcript {episodeId, content, format} — store the
+// full subtitle track keyed by episode WITHOUT a capture session, so the daemon
+// can build a whole-episode gist for hover-only (never-recorded) episodes.
+export const postEpisodeTranscript = async (
+    config: SaviDaemonConfig,
+    { episodeId, content, format }: { episodeId: string; content: string; format: 'srt' | 'vtt' }
+): Promise<void> => {
+    await request(config, '/api/episode/transcript', jsonInit({ episodeId, content, format }));
+};
+
 export const postChunk = async (
     config: SaviDaemonConfig,
     {

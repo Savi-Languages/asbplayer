@@ -16,11 +16,14 @@ import {
     SaviCommand,
     SaviDictMessage,
     SaviDictResponse,
+    SaviEpisodeTranscriptMessage,
+    SaviEpisodeTranscriptResponse,
     SaviMineLineMessage,
     SaviMineLineResponse,
     SaviTokenizeMessage,
     SaviTokenizeResponse,
 } from './messages';
+import { serializeToSrt, SerializableSubtitle } from './subtitle-serializer';
 import { deriveEpisodeId } from './episode';
 import { friendlySaviError } from './savi-errors';
 import { cropAndResize } from '@project/common/src/image-transformer';
@@ -101,7 +104,12 @@ export function rangeForCharSpan(root: HTMLElement, start: number, end: number):
     return null;
 }
 
-type SaviVideoMessage = SaviTokenizeMessage | SaviDictMessage | SaviMineLineMessage | SaviCaptureFrameMessage;
+type SaviVideoMessage =
+    | SaviTokenizeMessage
+    | SaviDictMessage
+    | SaviMineLineMessage
+    | SaviEpisodeTranscriptMessage
+    | SaviCaptureFrameMessage;
 
 const sendToBackground = <R>(message: SaviVideoMessage): Promise<R> => {
     const command: SaviCommand<SaviVideoMessage> = { sender: 'savi-video', message };
@@ -352,9 +360,16 @@ export class SaviHoverDictionary {
     private _generation = 0; // bumps to cancel stale async work
     private _bound = false;
 
+    // Episodes whose full transcript we've already uploaded this session, so we
+    // send it at most once per episode (it's the whole subtitle file).
+    private readonly _transcriptSentFor = new Set<string>();
+
     /** @param _videoProvider returns the bound media element, so a mined card
      *  can screenshot the current frame. Defaults to none (no screenshot). */
-    constructor(private readonly _videoProvider: () => HTMLMediaElement | null = () => null) {}
+    constructor(
+        private readonly _videoProvider: () => HTMLMediaElement | null = () => null,
+        private readonly _subtitleProvider: () => SerializableSubtitle[] = () => []
+    ) {}
 
     start() {
         if (this._bound) return;
@@ -499,6 +514,11 @@ export class SaviHoverDictionary {
         button.textContent = 'Adding…';
         try {
             const episodeId = deriveEpisodeId(location.href, document.title);
+            // Make sure the daemon has the whole-episode transcript (once per
+            // episode) so the card's scene-level context gets an episode gist,
+            // even on an episode the user never recorded. Best-effort, awaited so
+            // the FIRST mine of an episode already benefits.
+            await this._maybeSendTranscript(episodeId);
             const imageBase64 = await this._captureScreenshot();
             const res = await sendToBackground<SaviMineLineResponse>({
                 command: 'savi-mine-line',
@@ -522,6 +542,32 @@ export class SaviHoverDictionary {
         } catch (e) {
             button.disabled = false;
             button.textContent = 'Failed — click to retry';
+        }
+    }
+
+    /** Send the episode's FULL subtitle track to the daemon once per episode, so
+     *  the card's scene-level context can draw on a whole-episode gist — even on
+     *  an episode the user only hover-mines and never records. Best-effort: a
+     *  failure (or subtitles not yet loaded) leaves it to retry on the next mine,
+     *  and never blocks mining. */
+    private async _maybeSendTranscript(episodeId: string): Promise<void> {
+        if (this._transcriptSentFor.has(episodeId)) {
+            return;
+        }
+        const subtitles = this._subtitleProvider();
+        if (subtitles.length === 0) {
+            return; // track not loaded yet — try again on the next mine
+        }
+        this._transcriptSentFor.add(episodeId); // optimistic — avoid duplicate uploads
+        try {
+            await sendToBackground<SaviEpisodeTranscriptResponse>({
+                command: 'savi-episode-transcript',
+                episodeId,
+                subtitles: serializeToSrt(subtitles),
+                subtitleFormat: 'srt',
+            });
+        } catch (e) {
+            this._transcriptSentFor.delete(episodeId); // let a later mine retry
         }
     }
 
