@@ -529,11 +529,15 @@ export class SaviHoverDictionary {
      *  undefined when there's no video or capture fails — the screenshot is a
      *  bonus, never a blocker for the mine. */
     private async _captureScreenshot(): Promise<string | undefined> {
+        const video = this._videoProvider();
+        if (!video) return undefined;
+        const rect = video.getBoundingClientRect();
+        if (rect.width < 1 || rect.height < 1) return undefined;
+        // Hide savi's own overlays (popup, highlight, bridge) so they're not in
+        // the captured frame, and wait a paint before the background grabs it.
+        const restore = this._hideForCapture();
         try {
-            const video = this._videoProvider();
-            if (!video) return undefined;
-            const rect = video.getBoundingClientRect();
-            if (rect.width < 1 || rect.height < 1) return undefined;
+            await new Promise((r) => requestAnimationFrame(() => r(null)));
             const res = await sendToBackground<SaviCaptureFrameResponse>({ command: 'savi-capture-frame' });
             if (!res?.dataUrl) return undefined;
             const cropped = await cropAndResize(
@@ -545,7 +549,22 @@ export class SaviHoverDictionary {
             return cropped.substring(cropped.indexOf(',') + 1); // strip the data: prefix
         } catch (e) {
             return undefined;
+        } finally {
+            restore();
         }
+    }
+
+    /** Hide the popup / highlight / bridge for a clean screenshot; returns a
+     *  restore fn. Uses `visibility` (no reflow) so positions are preserved. */
+    private _hideForCapture(): () => void {
+        const els = [this._popup, this._highlight, this._bridge].filter(
+            (e): e is HTMLDivElement => e !== null
+        );
+        const prev = els.map((e) => e.style.visibility);
+        els.forEach((e) => {
+            e.style.visibility = 'hidden';
+        });
+        return () => els.forEach((e, i) => (e.style.visibility = prev[i] ?? ''));
     }
 
     private async _lookupDict(term: string): Promise<SaviDictResponse> {
