@@ -33,6 +33,9 @@ const LANG = 'ja';
 // Hiragana, katakana, CJK (+ Ext. A), compatibility ideographs, halfwidth kana.
 const JAPANESE = /[぀-ヿ㐀-䶿一-鿿豈-﫿ｦ-ﾟ]/;
 const HOVER_DEBOUNCE_MS = 0; // fire as good as immediately; tokenize/dict are cached
+// Grace period before hiding once the cursor leaves the subtitle line, so the
+// visible gap between the word and the popup can be crossed to click a button.
+const HIDE_GRACE_MS = 250;
 const TOKENIZE_CACHE_MAX = 64;
 const DICT_CACHE_MAX = 300;
 
@@ -341,6 +344,7 @@ export class SaviHoverDictionary {
     private _cursorLine: HTMLElement | null = null; // line we set cursor:pointer on
     private _currentTerm: string | null = null;
     private _hoverTimer: ReturnType<typeof setTimeout> | undefined;
+    private _hideTimer: ReturnType<typeof setTimeout> | undefined; // delayed hide, cancellable
     private _generation = 0; // bumps to cancel stale async work
     private _bound = false;
 
@@ -360,19 +364,40 @@ export class SaviHoverDictionary {
     private _onMouseMove = (event: MouseEvent) => {
         const line = lineElement(event.target);
         if (!line) {
-            // Off any subtitle line: keep things up only while the cursor is on
-            // the popup itself (so it stays readable); otherwise clear.
             const target = event.target;
             if (this._popup && target instanceof Node && this._popup.contains(target)) {
+                // On the popup itself — keep it up so its buttons are clickable.
+                this._cancelHide();
                 return;
             }
-            this._clear();
+            // Off the line and not (yet) on the popup. Don't clear instantly:
+            // there's a visible gap between the word and the popup, and clearing
+            // the moment the cursor enters that gap makes the popup impossible to
+            // reach. Give the cursor a beat to bridge it.
+            this._scheduleHide();
             return;
         }
+        // Back on a subtitle line — cancel any pending hide.
+        this._cancelHide();
         const { clientX, clientY } = event;
         clearTimeout(this._hoverTimer);
         this._hoverTimer = setTimeout(() => void this._handleHover(line, clientX, clientY), HOVER_DEBOUNCE_MS);
     };
+
+    private _scheduleHide() {
+        if (this._hideTimer !== undefined) return; // already counting down
+        this._hideTimer = setTimeout(() => {
+            this._hideTimer = undefined;
+            this._clear();
+        }, HIDE_GRACE_MS);
+    }
+
+    private _cancelHide() {
+        if (this._hideTimer !== undefined) {
+            clearTimeout(this._hideTimer);
+            this._hideTimer = undefined;
+        }
+    }
 
     private async _handleHover(line: HTMLElement, x: number, y: number) {
         const generation = ++this._generation;
@@ -519,6 +544,7 @@ export class SaviHoverDictionary {
     }
 
     private _clear() {
+        this._cancelHide();
         this._hidePopup();
         this._hideHighlight();
     }
@@ -543,7 +569,10 @@ export class SaviHoverDictionary {
         popup.className = 'savi-dict-popup';
         Object.assign(popup.style, POPUP_STYLE);
         // Keep it alive while the cursor is on the popup itself.
-        popup.addEventListener('mouseenter', () => clearTimeout(this._hoverTimer));
+        popup.addEventListener('mouseenter', () => {
+            clearTimeout(this._hoverTimer);
+            this._cancelHide();
+        });
 
         const content = document.createElement('div');
         popup.appendChild(content);
