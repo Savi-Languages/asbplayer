@@ -36,6 +36,11 @@ const HOVER_DEBOUNCE_MS = 0; // fire as good as immediately; tokenize/dict are c
 // Grace period before hiding once the cursor leaves the subtitle line, so the
 // visible gap between the word and the popup can be crossed to click a button.
 const HIDE_GRACE_MS = 250;
+// When a popup is already open, delay switching to a DIFFERENT subtitle line.
+// Moving up to a bottom line's popup passes over the top line; a moving cursor
+// keeps resetting this timer so the transit never hijacks the hover — it only
+// switches when the cursor dwells on the other line.
+const POPUP_SWITCH_DELAY_MS = 180;
 const TOKENIZE_CACHE_MAX = 64;
 const DICT_CACHE_MAX = 300;
 
@@ -343,6 +348,7 @@ export class SaviHoverDictionary {
     private _highlight: HTMLDivElement | null = null;
     private _cursorLine: HTMLElement | null = null; // line we set cursor:pointer on
     private _currentTerm: string | null = null;
+    private _popupLine: HTMLElement | null = null; // the line the open popup belongs to
     private _hoverTimer: ReturnType<typeof setTimeout> | undefined;
     private _hideTimer: ReturnType<typeof setTimeout> | undefined; // delayed hide, cancellable
     private _generation = 0; // bumps to cancel stale async work
@@ -381,7 +387,12 @@ export class SaviHoverDictionary {
         this._cancelHide();
         const { clientX, clientY } = event;
         clearTimeout(this._hoverTimer);
-        this._hoverTimer = setTimeout(() => void this._handleHover(line, clientX, clientY), HOVER_DEBOUNCE_MS);
+        // Instant for the first hover and for scanning words on the SAME line;
+        // debounced only when an open popup would be replaced by a different
+        // line (the transit-over-the-other-line case).
+        const switching = this._currentTerm !== null && line !== this._popupLine;
+        const delay = switching ? POPUP_SWITCH_DELAY_MS : HOVER_DEBOUNCE_MS;
+        this._hoverTimer = setTimeout(() => void this._handleHover(line, clientX, clientY), delay);
     };
 
     private _scheduleHide() {
@@ -444,6 +455,7 @@ export class SaviHoverDictionary {
             return;
         }
         this._currentTerm = term;
+        this._popupLine = line; // so a move to a *different* line debounces
         const popup = this._ensurePopup();
         this._popupContent!.replaceChildren(
             renderEntry(
@@ -551,6 +563,7 @@ export class SaviHoverDictionary {
 
     private _hidePopup() {
         this._currentTerm = null;
+        this._popupLine = null;
         this._generation++;
         if (this._popup) this._popup.style.display = 'none';
     }
