@@ -209,6 +209,12 @@ export default defineConfig({
                     'https://localhost/*',
                     'http://*.local/*',
                     'https://*.local/*',
+                    // Streaming sites: tabs.captureVisibleTab needs a host
+                    // permission to screenshot a mined card's video frame, since
+                    // the "+ Add to Anki" button is an in-page gesture and does
+                    // not grant the activeTab permission an icon/command would.
+                    'https://*.netflix.com/*',
+                    'https://*.youtube.com/*',
                 ],
             };
         }

@@ -243,7 +243,7 @@ export default class Binding {
             subtitleFileName: () => this.subtitleFileName(),
             notify: (locKey, replacements) => this.subtitleController.notification(locKey, replacements),
         });
-        this.saviHoverDictionary = new SaviHoverDictionary();
+        this.saviHoverDictionary = new SaviHoverDictionary(() => this.video);
         this.hoveredToken = new HoveredToken();
         this.recordMedia = true;
         this.takeScreenshot = true;

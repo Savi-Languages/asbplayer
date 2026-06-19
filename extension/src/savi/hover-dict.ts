@@ -11,6 +11,8 @@
 
 import { SaviDictEntry, SaviKanjiInfo, SaviToken } from './daemon-client';
 import {
+    SaviCaptureFrameMessage,
+    SaviCaptureFrameResponse,
     SaviCommand,
     SaviDictMessage,
     SaviDictResponse,
@@ -21,6 +23,7 @@ import {
 } from './messages';
 import { deriveEpisodeId } from './episode';
 import { friendlySaviError } from './savi-errors';
+import { cropAndResize } from '@project/common/src/image-transformer';
 
 // The overlay that stacks subtitle lines (the target language AND its
 // translation). We never tokenize this whole thing — we resolve the single
@@ -33,6 +36,7 @@ const LANG = 'ja';
 // Hiragana, katakana, CJK (+ Ext. A), compatibility ideographs, halfwidth kana.
 const JAPANESE = /[぀-ヿ㐀-䶿一-鿿豈-﫿ｦ-ﾟ]/;
 const HOVER_DEBOUNCE_MS = 0; // fire as good as immediately; tokenize/dict are cached
+const SHOT_MAX_WIDTH = 960; // cap the mined card's screenshot width (height scales)
 // Grace period before hiding once the cursor leaves the subtitle line, so the
 // visible gap between the word and the popup can be crossed to click a button.
 const HIDE_GRACE_MS = 250;
@@ -97,11 +101,10 @@ export function rangeForCharSpan(root: HTMLElement, start: number, end: number):
     return null;
 }
 
-const sendToBackground = <R>(message: SaviTokenizeMessage | SaviDictMessage | SaviMineLineMessage): Promise<R> => {
-    const command: SaviCommand<SaviTokenizeMessage | SaviDictMessage | SaviMineLineMessage> = {
-        sender: 'savi-video',
-        message,
-    };
+type SaviVideoMessage = SaviTokenizeMessage | SaviDictMessage | SaviMineLineMessage | SaviCaptureFrameMessage;
+
+const sendToBackground = <R>(message: SaviVideoMessage): Promise<R> => {
+    const command: SaviCommand<SaviVideoMessage> = { sender: 'savi-video', message };
     return browser.runtime.sendMessage(command) as Promise<R>;
 };
 
@@ -349,6 +352,10 @@ export class SaviHoverDictionary {
     private _generation = 0; // bumps to cancel stale async work
     private _bound = false;
 
+    /** @param _videoProvider returns the bound media element, so a mined card
+     *  can screenshot the current frame. Defaults to none (no screenshot). */
+    constructor(private readonly _videoProvider: () => HTMLMediaElement | null = () => null) {}
+
     start() {
         if (this._bound) return;
         this._bound = true;
@@ -492,6 +499,7 @@ export class SaviHoverDictionary {
         button.textContent = 'Adding…';
         try {
             const episodeId = deriveEpisodeId(location.href, document.title);
+            const imageBase64 = await this._captureScreenshot();
             const res = await sendToBackground<SaviMineLineResponse>({
                 command: 'savi-mine-line',
                 episodeId,
@@ -499,10 +507,12 @@ export class SaviHoverDictionary {
                 surface: token.text,
                 term,
                 reading: token.reading,
+                imageBase64,
             });
             if (res.ok) {
                 button.dataset.saviMined = 'true';
-                button.textContent = res.hadAudio ? '✓ Added (with audio)' : '✓ Added';
+                const bits = [res.hadImage ? 'shot' : null, res.hadAudio ? 'audio' : null].filter(Boolean);
+                button.textContent = bits.length ? `✓ Added (${bits.join(' + ')})` : '✓ Added';
                 button.style.background = '#3fb950';
                 button.style.color = '#fff';
             } else {
@@ -512,6 +522,29 @@ export class SaviHoverDictionary {
         } catch (e) {
             button.disabled = false;
             button.textContent = 'Failed — click to retry';
+        }
+    }
+
+    /** A base64 JPEG of the current video frame cropped to the player, or
+     *  undefined when there's no video or capture fails — the screenshot is a
+     *  bonus, never a blocker for the mine. */
+    private async _captureScreenshot(): Promise<string | undefined> {
+        try {
+            const video = this._videoProvider();
+            if (!video) return undefined;
+            const rect = video.getBoundingClientRect();
+            if (rect.width < 1 || rect.height < 1) return undefined;
+            const res = await sendToBackground<SaviCaptureFrameResponse>({ command: 'savi-capture-frame' });
+            if (!res?.dataUrl) return undefined;
+            const cropped = await cropAndResize(
+                SHOT_MAX_WIDTH,
+                0,
+                { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+                res.dataUrl
+            );
+            return cropped.substring(cropped.indexOf(',') + 1); // strip the data: prefix
+        } catch (e) {
+            return undefined;
         }
     }
 

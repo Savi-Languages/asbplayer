@@ -12,6 +12,7 @@ import { ensureOffscreenAudioServiceDocument } from '@/services/offscreen-docume
 import {
     SaviCaptureEndedMessage,
     SaviCaptureEndedToVideoMessage,
+    SaviCaptureFrameResponse,
     SaviCaptureState,
     SaviCommand,
     SaviOffscreenStartMessage,
@@ -38,6 +39,7 @@ import {
     tokenize,
 } from './daemon-client';
 import { getCachedDict, getCachedTokens, putCachedDict, putCachedTokens } from './persistent-cache';
+import { captureVisibleTab } from '@/services/capture-visible-tab';
 
 export default class SaviCommandHandler implements CommandHandler {
     private readonly _settings: SettingsProvider;
@@ -96,6 +98,11 @@ export default class SaviCommandHandler implements CommandHandler {
                             errorMessage: e instanceof Error ? e.message : String(e),
                         } as SaviMineLineResponse)
                     );
+                return true;
+            case 'savi-capture-frame':
+                this._captureFrame(sender)
+                    .then(sendResponse)
+                    .catch(() => sendResponse({} as SaviCaptureFrameResponse));
                 return true;
             case 'savi-capture-ended':
                 this._forwardCaptureEnded(command.message as SaviCaptureEndedMessage);
@@ -164,10 +171,31 @@ export default class SaviCommandHandler implements CommandHandler {
                 term: message.term,
                 reading: message.reading,
                 deck: message.deck,
+                imageBase64: message.imageBase64,
             });
-            return { ok: result.ok, noteId: result.noteId, hadAudio: result.hadAudio };
+            return {
+                ok: result.ok,
+                noteId: result.noteId,
+                hadAudio: result.hadAudio,
+                hadImage: result.hadImage,
+            };
         } catch (e) {
             return { ok: false, errorMessage: e instanceof Error ? e.message : String(e) };
+        }
+    }
+
+    // Capture the full visible tab as a JPEG data URL (background-only API).
+    // The content script crops it to the video region and forwards the base64
+    // to the daemon with the mine request.
+    private async _captureFrame(sender: Browser.runtime.MessageSender): Promise<SaviCaptureFrameResponse> {
+        const tabId = sender.tab?.id;
+        if (tabId === undefined) {
+            return {};
+        }
+        try {
+            return { dataUrl: await captureVisibleTab(tabId) };
+        } catch (e) {
+            return {};
         }
     }
 

@@ -120,13 +120,27 @@ export interface SaviMineLineMessage {
     readonly term: string;
     readonly reading?: string;
     readonly deck?: string;
+    // JPEG of the current video frame (base64, no data: prefix) for the card.
+    readonly imageBase64?: string;
 }
 
 export interface SaviMineLineResponse {
     readonly ok: boolean;
     readonly noteId?: number;
     readonly hadAudio?: boolean;
+    readonly hadImage?: boolean;
     readonly errorMessage?: string;
+}
+
+// Capture a JPEG of the current video frame for a mined card. A content script
+// can't call tabs.captureVisibleTab (background-only), so it asks the
+// background for the full-tab data URL, then crops it locally to the video.
+export interface SaviCaptureFrameMessage {
+    readonly command: 'savi-capture-frame';
+}
+
+export interface SaviCaptureFrameResponse {
+    readonly dataUrl?: string;
 }
 
 // ── content script → offscreen document ─────────────────────────────────

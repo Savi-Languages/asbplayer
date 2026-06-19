@@ -154,6 +154,8 @@ export interface MineLineResult {
     // True when the daemon found the captured episode and clipped the line's
     // audio into the card; false for a text-only card (no capture on disk).
     readonly hadAudio?: boolean;
+    // True when the screenshot was stored on the card.
+    readonly hadImage?: boolean;
 }
 
 /** Mine the hovered line+word into an Anki card. The daemon clips the line's
@@ -169,6 +171,7 @@ export const mineLine = async (
         term,
         reading,
         deck,
+        imageBase64,
     }: {
         episodeId: string;
         lineText: string;
@@ -176,14 +179,15 @@ export const mineLine = async (
         term: string;
         reading?: string;
         deck?: string;
+        imageBase64?: string;
     }
 ): Promise<MineLineResult> => {
     const body = await request(
         config,
         '/api/anki/mine',
-        jsonInit({ episodeId, lineText, surface, term, reading, deck })
+        jsonInit({ episodeId, lineText, surface, term, reading, deck, imageBase64 })
     );
-    return { ok: body.ok === true, noteId: body.noteId, hadAudio: body.hadAudio };
+    return { ok: body.ok === true, noteId: body.noteId, hadAudio: body.hadAudio, hadImage: body.hadImage };
 };
 
 export const finishCapture = async (config: SaviDaemonConfig, captureId: string): Promise<CaptureFinishInfo> => {
