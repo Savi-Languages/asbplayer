@@ -218,12 +218,27 @@ const MINE_BTN_STYLE: Partial<CSSStyleDeclaration> = {
     cursor: 'pointer',
 };
 
+const REPLAY_BTN_STYLE: Partial<CSSStyleDeclaration> = {
+    display: 'block',
+    width: '100%',
+    marginTop: '10px',
+    padding: '6px 12px',
+    fontSize: '13px',
+    fontWeight: '600',
+    color: '#e6e9ef',
+    background: '#2a2f3a',
+    border: '1px solid #3a4150',
+    borderRadius: '7px',
+    cursor: 'pointer',
+};
+
 function renderEntry(
     term: string,
     token: SaviToken,
     entries: SaviDictEntry[],
     kanji: SaviKanjiInfo[],
-    onMine: (button: HTMLButtonElement) => void
+    onMine: (button: HTMLButtonElement) => void,
+    onReplay: () => void
 ): HTMLElement {
     const root = document.createElement('div');
 
@@ -291,6 +306,19 @@ function renderEntry(
         }
         root.appendChild(box);
     }
+
+    const replay = document.createElement('button');
+    replay.className = 'savi-replay-btn';
+    replay.textContent = '🔁 Replay line';
+    Object.assign(replay.style, REPLAY_BTN_STYLE);
+    const replayTrigger = (e: Event) => {
+        e.stopPropagation();
+        e.preventDefault();
+        onReplay();
+    };
+    replay.addEventListener('pointerdown', replayTrigger);
+    replay.addEventListener('click', replayTrigger);
+    root.appendChild(replay);
 
     const mine = document.createElement('button');
     mine.className = 'savi-mine-btn';
@@ -494,7 +522,8 @@ export class SaviHoverDictionary {
                 span.token,
                 result.entries,
                 result.kanji,
-                (button) => void this._mine(text, span.token, term, button)
+                (button) => void this._mine(text, span.token, term, button),
+                () => this._replayLine()
             )
         );
         popup.style.display = 'block';
@@ -597,6 +626,26 @@ export class SaviHoverDictionary {
         } catch (e) {
             this._transcriptSentFor.delete(episodeId); // let a later mine retry
         }
+    }
+
+    /** Replay the current subtitle line — seek to its start and play, mirroring
+     *  asbplayer's "seek to beginning of current subtitle" (the S key). */
+    private _replayLine() {
+        const video = this._videoProvider();
+        if (!video) return;
+        const t = video.currentTime * 1000;
+        const all = this._subtitleProvider();
+        const onTrack0 = all.filter((s) => s.track === 0);
+        const subs = onTrack0.length > 0 ? onTrack0 : all;
+        // The current line = the cue whose window holds the playhead; if it sits
+        // just past a line (e.g. paused on hover), fall back to the most recent
+        // cue that has started.
+        const current =
+            [...subs].reverse().find((s) => s.start <= t && t < s.end) ??
+            [...subs].reverse().find((s) => s.start <= t);
+        if (!current) return;
+        video.currentTime = current.start / 1000;
+        void video.play();
     }
 
     /** A base64 JPEG of the current video frame cropped to the player, or
