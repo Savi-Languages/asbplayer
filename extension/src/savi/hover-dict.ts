@@ -548,15 +548,18 @@ export class SaviHoverDictionary {
             });
             if (res.ok) {
                 button.dataset.saviMined = 'true';
-                const bits = [res.hadImage ? 'shot' : null, res.hadAudio ? 'audio' : null].filter(Boolean);
-                const detail = bits.length ? ` (${bits.join(' + ')})` : '';
-                button.textContent = `✓ Added${detail}`;
-                button.style.background = '#3fb950';
+                // Audio is the piece that can silently miss (a line mined at the
+                // bleeding edge of a live recording, before its audio is captured),
+                // so call it out explicitly rather than just omitting it.
+                const note = res.hadAudio ? '' : ' — no audio';
+                button.textContent = res.hadAudio ? '✓ Added' : '✓ Added (no audio)';
+                button.style.background = res.hadAudio ? '#3fb950' : '#b8860b';
                 button.style.color = '#fff';
                 // The mine can take seconds (AI enrichment), by which point the
                 // cursor has often moved on and the popup closed — so confirm with
                 // a standalone toast that doesn't depend on the button still showing.
-                this._toast(`✓ Added to Anki${detail}`, 'success');
+                // Amber when audio is missing, so the gap is noticed.
+                this._toast(`✓ Added to Anki${note}`, res.hadAudio ? 'success' : 'warn');
             } else {
                 button.disabled = false;
                 const msg = friendlySaviError(res.errorMessage);
@@ -641,16 +644,23 @@ export class SaviHoverDictionary {
     /** A standalone success/error toast, independent of the hover popup, so the
      *  mine result is visible even after the cursor moved on and the popup closed.
      *  Green for success, red for failure; auto-dismisses (errors linger longer). */
-    private _toast(message: string, kind: 'success' | 'error') {
+    private _toast(message: string, kind: 'success' | 'warn' | 'error') {
         const el = this._ensureToast();
         el.textContent = message;
-        el.style.background = kind === 'success' ? '#1f7a33' : '#b3261e';
-        el.style.borderColor = kind === 'success' ? '#3fb950' : '#f85149';
+        const [bg, border] =
+            kind === 'success'
+                ? ['#1f7a33', '#3fb950']
+                : kind === 'warn'
+                  ? ['#7a5b16', '#d9a441']
+                  : ['#b3261e', '#f85149'];
+        el.style.background = bg;
+        el.style.borderColor = border;
         el.style.opacity = '1';
         el.style.transform = 'translateX(-50%) translateY(0)';
         if (this._toastTimer !== null) {
             clearTimeout(this._toastTimer);
         }
+        // Success auto-dismisses quickly; warn/error linger so they get noticed.
         this._toastTimer = window.setTimeout(() => {
             el.style.opacity = '0';
             el.style.transform = 'translateX(-50%) translateY(-8px)';

@@ -675,7 +675,7 @@ export default class Binding {
             // the text should not pause).
             const overText =
                 mouseEvent.target instanceof Element &&
-                mouseEvent.target.closest('.asbplayer-subtitle-text') !== null;
+                mouseEvent.target.closest('[data-track]') !== null;
             if (overText && this.pauseOnHoverMode !== PauseOnHoverMode.disabled && !this.video.paused) {
                 this.video.pause();
                 this.pausedDueToHover = true;
@@ -692,7 +692,7 @@ export default class Binding {
                     // keeps it paused. Resume only once off both.
                     const onText =
                         e.target instanceof Element &&
-                        e.target.closest('.asbplayer-subtitle-text') !== null;
+                        e.target.closest('[data-track]') !== null;
                     const onHoverSurface = this.saviHoverDictionary.isOverHoverSurface(
                         e.clientX,
                         e.clientY
