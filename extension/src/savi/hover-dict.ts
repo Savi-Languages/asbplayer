@@ -296,11 +296,16 @@ function renderEntry(
     mine.className = 'savi-mine-btn';
     mine.textContent = '+ Add to Anki';
     Object.assign(mine.style, MINE_BTN_STYLE);
-    mine.addEventListener('click', (e) => {
+    const trigger = (e: Event) => {
         e.stopPropagation();
         e.preventDefault();
         onMine(mine);
-    });
+    };
+    // pointerdown fires on press, so it survives the cursor dragging off the
+    // button before release (which cancels a `click`). `click` stays as a
+    // fallback (keyboard/non-pointer); the in-flight guard prevents a double.
+    mine.addEventListener('pointerdown', trigger);
+    mine.addEventListener('click', trigger);
     root.appendChild(mine);
 
     return root;
@@ -353,6 +358,8 @@ export class SaviHoverDictionary {
     private _arrow: HTMLDivElement | null = null;
     private _highlight: HTMLDivElement | null = null;
     private _bridge: HTMLDivElement | null = null; // transparent gap-cover from word up to popup
+    private _toastEl: HTMLDivElement | null = null; // standalone mine-result toast (outlives the popup)
+    private _toastTimer: number | null = null;
     private _cursorLine: HTMLElement | null = null; // line we set cursor:pointer on
     private _currentTerm: string | null = null;
     private _hoverTimer: ReturnType<typeof setTimeout> | undefined;
@@ -507,8 +514,8 @@ export class SaviHoverDictionary {
      *  audio, and writes the note. Feedback lives on the button itself so the
      *  popup stays put. */
     private async _mine(lineText: string, token: SaviToken, term: string, button: HTMLButtonElement) {
-        if (button.dataset.saviMined === 'true') {
-            return; // already added — don't create a duplicate on a second click
+        if (button.disabled || button.dataset.saviMined === 'true') {
+            return; // mine in flight or already added — don't double-fire
         }
         button.disabled = true;
         button.textContent = 'Adding…';
@@ -532,16 +539,24 @@ export class SaviHoverDictionary {
             if (res.ok) {
                 button.dataset.saviMined = 'true';
                 const bits = [res.hadImage ? 'shot' : null, res.hadAudio ? 'audio' : null].filter(Boolean);
-                button.textContent = bits.length ? `✓ Added (${bits.join(' + ')})` : '✓ Added';
+                const detail = bits.length ? ` (${bits.join(' + ')})` : '';
+                button.textContent = `✓ Added${detail}`;
                 button.style.background = '#3fb950';
                 button.style.color = '#fff';
+                // The mine can take seconds (AI enrichment), by which point the
+                // cursor has often moved on and the popup closed — so confirm with
+                // a standalone toast that doesn't depend on the button still showing.
+                this._toast(`✓ Added to Anki${detail}`, 'success');
             } else {
                 button.disabled = false;
-                button.textContent = friendlySaviError(res.errorMessage);
+                const msg = friendlySaviError(res.errorMessage);
+                button.textContent = msg;
+                this._toast(`✗ ${msg}`, 'error');
             }
         } catch (e) {
             button.disabled = false;
             button.textContent = 'Failed — click to retry';
+            this._toast('✗ Couldn’t reach savi — try again', 'error');
         }
     }
 
@@ -611,6 +626,52 @@ export class SaviHoverDictionary {
             e.style.visibility = 'hidden';
         });
         return () => els.forEach((e, i) => (e.style.visibility = prev[i] ?? ''));
+    }
+
+    /** A standalone success/error toast, independent of the hover popup, so the
+     *  mine result is visible even after the cursor moved on and the popup closed.
+     *  Green for success, red for failure; auto-dismisses (errors linger longer). */
+    private _toast(message: string, kind: 'success' | 'error') {
+        const el = this._ensureToast();
+        el.textContent = message;
+        el.style.background = kind === 'success' ? '#1f7a33' : '#b3261e';
+        el.style.borderColor = kind === 'success' ? '#3fb950' : '#f85149';
+        el.style.opacity = '1';
+        el.style.transform = 'translateX(-50%) translateY(0)';
+        if (this._toastTimer !== null) {
+            clearTimeout(this._toastTimer);
+        }
+        this._toastTimer = window.setTimeout(() => {
+            el.style.opacity = '0';
+            el.style.transform = 'translateX(-50%) translateY(-8px)';
+        }, kind === 'success' ? 2600 : 4200);
+    }
+
+    private _ensureToast(): HTMLDivElement {
+        if (this._toastEl) return this._toastEl;
+        const el = document.createElement('div');
+        el.className = 'savi-toast';
+        Object.assign(el.style, {
+            position: 'fixed',
+            left: '50%',
+            top: '48px',
+            transform: 'translateX(-50%) translateY(-8px)',
+            zIndex: '2147483647',
+            padding: '10px 16px',
+            borderRadius: '10px',
+            border: '1px solid',
+            color: '#fff',
+            font: '600 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+            boxShadow: '0 6px 24px rgba(0,0,0,0.45)',
+            pointerEvents: 'none',
+            opacity: '0',
+            transition: 'opacity .18s ease, transform .18s ease',
+            maxWidth: '80vw',
+            textAlign: 'center',
+        });
+        document.body.appendChild(el);
+        this._toastEl = el;
+        return el;
     }
 
     private async _lookupDict(term: string): Promise<SaviDictResponse> {
