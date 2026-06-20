@@ -74,7 +74,12 @@ export class SaviReplayButton {
         const b = btn.getBoundingClientRect();
         const gap = 12;
         const left = Math.max(8, r.left - b.width - gap);
-        const top = r.top + r.height / 2 - b.height / 2;
+        // Anchor vertically to the subtitle's BOTTOM edge — the stable anchor.
+        // The cue stack grows UPWARD from a fixed bottom (its container is
+        // translate(-50%,-100%) off a bottom point), so its top/centre move with
+        // the line count but its bottom stays put. Anchoring to the bottom keeps
+        // the button at a steady height instead of bobbing as lines change.
+        const top = r.bottom - b.height;
         btn.style.left = `${Math.round(left)}px`;
         btn.style.top = `${Math.round(top)}px`;
     }
