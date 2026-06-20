@@ -18,6 +18,7 @@ import { serializeToSrt, SerializableSubtitle } from './subtitle-serializer';
 import { deriveEpisodeId, deriveShowAndTitle, deriveShowAndTitleFromBasename } from './episode';
 import { NativeSubtitleHider, nativeSubtitleSelectorForHost } from './native-subtitle-hider';
 import { SaviRecordButton } from './record-button';
+import { SaviReplayButton } from './replay-button';
 import { SaviSpeedControl } from './speed-control';
 import {
     SaviCommand,
@@ -46,6 +47,7 @@ export class SaviCaptureController {
     private readonly _host: SaviCaptureHost;
     private readonly _nativeSubtitleHider = new NativeSubtitleHider();
     private readonly _recordButton = new SaviRecordButton(() => this._toggleCapture());
+    private readonly _replayButton = new SaviReplayButton(() => this._replayCurrentLine());
     private readonly _speedControl = new SaviSpeedControl(() => this._host.video);
     private _segmenter?: Segmenter;
     private _active = false;
@@ -103,6 +105,7 @@ export class SaviCaptureController {
     unbind() {
         this._nativeSubtitleHider.clear();
         this._recordButton.destroy();
+        this._replayButton.destroy();
         this._speedControl.destroy();
 
         if (this._messageListener !== undefined) {
@@ -119,6 +122,9 @@ export class SaviCaptureController {
 
     // Called when subtitle tracks have been loaded for the video.
     onSubtitlesLoaded() {
+        // The Replay control is a playback aid, independent of capture — surface
+        // it whenever there are subtitles to replay.
+        this._replayButton.show();
         this._host.settings
             .get(['saviCaptureEnabled', 'saviHideNativeSubtitles', 'saviDaemonUrl'])
             .then(({ saviCaptureEnabled, saviHideNativeSubtitles }) => {
@@ -159,12 +165,33 @@ export class SaviCaptureController {
         }
     }
 
+    /** Replay the current subtitle line: seek to its start and play (asbplayer's
+     *  S key, as a clickable control). The current line is the cue whose window
+     *  holds the playhead — or, when auto-pause has stopped just past a line, the
+     *  most recent cue that has started. */
+    private _replayCurrentLine() {
+        const video = this._host.video;
+        const t = video.currentTime * 1000;
+        const all = this._host.currentSubtitles();
+        const onTrack0 = all.filter((s) => s.track === 0);
+        const subs = onTrack0.length > 0 ? onTrack0 : all;
+        const current =
+            [...subs].reverse().find((s) => s.start <= t && t < s.end) ??
+            [...subs].reverse().find((s) => s.start <= t);
+        if (!current) {
+            return;
+        }
+        video.currentTime = current.start / 1000;
+        void video.play();
+    }
+
     // Called when subtitles are reset (e.g. SPA navigation to the next
     // episode). Finishes the in-flight capture; a new one auto-starts
     // when the next episode's subtitles load.
     onSubtitlesReset() {
         this._nativeSubtitleHider.clear();
         this._recordButton.hide();
+        this._replayButton.hide();
         this._speedControl.hide();
 
         if (this._active) {
