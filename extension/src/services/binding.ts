@@ -670,7 +670,13 @@ export default class Binding {
         this.video.addEventListener('ratechange', this.playbackRateListener);
 
         this.subtitleController.onMouseOver = (mouseEvent: MouseEvent) => {
-            if (this.pauseOnHoverMode !== PauseOnHoverMode.disabled && !this.video.paused) {
+            // Only pause when actually over subtitle TEXT — not the wide empty
+            // space of the subtitle container (hovering the blank area beside
+            // the text should not pause).
+            const overText =
+                mouseEvent.target instanceof Element &&
+                mouseEvent.target.closest('.asbplayer-subtitle-text') !== null;
+            if (overText && this.pauseOnHoverMode !== PauseOnHoverMode.disabled && !this.video.paused) {
                 this.video.pause();
                 this.pausedDueToHover = true;
 
@@ -680,10 +686,18 @@ export default class Binding {
                 }
 
                 this.mouseMoveListener = (e: MouseEvent) => {
-                    if (
-                        this._shouldAutoResumeOnSubtitlesMouseOut &&
-                        !this.subtitleController.intersects(e.clientX, e.clientY)
-                    ) {
+                    // Stay paused while the cursor is on subtitle text OR savi's
+                    // own hover surfaces (the dictionary popup / the word→popup
+                    // bridge) — so moving onto the popup to click "+ Add to Anki"
+                    // keeps it paused. Resume only once off both.
+                    const onText =
+                        e.target instanceof Element &&
+                        e.target.closest('.asbplayer-subtitle-text') !== null;
+                    const onHoverSurface = this.saviHoverDictionary.isOverHoverSurface(
+                        e.clientX,
+                        e.clientY
+                    );
+                    if (this._shouldAutoResumeOnSubtitlesMouseOut && !onText && !onHoverSurface) {
                         this.play();
                         this.pausedDueToHover = false;
                     }

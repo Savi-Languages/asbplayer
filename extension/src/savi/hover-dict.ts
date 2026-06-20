@@ -391,6 +391,16 @@ export class SaviHoverDictionary {
         this._clear();
     }
 
+    /** True when (x, y) is over savi's own hover surfaces — the dictionary popup
+     *  or the transparent word→popup bridge. The binding uses this to keep the
+     *  video paused while the cursor moves from a subtitle word onto the popup
+     *  (so reaching "+ Add to Anki" doesn't resume playback). */
+    isOverHoverSurface(x: number, y: number): boolean {
+        const el = document.elementFromPoint(x, y);
+        if (!(el instanceof Node)) return false;
+        return (!!this._popup && this._popup.contains(el)) || (!!this._bridge && this._bridge.contains(el));
+    }
+
     private _onMouseMove = (event: MouseEvent) => {
         const line = lineElement(event.target);
         if (!line) {
