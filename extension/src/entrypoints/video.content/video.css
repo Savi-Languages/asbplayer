@@ -281,8 +281,8 @@
    doesn't distract, solid + pulsing while recording. */
 .savi-record-button {
     position: fixed;
-    left: 18px;
-    bottom: 90px;
+    right: 18px;
+    top: 18px;
     z-index: 2147483640;
     display: none;
     align-items: center;
@@ -301,7 +301,7 @@
         sans-serif;
     line-height: 1;
     cursor: pointer;
-    opacity: 0.5;
+    opacity: 0.72;
     transition:
         opacity 120ms ease,
         background 120ms ease;
@@ -339,8 +339,8 @@
    opposite (right) side, so it never overlaps the centred subtitles. */
 .savi-replay-button {
     position: fixed;
-    right: 18px;
-    bottom: 90px;
+    left: 24px;
+    top: 76vh;
     z-index: 2147483640;
     display: none;
     align-items: center;
@@ -359,7 +359,7 @@
         sans-serif;
     line-height: 1;
     cursor: pointer;
-    opacity: 0.5;
+    opacity: 0.72;
     transition:
         opacity 120ms ease,
         background 120ms ease;

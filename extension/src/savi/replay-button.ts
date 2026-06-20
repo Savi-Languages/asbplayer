@@ -9,25 +9,74 @@
 export class SaviReplayButton {
     private readonly _onReplay: () => void;
     private _button: HTMLButtonElement | null = null;
+    private _rafId: number | null = null;
 
     constructor(onReplay: () => void) {
         this._onReplay = onReplay;
     }
 
-    /** Make the control visible, creating it on first call. */
+    /** Make the control visible, creating it on first call, and start pinning it
+     *  to the live subtitle position. */
     show() {
         this._ensure().style.display = 'inline-flex';
+        this._startTracking();
     }
 
     hide() {
+        this._stopTracking();
         if (this._button) {
             this._button.style.display = 'none';
         }
     }
 
     destroy() {
+        this._stopTracking();
         this._button?.remove();
         this._button = null;
+    }
+
+    private _startTracking() {
+        if (this._rafId !== null) {
+            return;
+        }
+        const loop = () => {
+            this._positionBySubtitle();
+            this._rafId = requestAnimationFrame(loop);
+        };
+        this._rafId = requestAnimationFrame(loop);
+    }
+
+    private _stopTracking() {
+        if (this._rafId !== null) {
+            cancelAnimationFrame(this._rafId);
+            this._rafId = null;
+        }
+    }
+
+    /** Pin the button just to the LEFT of the current bottom subtitle, vertically
+     *  centred on it — so it sits right where the eyes/cursor rest when auto-pause
+     *  stops on a line, and never overlaps the text. The bottom subtitle container
+     *  is an inline-block whose rect tightly wraps the visible text. While no
+     *  subtitle is on screen the button keeps its last position (no flicker). */
+    private _positionBySubtitle() {
+        const btn = this._button;
+        if (!btn) {
+            return;
+        }
+        const sub = document.querySelector('.asbplayer-subtitles-container-bottom');
+        if (!(sub instanceof HTMLElement)) {
+            return;
+        }
+        const r = sub.getBoundingClientRect();
+        if (r.width < 1 || r.height < 1) {
+            return; // no subtitle on screen right now — stay put
+        }
+        const b = btn.getBoundingClientRect();
+        const gap = 12;
+        const left = Math.max(8, r.left - b.width - gap);
+        const top = r.top + r.height / 2 - b.height / 2;
+        btn.style.left = `${Math.round(left)}px`;
+        btn.style.top = `${Math.round(top)}px`;
     }
 
     private _ensure(): HTMLButtonElement {
