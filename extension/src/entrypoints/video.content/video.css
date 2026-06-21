@@ -339,7 +339,10 @@
    opposite (right) side, so it never overlaps the centred subtitles. */
 .savi-replay-button {
     position: fixed;
-    z-index: 2147483640;
+    /* Above the subtitle container (2147483646) — it's pointer-events:auto with
+       cursor:text and its box can extend past the top line (when the caption
+       line below is wider), covering the button so clicks/cursor miss it. */
+    z-index: 2147483647;
     display: none;
     align-items: center;
     gap: 6px;
