@@ -339,8 +339,6 @@
    opposite (right) side, so it never overlaps the centred subtitles. */
 .savi-replay-button {
     position: fixed;
-    left: 24px;
-    top: 76vh;
     z-index: 2147483640;
     display: none;
     align-items: center;
