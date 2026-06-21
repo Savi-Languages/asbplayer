@@ -2,12 +2,10 @@ import React, { useCallback, useMemo, useRef, useState } from 'react';
 import Grid, { GridProps } from '@mui/material/Grid';
 import IconButton from '@mui/material/IconButton';
 import Button from '@mui/material/Button';
-import NoteAddIcon from '@mui/icons-material/NoteAdd';
 import NavigateBeforeIcon from '@mui/icons-material/NavigateBefore';
 import NavigateNextIcon from '@mui/icons-material/NavigateNext';
-import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
 import TuneIcon from '@mui/icons-material/Tune';
-import { ControlType, MobileOverlayModel, PlayMode, PostMineAction } from '@project/common';
+import { ControlType, MobileOverlayModel, PlayMode } from '@project/common';
 import { makeStyles } from '@mui/styles';
 import { useTranslation } from 'react-i18next';
 import LogoIcon from './LogoIcon';
@@ -79,7 +77,6 @@ interface Props {
     tooltipsEnabled: boolean;
     initialControlType: ControlType;
     onScrollToControlType: (controlType: ControlType) => void;
-    onMineSubtitle: () => void;
     onLoadSubtitles?: () => void;
     onOffset: (offset: number) => void;
     onPlaybackRate: (playbackRate: number) => void;
@@ -96,7 +93,6 @@ const MobileVideoOverlay = React.forwardRef<HTMLDivElement, Props>(function Mobi
         tooltipsEnabled,
         initialControlType,
         onScrollToControlType,
-        onMineSubtitle,
         onLoadSubtitles,
         onOffset,
         onPlaybackRate,
@@ -351,31 +347,6 @@ const MobileVideoOverlay = React.forwardRef<HTMLDivElement, Props>(function Mobi
             break;
     }
 
-    const miningButtonDisabled = (!model.emptySubtitleTrack && !model.subtitleDisplaying) || model.recording;
-
-    function miningButtonTooltip(model: MobileOverlayModel) {
-        if (!model) {
-            return null;
-        }
-
-        if (model.emptySubtitleTrack) {
-            if (model.recordingEnabled) {
-                return model.recording ? t('action.stopRecording') : t('action.startRecording');
-            }
-
-            return t('action.mine');
-        }
-
-        switch (model.postMineAction) {
-            case PostMineAction.exportCard:
-            case PostMineAction.showAnkiDialog:
-            case PostMineAction.none:
-                return t('action.mine');
-            case PostMineAction.updateLastCard:
-                return t('action.updateLastCard');
-        }
-    }
-
     const defaultTooltipProps = {
         className: classes.tooltip,
         placement: anchor,
@@ -386,29 +357,9 @@ const MobileVideoOverlay = React.forwardRef<HTMLDivElement, Props>(function Mobi
     return (
         <>
             <GridContainer ref={ref} direction="row" wrap="nowrap" className={containerClassName}>
-                {/* savi: load-subtitles (logo) button removed per user request. */}
-                <Grid item>
-                    <Tooltip {...defaultTooltipProps} title={miningButtonTooltip(model)!}>
-                        {model.emptySubtitleTrack && model.recordingEnabled ? (
-                            // Wrap in span so that Tooltip doesn't complain about disabled child. Spacing also looks better.
-                            <span>
-                                <IconButton onClick={onMineSubtitle}>
-                                    <FiberManualRecordIcon
-                                        className={model.recording ? classes.recordingButton : classes.button}
-                                    />
-                                </IconButton>
-                            </span>
-                        ) : (
-                            <span>
-                                <IconButton disabled={miningButtonDisabled} onClick={onMineSubtitle}>
-                                    <NoteAddIcon
-                                        className={miningButtonDisabled ? classes.inactiveButton : classes.button}
-                                    />
-                                </IconButton>
-                            </span>
-                        )}
-                    </Tooltip>
-                </Grid>
+                {/* savi: load-subtitles (logo) button + the native Mine button
+                    removed per user request — savi has its own Add-to-Anki flow
+                    via the hover-dictionary popup, so this one was redundant. */}
                 {!model.emptySubtitleTrack && (
                     <Grid item>
                         <Tooltip {...defaultTooltipProps} title={t('binds.toggleSubtitles')!}>
