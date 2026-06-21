@@ -595,6 +595,9 @@ export interface SaviSettings {
     readonly saviDaemonUrl: string;
     readonly saviDaemonToken: string;
     readonly saviHideNativeSubtitles: boolean;
+    // Warn (loud button + banner + chime) when a video is playing but recording
+    // is OFF — e.g. a reload silently dropped it. See extension/src/savi/recording-guard.
+    readonly saviRecordingGuard: boolean;
 }
 
 export type ChromeBoundKeyBindName = 'copySubtitle' | 'ankiExport' | 'updateLastCard' | 'exportCard' | 'takeScreenshot';

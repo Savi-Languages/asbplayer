@@ -170,6 +170,16 @@ export default defineConfig({
                 },
                 description: 'Savi: grant audio permission and start recording this tab',
             },
+            // A simpler, optional SECOND shortcut for the same start/resume.
+            // Chrome caps suggested defaults at 4 (all four above are taken), so
+            // this one ships WITHOUT a default key — bind it once at
+            // chrome://extensions/shortcuts (e.g. Control+R on Mac / Alt+R
+            // elsewhere; Ctrl+R / Cmd+R can't be used — they're the reserved
+            // browser Reload). As a real command it still grants the per-tab
+            // audio permission, so it works for the post-reload resume too.
+            'savi-record-quick': {
+                description: 'Savi: start/resume recording (simpler shortcut — assign your own key)',
+            },
         };
 
         if (isDev) {

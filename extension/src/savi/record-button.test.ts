@@ -36,6 +36,20 @@ describe('SaviRecordButton', () => {
         expect(el().classList.contains('recording')).toBe(false);
     });
 
+    it('shows a loud "NOT RECORDING" alert state, cleared by resuming', () => {
+        const button = new SaviRecordButton(() => {});
+        button.show();
+
+        button.setState('alert');
+        expect(labelText()).toBe('● NOT RECORDING');
+        expect(el().classList.contains('alert')).toBe(true);
+        expect(el().classList.contains('recording')).toBe(false);
+
+        button.setState('recording'); // resuming supersedes the alert
+        expect(el().classList.contains('alert')).toBe(false);
+        expect(el().classList.contains('recording')).toBe(true);
+    });
+
     it('flashes a hint, then restores the state label', () => {
         jest.useFakeTimers();
         try {

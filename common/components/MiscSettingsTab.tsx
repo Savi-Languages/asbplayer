@@ -86,6 +86,7 @@ const MiscSettingTab: React.FC<Props> = ({
         saviDaemonUrl,
         saviDaemonToken,
         saviHideNativeSubtitles,
+        saviRecordingGuard,
         subtitleAboveThumbnail,
         thumbnailPreview,
     } = settings;
@@ -462,6 +463,16 @@ const MiscSettingTab: React.FC<Props> = ({
                         />
                     }
                     label={"Hide the streaming site's own subtitles"}
+                    labelPlacement="start"
+                />
+                <SwitchLabelWithHoverEffect
+                    control={
+                        <Switch
+                            checked={saviRecordingGuard}
+                            onChange={(e) => onSettingChanged('saviRecordingGuard', e.target.checked)}
+                        />
+                    }
+                    label={'Warn me when recording stops (e.g. after a reload)'}
                     labelPlacement="start"
                 />
                 <SettingsTextField

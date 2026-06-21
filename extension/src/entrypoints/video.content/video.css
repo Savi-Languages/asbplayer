@@ -329,6 +329,20 @@
     animation: savi-rec-pulse 1.4s ease-in-out infinite;
 }
 
+/* savi: "a video is playing but you are NOT recording" — the loud counterpart to
+   the calm idle state (e.g. a reload silently dropped recording). Bright red,
+   fully opaque, and the whole pill pulses so it can't go unnoticed. */
+.savi-record-button.alert {
+    opacity: 1;
+    background: rgba(176, 24, 24, 0.96);
+    box-shadow: 0 2px 16px rgba(255, 45, 45, 0.55);
+    animation: savi-rec-pulse 1.4s ease-in-out infinite;
+}
+
+.savi-record-button.alert .savi-record-dot {
+    background: #fff;
+}
+
 /* Transient "you need to do something" state (e.g. press Ctrl+Shift+S). */
 .savi-record-button.hint {
     opacity: 1;

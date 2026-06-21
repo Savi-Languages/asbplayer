@@ -250,6 +250,7 @@ export const defaultSettings: AsbplayerSettings = {
     saviDaemonUrl: 'http://127.0.0.1:4670',
     saviDaemonToken: '',
     saviHideNativeSubtitles: true,
+    saviRecordingGuard: true,
     // PauseOnHoverMode.inAndOut: hovering a subtitle word pauses the video and
     // moving away resumes it (Language Reactor behavior). 0 = disabled.
     pauseOnHoverMode: 1,

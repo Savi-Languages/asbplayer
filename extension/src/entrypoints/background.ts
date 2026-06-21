@@ -79,11 +79,18 @@ import StatisticsOverlayForwarderHandler from '@/handlers/statistics-overlay/sta
 import OpenStatisticsOverlayHandler from '@/handlers/open-statistics-overlay-handler';
 import SaviCommandHandler from '@/savi/background-handler';
 import { SaviCommand } from '@/savi/messages';
+import { clearRecordingIntent } from '@/savi/recording-intent';
 
 export default defineBackground(() => {
     if (!isFirefoxBuild) {
         browser.storage.session.setAccessLevel({ accessLevel: 'TRUSTED_AND_UNTRUSTED_CONTEXTS' });
     }
+
+    // Recording-intent markers live in storage.session keyed by tabId; clear a
+    // tab's marker when it closes so a reused tabId never inherits stale intent.
+    browser.tabs.onRemoved.addListener((tabId) => {
+        clearRecordingIntent(tabId).catch(() => {});
+    });
 
     const settings = new SettingsProvider(new ExtensionSettingsStorage());
 
@@ -451,10 +458,13 @@ export default defineBackground(() => {
                         },
                     });
                     break;
-                case 'savi-record': {
+                case 'savi-record':
+                case 'savi-record-quick': {
                     // The keypress just granted activeTab for this tab; ask the
                     // savi capture controller to start (manually requested), so
                     // tabCapture succeeds without the user clicking the icon.
+                    // Both shortcuts (Ctrl+Shift+S and the simpler ⌃R/Alt+R) run
+                    // this same path — either gesture grants the audio permission.
                     const tabId = tabs[0]?.id;
                     if (tabId !== undefined) {
                         const startCommand: SaviCommand<{ command: 'savi-request-start' }> = {

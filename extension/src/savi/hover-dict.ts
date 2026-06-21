@@ -548,18 +548,26 @@ export class SaviHoverDictionary {
             });
             if (res.ok) {
                 button.dataset.saviMined = 'true';
-                // Audio is the piece that can silently miss (a line mined at the
-                // bleeding edge of a live recording, before its audio is captured),
-                // so call it out explicitly rather than just omitting it.
-                const note = res.hadAudio ? '' : ' — no audio';
-                button.textContent = res.hadAudio ? '✓ Added' : '✓ Added (no audio)';
-                button.style.background = res.hadAudio ? '#3fb950' : '#b8860b';
+                // Two pieces can silently miss and leave a thinner card: the line's
+                // audio (mined at the bleeding edge of a live recording, before its
+                // audio is captured) and the AI enrichment — pitch, meaning, and the
+                // in-context lenses (every provider failed, or none configured, so the
+                // card falls back to dictionary-only). Call either out explicitly so
+                // the user knows to re-mine. `enriched === false` is a strict check:
+                // an older daemon omits the field, so we don't cry wolf.
+                const gaps: string[] = [];
+                if (!res.hadAudio) gaps.push('no audio');
+                if (res.enriched === false) gaps.push('no AI details');
+                const degraded = gaps.length > 0;
+                const suffix = degraded ? ` (${gaps.join(', ')})` : '';
+                button.textContent = `✓ Added${suffix}`;
+                button.style.background = degraded ? '#b8860b' : '#3fb950';
                 button.style.color = '#fff';
                 // The mine can take seconds (AI enrichment), by which point the
                 // cursor has often moved on and the popup closed — so confirm with
                 // a standalone toast that doesn't depend on the button still showing.
-                // Amber when audio is missing, so the gap is noticed.
-                this._toast(`✓ Added to Anki${note}`, res.hadAudio ? 'success' : 'warn');
+                // Amber when something's missing, so the gap is noticed.
+                this._toast(`✓ Added to Anki${suffix}`, degraded ? 'warn' : 'success');
             } else {
                 button.disabled = false;
                 const msg = friendlySaviError(res.errorMessage);

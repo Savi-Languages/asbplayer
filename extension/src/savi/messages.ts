@@ -46,6 +46,11 @@ export interface SaviStartCaptureMessage {
 
 export interface SaviStopCaptureMessage {
     readonly command: 'savi-stop-capture';
+    // True only on a DELIBERATE user stop (manual toggle / popup). The background
+    // clears the tab's recording-intent marker only then — so a reload, SPA
+    // next-episode, or video-end (which also stop capture) KEEP intent, letting
+    // the recording guard prompt to resume.
+    readonly clearIntent: boolean;
 }
 
 export interface SaviStartCaptureResponse {
@@ -62,6 +67,18 @@ export interface SaviStartCaptureResponse {
 export interface SaviStopCaptureResponse {
     readonly stopped: boolean;
     readonly errorMessage?: string;
+}
+
+// Ask whether THIS tab had a recording before the current page load (intent
+// persisted in storage.session across the reload). The recording guard uses it
+// to tell a reload-drop (intent set → prompt to resume) from a never-started
+// episode (intent unset → a calmer, gated nudge).
+export interface SaviGetIntentMessage {
+    readonly command: 'savi-get-intent';
+}
+
+export interface SaviGetIntentResponse {
+    readonly intentSet: boolean;
 }
 
 // ── popup → background ──────────────────────────────────────────────────
@@ -129,6 +146,7 @@ export interface SaviMineLineResponse {
     readonly noteId?: number;
     readonly hadAudio?: boolean;
     readonly hadImage?: boolean;
+    readonly enriched?: boolean;
     readonly errorMessage?: string;
 }
 

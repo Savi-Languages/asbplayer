@@ -559,6 +559,9 @@ const settingsSchema = {
         saviHideNativeSubtitles: {
             type: 'boolean',
         },
+        saviRecordingGuard: {
+            type: 'boolean',
+        },
         pauseOnHoverMode: {
             type: 'number',
         },

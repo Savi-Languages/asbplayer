@@ -20,8 +20,10 @@ import { NativeSubtitleHider, nativeSubtitleSelectorForHost } from './native-sub
 import { SaviRecordButton } from './record-button';
 import { SaviReplayButton } from './replay-button';
 import { SaviSpeedControl } from './speed-control';
+import { SaviRecordingGuard } from './recording-guard';
 import {
     SaviCommand,
+    SaviGetIntentResponse,
     SaviSegmentMessage,
     SaviSegmentOp,
     SaviStartCaptureMessage,
@@ -49,10 +51,16 @@ export class SaviCaptureController {
     private readonly _recordButton = new SaviRecordButton(() => this._toggleCapture());
     private readonly _replayButton = new SaviReplayButton(() => this._replayCurrentLine());
     private readonly _speedControl = new SaviSpeedControl(() => this._host.video);
+    // "You're not recording" guard: loud button + banner + chime + re-nag, raised
+    // when a video plays but capture is off (a reload dropped it, or never started).
+    private readonly _guard = new SaviRecordingGuard(this._recordButton);
     private _segmenter?: Segmenter;
     private _active = false;
     private _starting = false;
     private _notifiedUnsupportedRate?: number;
+    // episodeIds for which the calmer "never started" guard already showed this
+    // session — so casual watching isn't nagged more than once per episode.
+    private readonly _guardShownEpisodes = new Set<string>();
 
     private _videoListeners: [string, EventListener][] = [];
     private _messageListener?: (
@@ -80,8 +88,14 @@ export class SaviCaptureController {
             }
 
             if (request.message.command === 'savi-request-start') {
-                // Only the binding with loaded subtitles responds.
-                if (!this._active && !this._starting && this._subtitlesForCapture().length > 0) {
+                // The record shortcut / toolbar / popup TOGGLES: pressing it again
+                // STOPS. Only the binding with loaded subtitles responds.
+                if (this._active) {
+                    this.stop(true); // deliberate stop → clears intent (no resume nag)
+                    sendResponse({ requested: true });
+                    return true;
+                }
+                if (!this._starting && this._subtitlesForCapture().length > 0) {
                     this.start(true);
                     sendResponse({ requested: true });
                     return true;
@@ -107,6 +121,7 @@ export class SaviCaptureController {
         this._recordButton.destroy();
         this._replayButton.destroy();
         this._speedControl.destroy();
+        this._guard.destroy();
 
         if (this._messageListener !== undefined) {
             browser.runtime.onMessage.removeListener(this._messageListener);
@@ -193,6 +208,10 @@ export class SaviCaptureController {
         this._recordButton.hide();
         this._replayButton.hide();
         this._speedControl.hide();
+        // A next-episode reset is not a deliberate stop — keep intent so the new
+        // episode can prompt — but drop the visible guard; it re-evaluates on the
+        // next episode's auto-start.
+        this._guard.clear();
 
         if (this._active) {
             this.stop();
@@ -201,7 +220,7 @@ export class SaviCaptureController {
 
     private _toggleCapture() {
         if (this._active) {
-            this.stop();
+            this.stop(true); // a manual toggle-off is deliberate → clears intent
         } else {
             this.start(true);
         }
@@ -215,11 +234,13 @@ export class SaviCaptureController {
         this._starting = true;
 
         try {
-            const { saviDaemonUrl, saviDaemonToken, streamingLastLanguagesSynced } = await this._host.settings.get([
-                'saviDaemonUrl',
-                'saviDaemonToken',
-                'streamingLastLanguagesSynced',
-            ]);
+            const { saviDaemonUrl, saviDaemonToken, streamingLastLanguagesSynced, saviRecordingGuard } =
+                await this._host.settings.get([
+                    'saviDaemonUrl',
+                    'saviDaemonToken',
+                    'streamingLastLanguagesSynced',
+                    'saviRecordingGuard',
+                ]);
 
             if (!saviDaemonUrl.trim() || !saviDaemonToken.trim()) {
                 this._host.notify('Savi: daemon URL/token not configured in settings');
@@ -269,6 +290,7 @@ export class SaviCaptureController {
                 );
                 this._host.notify('Savi: capturing episode');
                 this._recordButton.setState('recording');
+                this._guard.clear(); // recording now — drop any "not recording" guard
             } else if (response?.errorCode === 'no-active-tab') {
                 // Browsers only grant tab-audio capture after a user gesture on
                 // the extension (a button click in the page doesn't count), so
@@ -281,6 +303,11 @@ export class SaviCaptureController {
                         'Savi: press Ctrl+Shift+S (or click the savi toolbar icon) to enable audio recording for this tab.'
                     );
                     this._recordButton.flashHint('Press Ctrl+Shift+S to enable');
+                }
+                // The start silently failed for lack of permission — raise the
+                // recording guard so the user notices instead of watching unrecorded.
+                if (saviRecordingGuard) {
+                    await this._raiseGuard(episodeId);
                 }
             } else {
                 this._host.notify(`Savi: capture failed — ${response?.errorMessage ?? 'unknown error'}`);
@@ -385,7 +412,36 @@ export class SaviCaptureController {
         }
     }
 
-    async stop() {
+    // Decide which guard to show after a permission-less start: if this tab had
+    // been recording (intent persisted across the reload) it's a reload-drop;
+    // otherwise a never-started episode — shown at most once per episode session.
+    private async _raiseGuard(episodeId: string) {
+        const intentSet = await this._queryIntent();
+        if (intentSet) {
+            this._guard.activate('reload-drop');
+        } else if (!this._guardShownEpisodes.has(episodeId)) {
+            this._guardShownEpisodes.add(episodeId);
+            this._guard.activate('never-started');
+        }
+    }
+
+    private async _queryIntent(): Promise<boolean> {
+        try {
+            const command: SaviCommand<{ command: 'savi-get-intent' }> = {
+                sender: 'savi-video',
+                message: { command: 'savi-get-intent' },
+            };
+            const response = (await browser.runtime.sendMessage(command)) as SaviGetIntentResponse | undefined;
+            return response?.intentSet === true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    // `deliberate` = a manual toggle-off / popup stop (the user is done). It tells
+    // the background to clear this tab's recording intent so a later reload won't
+    // nag. Reset / unbind / video-end stops pass false, keeping intent.
+    async stop(deliberate = false) {
         if (!this._active) {
             return;
         }
@@ -401,7 +457,7 @@ export class SaviCaptureController {
         try {
             const command: SaviCommand<SaviStopCaptureMessage> = {
                 sender: 'savi-video',
-                message: { command: 'savi-stop-capture' },
+                message: { command: 'savi-stop-capture', clearIntent: deliberate },
             };
             const response = (await browser.runtime.sendMessage(command)) as SaviStopCaptureResponse;
 

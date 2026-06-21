@@ -166,6 +166,9 @@ export interface MineLineResult {
     readonly hadAudio?: boolean;
     // True when the screenshot was stored on the card.
     readonly hadImage?: boolean;
+    // True when AI enrichment (pitch, meaning, in-context) was attached; false =
+    // dictionary-only fallback (no provider configured, or every provider failed).
+    readonly enriched?: boolean;
 }
 
 /** Mine the hovered line+word into an Anki card. The daemon clips the line's
@@ -197,7 +200,13 @@ export const mineLine = async (
         '/api/anki/mine',
         jsonInit({ episodeId, lineText, surface, term, reading, deck, imageBase64 })
     );
-    return { ok: body.ok === true, noteId: body.noteId, hadAudio: body.hadAudio, hadImage: body.hadImage };
+    return {
+        ok: body.ok === true,
+        noteId: body.noteId,
+        hadAudio: body.hadAudio,
+        hadImage: body.hadImage,
+        enriched: body.enriched,
+    };
 };
 
 export const finishCapture = async (config: SaviDaemonConfig, captureId: string): Promise<CaptureFinishInfo> => {

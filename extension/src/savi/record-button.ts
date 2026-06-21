@@ -10,7 +10,7 @@
 // say so on the button itself. Once the permission is in place, the button
 // starts/stops directly.
 
-export type RecordButtonState = 'idle' | 'recording';
+export type RecordButtonState = 'idle' | 'recording' | 'alert';
 
 export class SaviRecordButton {
     private readonly _onToggle: () => void;
@@ -40,15 +40,23 @@ export class SaviRecordButton {
         if (!this._button || !this._label) {
             return;
         }
-        const recording = state === 'recording';
-        this._button.classList.toggle('recording', recording);
+        this._button.classList.toggle('recording', state === 'recording');
+        this._button.classList.toggle('alert', state === 'alert');
         this._button.classList.remove('hint');
-        // Show both the state and the action: idle invites a start; recording
-        // says so plainly and that clicking stops it.
-        this._label.textContent = recording ? 'Recording — Stop' : 'Start recording';
-        this._button.title = recording
-            ? 'Recording this tab for savi — click to stop'
-            : 'Start recording this tab for savi (first start of a page load needs Ctrl+Shift+S)';
+        // idle invites a start; recording says so plainly and that clicking
+        // stops it; alert shouts that a playing video is NOT being recorded
+        // (e.g. a reload dropped it) and how to resume.
+        let label = 'Start recording';
+        let title = 'Start recording this tab for savi (first start of a page load needs Ctrl+Shift+S)';
+        if (state === 'recording') {
+            label = 'Recording — Stop';
+            title = 'Recording this tab for savi — click to stop';
+        } else if (state === 'alert') {
+            label = '● NOT RECORDING';
+            title = 'Not recording — press Ctrl+Shift+S (or click the savi toolbar icon) to resume';
+        }
+        this._label.textContent = label;
+        this._button.title = title;
     }
 
     /** Briefly replace the label with a hint (e.g. how to enable recording),

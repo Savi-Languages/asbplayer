@@ -25,12 +25,15 @@ import {
     SaviMineLineMessage,
     SaviMineLineResponse,
     SaviRequestStartMessage,
+    SaviGetIntentResponse,
     SaviStartCaptureMessage,
     SaviStartCaptureResponse,
+    SaviStopCaptureMessage,
     SaviStopCaptureResponse,
     SaviTokenizeMessage,
     SaviTokenizeResponse,
 } from './messages';
+import { clearRecordingIntent, hasRecordingIntent, setRecordingIntent } from './recording-intent';
 import {
     lookupDict,
     mineLine,
@@ -74,7 +77,10 @@ export default class SaviCommandHandler implements CommandHandler {
                     });
                 return true;
             case 'savi-stop-capture':
-                this._stopCapture().then(sendResponse);
+                this._stopCapture(command.message as SaviStopCaptureMessage, sender).then(sendResponse);
+                return true;
+            case 'savi-get-intent':
+                this._getIntent(sender).then(sendResponse);
                 return true;
             case 'savi-capture-state':
                 this._captureState().then(sendResponse);
@@ -205,6 +211,7 @@ export default class SaviCommandHandler implements CommandHandler {
                 noteId: result.noteId,
                 hadAudio: result.hadAudio,
                 hadImage: result.hadImage,
+                enriched: result.enriched,
             };
         } catch (e) {
             return { ok: false, errorMessage: e instanceof Error ? e.message : String(e) };
@@ -311,10 +318,22 @@ export default class SaviCommandHandler implements CommandHandler {
             };
         }
 
+        // Capture truly started — mark this tab so a later reload's silently
+        // failing auto-start can tell "you were recording" from "never started".
+        await setRecordingIntent(tabId);
         return { started: true, captureId };
     }
 
-    private async _stopCapture(): Promise<SaviStopCaptureResponse> {
+    private async _stopCapture(
+        message: SaviStopCaptureMessage,
+        sender: Browser.runtime.MessageSender
+    ): Promise<SaviStopCaptureResponse> {
+        // A DELIBERATE user stop clears the tab's recording intent so a later
+        // reload doesn't nag to resume. A reload / next-episode / video-end stop
+        // sends clearIntent=false, keeping intent so the guard can prompt.
+        if (message.clearIntent && sender.tab?.id !== undefined) {
+            await clearRecordingIntent(sender.tab.id);
+        }
         try {
             const command: SaviCommand<SaviOffscreenStopMessage> = {
                 sender: 'savi-extension-to-offscreen',
@@ -324,6 +343,10 @@ export default class SaviCommandHandler implements CommandHandler {
         } catch (e) {
             return { stopped: false, errorMessage: e instanceof Error ? e.message : String(e) };
         }
+    }
+
+    private async _getIntent(sender: Browser.runtime.MessageSender): Promise<SaviGetIntentResponse> {
+        return { intentSet: await hasRecordingIntent(sender.tab?.id) };
     }
 
     private async _captureState(): Promise<SaviCaptureState> {
