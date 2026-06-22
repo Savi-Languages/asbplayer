@@ -725,6 +725,11 @@ export class SaviHoverDictionary {
             video.pause();
             this._pausedForPanel = true;
         }
+        // Make sure the daemon has the whole-episode transcript (once per episode) so
+        // the AI explanation + segmentation can ground in the episode gist — not just
+        // the ±2 neighbouring lines — even when you only ever tap (never mine). Awaited
+        // so the FIRST tap of an episode already benefits; a no-op on later taps.
+        await this._maybeSendTranscript(deriveEpisodeId(location.href, document.title)).catch(() => {});
         // AI in-context — fired ONLY here, on a deliberate tap. Far fewer calls than
         // per-hover (so the providers stop rate-limiting), and a slow/failed call
         // degrades to a graceful "unavailable" inside the panel.
