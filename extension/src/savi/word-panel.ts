@@ -5,7 +5,7 @@
 // lives HERE (behind a deliberate tap) so it can never delay or destabilize the
 // hover popup. Inline-styled + appended to document.body, like the toast/popup.
 
-import { SaviDictEntry, SaviKanjiInfo, SaviToken } from './daemon-client';
+import { SaviDictEntry, SaviKanjiFull, SaviKanjiInfo, SaviToken } from './daemon-client';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -77,6 +77,110 @@ function loadingRow(message: string): HTMLDivElement {
     return row;
 }
 
+/** Compact kanji rows (char + keyword + components) — instant, from the dict lookup. */
+function renderCompactKanji(container: HTMLElement, list: SaviKanjiInfo[]) {
+    container.replaceChildren();
+    for (const k of list) {
+        const row = document.createElement('div');
+        Object.assign(row.style, { fontSize: '13.5px', lineHeight: '1.6' });
+        const ch = document.createElement('span');
+        Object.assign(ch.style, { color: '#ffd166', fontSize: '16px', marginRight: '8px' });
+        ch.textContent = k.kanji;
+        row.appendChild(ch);
+        const kw = document.createElement('span');
+        kw.textContent = k.keyword;
+        row.appendChild(kw);
+        if (k.components && k.components.length > 0) {
+            const comp = document.createElement('span');
+            Object.assign(comp.style, { color: '#8a93a0', marginLeft: '6px' });
+            comp.textContent = `(${k.components.join(', ')})`;
+            row.appendChild(comp);
+        }
+        container.appendChild(row);
+    }
+}
+
+/** The full RTK/KANJIDIC view per kanji: big char + keyword, ON readings, example
+ *  compounds with meanings, components, and the user's + community mnemonic stories. */
+function renderFullKanji(container: HTMLElement, list: SaviKanjiFull[]) {
+    container.replaceChildren();
+    list.forEach((k, i) => {
+        const card = document.createElement('div');
+        Object.assign(card.style, { padding: '8px 0', borderTop: i === 0 ? 'none' : '1px solid #222a35' });
+
+        const head = document.createElement('div');
+        Object.assign(head.style, { display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap' });
+        const ch = document.createElement('span');
+        Object.assign(ch.style, { color: '#ffd166', fontSize: '26px', lineHeight: '1' });
+        ch.textContent = k.kanji;
+        head.appendChild(ch);
+        const kw = document.createElement('span');
+        Object.assign(kw.style, { fontWeight: '650', fontSize: '15px' });
+        kw.textContent = k.keyword;
+        head.appendChild(kw);
+        if (k.on && k.on.length > 0) {
+            const on = document.createElement('span');
+            Object.assign(on.style, { color: '#4cc2ff', fontSize: '12.5px' });
+            on.textContent = k.on.join('・');
+            head.appendChild(on);
+        }
+        card.appendChild(head);
+
+        if (k.components && k.components.length > 0) {
+            const comp = document.createElement('div');
+            Object.assign(comp.style, { color: '#8a93a0', fontSize: '12px', margin: '3px 0' });
+            comp.textContent = k.components.join(' · ');
+            card.appendChild(comp);
+        }
+
+        if (k.examples && k.examples.length > 0) {
+            const ex = document.createElement('div');
+            Object.assign(ex.style, { margin: '5px 0', fontSize: '12.5px', lineHeight: '1.6' });
+            for (const e of k.examples.slice(0, 6)) {
+                const row = document.createElement('div');
+                const w = document.createElement('span');
+                Object.assign(w.style, { color: '#fff', fontWeight: '600' });
+                w.textContent = e.reading ? `${e.word}（${e.reading}）` : e.word;
+                row.appendChild(w);
+                if (e.gloss) {
+                    const g = document.createElement('span');
+                    Object.assign(g.style, { color: '#aab2bd', marginLeft: '7px' });
+                    g.textContent = e.gloss;
+                    row.appendChild(g);
+                }
+                ex.appendChild(row);
+            }
+            card.appendChild(ex);
+        }
+
+        const stories: Array<[string, string | null | undefined]> = [
+            ['Your story', k.story],
+            ['Community story', k.communityStory],
+        ];
+        for (const [label, story] of stories) {
+            if (story && story.trim()) {
+                const s = document.createElement('div');
+                Object.assign(s.style, { margin: '4px 0 0', fontSize: '12.5px', lineHeight: '1.55', color: '#d6dbe2' });
+                const lbl = document.createElement('span');
+                Object.assign(lbl.style, {
+                    color: '#8a93a0',
+                    fontSize: '10px',
+                    fontWeight: '700',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.04em',
+                    marginRight: '6px',
+                });
+                lbl.textContent = label;
+                s.appendChild(lbl);
+                s.appendChild(document.createTextNode(story.trim()));
+                card.appendChild(s);
+            }
+        }
+
+        container.appendChild(card);
+    });
+}
+
 export interface WordPanelInput {
     term: string;
     token: SaviToken;
@@ -97,6 +201,7 @@ export class SaviWordPanel {
     private _ctxBody: HTMLDivElement | null = null; // "in this sentence" — the tapped word's AI gloss
     private _breakdownBody: HTMLDivElement | null = null; // whole-line AI breakdown
     private _explainBody: HTMLDivElement | null = null; // the rich "explain like a sensei" note
+    private _kanjiBody: HTMLDivElement | null = null; // kanji section (compact → full RTK view)
 
     /** @param _onClose called when the user dismisses the panel (×) so the owner
      *  can resume the video it paused. */
@@ -111,6 +216,7 @@ export class SaviWordPanel {
         this._ctxBody = null;
         this._breakdownBody = null;
         this._explainBody = null;
+        this._kanjiBody = null;
 
         const head = document.createElement('div');
         Object.assign(head.style, { fontSize: '22px', fontWeight: '700', lineHeight: '1.25' });
@@ -142,27 +248,14 @@ export class SaviWordPanel {
             }
         }
 
-        // Kanji.
+        // Kanji — compact (char + keyword + components) now; setKanji upgrades it to
+        // the full RTK view (readings, examples, mnemonic stories) a beat later.
         if (input.kanji.length > 0) {
             scroll.appendChild(sectionLabel('漢字'));
-            for (const k of input.kanji) {
-                const row = document.createElement('div');
-                Object.assign(row.style, { fontSize: '13.5px', lineHeight: '1.6' });
-                const ch = document.createElement('span');
-                Object.assign(ch.style, { color: '#ffd166', fontSize: '16px', marginRight: '8px' });
-                ch.textContent = k.kanji;
-                row.appendChild(ch);
-                const kw = document.createElement('span');
-                kw.textContent = k.keyword;
-                row.appendChild(kw);
-                if (k.components && k.components.length > 0) {
-                    const comp = document.createElement('span');
-                    Object.assign(comp.style, { color: '#8a93a0', marginLeft: '6px' });
-                    comp.textContent = `(${k.components.join(', ')})`;
-                    row.appendChild(comp);
-                }
-                scroll.appendChild(row);
-            }
+            const kb = document.createElement('div');
+            renderCompactKanji(kb, input.kanji);
+            scroll.appendChild(kb);
+            this._kanjiBody = kb;
         }
 
         // AI in-context (this word, this sentence) — spinner until setContext.
@@ -236,6 +329,14 @@ export class SaviWordPanel {
         }
     }
 
+    /** Upgrade the kanji section from the compact view to the full RTK/KANJIDIC view
+     *  (readings, example compounds, mnemonic stories). Empty input keeps the compact. */
+    setKanji(kanji: SaviKanjiFull[]) {
+        if (this._kanjiBody && kanji.length > 0) {
+            renderFullKanji(this._kanjiBody, kanji);
+        }
+    }
+
     /** Fill the AI sections once the daemon segmentation resolves. `featured` is the
      *  tapped word's contextual reading; `aiTokens` drives the whole-line breakdown.
      *  Both null ⇒ the AI call failed/was unavailable (graceful, rule-based stands). */
@@ -306,6 +407,7 @@ export class SaviWordPanel {
         this._ctxBody = null;
         this._breakdownBody = null;
         this._explainBody = null;
+        this._kanjiBody = null;
     }
 
     private _ensure(): HTMLDivElement {

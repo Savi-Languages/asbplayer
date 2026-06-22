@@ -12,7 +12,7 @@
 //   'savi-extension-to-video'   background → content script
 
 import { SegmentMeta } from './segmenter';
-import { CaptureFinishInfo, SaviDictEntry, SaviKanjiInfo, SaviToken } from './daemon-client';
+import { CaptureFinishInfo, SaviDictEntry, SaviKanjiFull, SaviKanjiInfo, SaviToken } from './daemon-client';
 
 export interface SaviRequester {
     readonly tabId: number;
@@ -141,6 +141,18 @@ export interface SaviExplainWordMessage {
 
 export interface SaviExplainWordResponse {
     readonly explanation: string | null;
+}
+
+// Full per-kanji breakdown (readings, RTK keyword/components/stories, examples)
+// for the tap panel's rich kanji section.
+export interface SaviKanjiMessage {
+    readonly command: 'savi-kanji';
+    readonly lang: string;
+    readonly term: string;
+}
+
+export interface SaviKanjiResponse {
+    readonly kanji: SaviKanjiFull[];
 }
 
 export interface SaviTokenizeResponse {

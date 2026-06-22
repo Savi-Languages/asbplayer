@@ -9,7 +9,7 @@
 // popup. Daemon calls go through the background (MV3 blocks cross-origin
 // fetches from content scripts).
 
-import { SaviDictEntry, SaviKanjiInfo, SaviToken } from './daemon-client';
+import { SaviDictEntry, SaviKanjiFull, SaviKanjiInfo, SaviToken } from './daemon-client';
 import {
     SaviCaptureFrameMessage,
     SaviCaptureFrameResponse,
@@ -24,6 +24,8 @@ import {
     SaviSegmentLineResponse,
     SaviExplainWordMessage,
     SaviExplainWordResponse,
+    SaviKanjiMessage,
+    SaviKanjiResponse,
     SaviTokenizeMessage,
     SaviTokenizeResponse,
 } from './messages';
@@ -113,6 +115,7 @@ type SaviVideoMessage =
     | SaviTokenizeMessage
     | SaviSegmentLineMessage
     | SaviExplainWordMessage
+    | SaviKanjiMessage
     | SaviDictMessage
     | SaviMineLineMessage
     | SaviEpisodeTranscriptMessage
@@ -393,6 +396,7 @@ export class SaviHoverDictionary {
     // null = the daemon returned no AI segmentation for this line → use rule-based.
     private readonly _segmentCache = new Map<string, SaviToken[] | null>();
     private readonly _explainCache = new Map<string, string | null>();
+    private readonly _kanjiCache = new Map<string, SaviKanjiFull[]>();
     private _wordPanel: SaviWordPanel | null = null;
     private _panelOpen = false; // the tap study panel is up → keep the video paused
     private _pausedForPanel = false; // WE paused the video for the panel, so WE resume
@@ -643,6 +647,23 @@ export class SaviHoverDictionary {
         return explanation;
     }
 
+    /** Full kanji breakdown for a word's kanji (cached). Offline RTK/KANJIDIC data
+     *  — empty on no-daemon/error. */
+    private async _lookupKanji(term: string): Promise<SaviKanjiFull[]> {
+        const cached = this._kanjiCache.get(term);
+        if (cached !== undefined) {
+            return cached;
+        }
+        const res = await sendToBackground<SaviKanjiResponse>({ command: 'savi-kanji', lang: LANG, term });
+        const kanji = res.kanji ?? [];
+        if (this._kanjiCache.size >= TOKENIZE_CACHE_MAX) {
+            const oldest = this._kanjiCache.keys().next().value;
+            if (oldest !== undefined) this._kanjiCache.delete(oldest);
+        }
+        this._kanjiCache.set(term, kanji);
+        return kanji;
+    }
+
     /** The ±2 subtitle lines around `text` (best-effort), for segmentation context. */
     private _neighborsOf(text: string): { prevLines: string[]; nextLines: string[] } {
         const subs = this._subtitleProvider();
@@ -724,6 +745,11 @@ export class SaviHoverDictionary {
         this._explainWord(text, term, span.token.reading)
             .then((explanation) => panel.setExplanation(explanation))
             .catch(() => panel.setExplanation(null));
+        // Full RTK/KANJIDIC kanji breakdown (readings, components, mnemonic stories,
+        // example compounds) — upgrades the panel's compact kanji section.
+        this._lookupKanji(term)
+            .then((kanji) => panel.setKanji(kanji))
+            .catch(() => {});
     }
 
     private _ensureWordPanel(): SaviWordPanel {

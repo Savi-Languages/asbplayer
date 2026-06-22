@@ -215,6 +215,36 @@ export const lookupDict = async (config: SaviDaemonConfig, lang: string, term: s
     return { entries: body.entries ?? [], kanji: body.kanji ?? [] };
 };
 
+export interface SaviKanjiExample {
+    readonly word: string;
+    readonly reading: string;
+    readonly gloss: string;
+}
+
+/** Full per-kanji breakdown: KANJIDIC on/kun readings + meanings, RTK keyword,
+ *  primitive components, the user's + community mnemonic stories, and common
+ *  example compounds. The rich kanji view in the tap panel. */
+export interface SaviKanjiFull {
+    readonly kanji: string;
+    readonly keyword: string;
+    readonly on: string[];
+    readonly kun: string[];
+    readonly meanings: string[];
+    readonly components: string[];
+    readonly story?: string | null;
+    readonly communityStory?: string | null;
+    readonly examples: SaviKanjiExample[];
+}
+
+/** Full kanji breakdown for every kanji in `term` (readings, RTK keyword +
+ *  components + stories, example words). Heavier than the dict lookup's lean kanji,
+ *  so it's a separate call the tap panel makes; empty when nothing matches. */
+export const lookupKanji = async (config: SaviDaemonConfig, lang: string, term: string): Promise<SaviKanjiFull[]> => {
+    const path = `/api/kanji/${encodeURIComponent(lang)}/${encodeURIComponent(term)}`;
+    const body = await request(config, path, { method: 'GET' });
+    return body.kanji ?? [];
+};
+
 // ── Mine to Anki ────────────────────────────────────────────────────────
 
 export interface MineLineResult {

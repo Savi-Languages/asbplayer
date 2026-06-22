@@ -30,6 +30,8 @@ import {
     SaviSegmentLineResponse,
     SaviExplainWordMessage,
     SaviExplainWordResponse,
+    SaviKanjiMessage,
+    SaviKanjiResponse,
     SaviStartCaptureMessage,
     SaviStartCaptureResponse,
     SaviStopCaptureMessage,
@@ -47,6 +49,7 @@ import {
     SaviDaemonConfig,
     segmentLine,
     explainWord,
+    lookupKanji,
     startCapture,
     tokenize,
 } from './daemon-client';
@@ -115,6 +118,11 @@ export default class SaviCommandHandler implements CommandHandler {
                 this._explain(command.message as SaviExplainWordMessage)
                     .then(sendResponse)
                     .catch(() => sendResponse({ explanation: null }));
+                return true;
+            case 'savi-kanji':
+                this._kanji(command.message as SaviKanjiMessage)
+                    .then(sendResponse)
+                    .catch(() => sendResponse({ kanji: [] }));
                 return true;
             case 'savi-dict':
                 this._lookupDict(command.message as SaviDictMessage)
@@ -224,6 +232,21 @@ export default class SaviCommandHandler implements CommandHandler {
             return { explanation };
         } catch (e) {
             return { explanation: null };
+        }
+    }
+
+    // Full kanji breakdown for the tap panel (offline KANJIDIC/RTK data — no LLM,
+    // so it's not gated on the AI setting). Empty on no-daemon/error.
+    private async _kanji(message: SaviKanjiMessage): Promise<SaviKanjiResponse> {
+        const config = await this._daemonConfig();
+        if (!config) {
+            return { kanji: [] };
+        }
+        try {
+            const kanji = await lookupKanji(config, message.lang, message.term);
+            return { kanji };
+        } catch (e) {
+            return { kanji: [] };
         }
     }
 
