@@ -181,6 +181,32 @@ export const segmentLine = async (
     return { ai: body.ai === true, tokens: body.tokens ?? [] };
 };
 
+/** A professor-style explanation of one word in the context of its sentence — the
+ *  detailed "in this sentence" teaching note for the tap panel. `null` when no
+ *  provider is configured / every provider fails. */
+export const explainWord = async (
+    config: SaviDaemonConfig,
+    lang: string,
+    term: string,
+    text: string,
+    opts?: { reading?: string; prevLines?: string[]; nextLines?: string[]; episodeId?: string }
+): Promise<string | null> => {
+    const body = await request(
+        config,
+        '/api/explain',
+        jsonInit({
+            lang,
+            term,
+            reading: opts?.reading,
+            text,
+            prevLines: opts?.prevLines ?? [],
+            nextLines: opts?.nextLines ?? [],
+            episodeId: opts?.episodeId,
+        })
+    );
+    return typeof body.explanation === 'string' && body.explanation.trim().length > 0 ? body.explanation : null;
+};
+
 /** JP→EN dictionary lookup + per-kanji breakdown; both empty when nothing
  *  matches or no dictionary is loaded. */
 export const lookupDict = async (config: SaviDaemonConfig, lang: string, term: string): Promise<SaviDictResult> => {

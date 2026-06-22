@@ -22,6 +22,8 @@ import {
     SaviMineLineResponse,
     SaviSegmentLineMessage,
     SaviSegmentLineResponse,
+    SaviExplainWordMessage,
+    SaviExplainWordResponse,
     SaviTokenizeMessage,
     SaviTokenizeResponse,
 } from './messages';
@@ -110,6 +112,7 @@ export function rangeForCharSpan(root: HTMLElement, start: number, end: number):
 type SaviVideoMessage =
     | SaviTokenizeMessage
     | SaviSegmentLineMessage
+    | SaviExplainWordMessage
     | SaviDictMessage
     | SaviMineLineMessage
     | SaviEpisodeTranscriptMessage
@@ -389,6 +392,7 @@ export class SaviHoverDictionary {
     private readonly _tokenizeCache = new Map<string, SaviToken[]>();
     // null = the daemon returned no AI segmentation for this line → use rule-based.
     private readonly _segmentCache = new Map<string, SaviToken[] | null>();
+    private readonly _explainCache = new Map<string, string | null>();
     private _wordPanel: SaviWordPanel | null = null;
     private _panelOpen = false; // the tap study panel is up → keep the video paused
     private _pausedForPanel = false; // WE paused the video for the panel, so WE resume
@@ -611,6 +615,34 @@ export class SaviHoverDictionary {
         return tokens;
     }
 
+    /** Focused professor-style explanation of a word in its sentence (cached). null
+     *  when the daemon falls back (feature off / no provider / all fail). */
+    private async _explainWord(text: string, term: string, reading?: string): Promise<string | null> {
+        const cacheKey = `${term} ${text}`;
+        const cached = this._explainCache.get(cacheKey);
+        if (cached !== undefined) {
+            return cached;
+        }
+        const { prevLines, nextLines } = this._neighborsOf(text);
+        const res = await sendToBackground<SaviExplainWordResponse>({
+            command: 'savi-explain-word',
+            lang: LANG,
+            term,
+            reading,
+            text,
+            prevLines,
+            nextLines,
+            episodeId: deriveEpisodeId(location.href, document.title),
+        });
+        const explanation = res.explanation ?? null;
+        if (this._explainCache.size >= TOKENIZE_CACHE_MAX) {
+            const oldest = this._explainCache.keys().next().value;
+            if (oldest !== undefined) this._explainCache.delete(oldest);
+        }
+        this._explainCache.set(cacheKey, explanation);
+        return explanation;
+    }
+
     /** The ±2 subtitle lines around `text` (best-effort), for segmentation context. */
     private _neighborsOf(text: string): { prevLines: string[]; nextLines: string[] } {
         const subs = this._subtitleProvider();
@@ -687,6 +719,11 @@ export class SaviHoverDictionary {
                 panel.setContext(featured, aiTokens);
             })
             .catch(() => panel.setContext(null, null));
+        // In parallel, fetch the detailed "explain like a sensei" note for the
+        // tapped word and fill the panel's teaching section when it lands.
+        this._explainWord(text, term, span.token.reading)
+            .then((explanation) => panel.setExplanation(explanation))
+            .catch(() => panel.setExplanation(null));
     }
 
     private _ensureWordPanel(): SaviWordPanel {

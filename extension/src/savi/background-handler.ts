@@ -28,6 +28,8 @@ import {
     SaviGetIntentResponse,
     SaviSegmentLineMessage,
     SaviSegmentLineResponse,
+    SaviExplainWordMessage,
+    SaviExplainWordResponse,
     SaviStartCaptureMessage,
     SaviStartCaptureResponse,
     SaviStopCaptureMessage,
@@ -44,6 +46,7 @@ import {
     postSubtitles,
     SaviDaemonConfig,
     segmentLine,
+    explainWord,
     startCapture,
     tokenize,
 } from './daemon-client';
@@ -107,6 +110,11 @@ export default class SaviCommandHandler implements CommandHandler {
                 this._segment(command.message as SaviSegmentLineMessage)
                     .then(sendResponse)
                     .catch(() => sendResponse({ ai: false, tokens: [] }));
+                return true;
+            case 'savi-explain-word':
+                this._explain(command.message as SaviExplainWordMessage)
+                    .then(sendResponse)
+                    .catch(() => sendResponse({ explanation: null }));
                 return true;
             case 'savi-dict':
                 this._lookupDict(command.message as SaviDictMessage)
@@ -191,6 +199,31 @@ export default class SaviCommandHandler implements CommandHandler {
             return result;
         } catch (e) {
             return (await getCachedSegment(message.lang, message.text)) ?? { ai: false, tokens: [] };
+        }
+    }
+
+    // Professor-style in-context explanation of one word (the tap panel's teaching
+    // note). Gated on saviAiSegmentation; null when off / no daemon / all fail. The
+    // daemon disk-caches explanations, so a repeat is instant without an LLM call.
+    private async _explain(message: SaviExplainWordMessage): Promise<SaviExplainWordResponse> {
+        const { saviAiSegmentation } = await this._settings.get(['saviAiSegmentation']);
+        if (!saviAiSegmentation) {
+            return { explanation: null };
+        }
+        const config = await this._daemonConfig();
+        if (!config) {
+            return { explanation: null };
+        }
+        try {
+            const explanation = await explainWord(config, message.lang, message.term, message.text, {
+                reading: message.reading,
+                prevLines: message.prevLines,
+                nextLines: message.nextLines,
+                episodeId: message.episodeId,
+            });
+            return { explanation };
+        } catch (e) {
+            return { explanation: null };
         }
     }
 

@@ -126,6 +126,23 @@ export interface SaviSegmentLineResponse {
     readonly tokens: SaviToken[];
 }
 
+// Professor-style in-context explanation of ONE word — the tap panel's "in this
+// sentence" teaching note. null = no provider / every provider failed.
+export interface SaviExplainWordMessage {
+    readonly command: 'savi-explain-word';
+    readonly lang: string;
+    readonly term: string;
+    readonly reading?: string;
+    readonly text: string;
+    readonly prevLines?: string[];
+    readonly nextLines?: string[];
+    readonly episodeId?: string;
+}
+
+export interface SaviExplainWordResponse {
+    readonly explanation: string | null;
+}
+
 export interface SaviTokenizeResponse {
     readonly tokens: SaviToken[];
 }

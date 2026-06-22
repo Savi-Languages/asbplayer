@@ -96,6 +96,7 @@ export class SaviWordPanel {
     private _scroll: HTMLDivElement | null = null;
     private _ctxBody: HTMLDivElement | null = null; // "in this sentence" — the tapped word's AI gloss
     private _breakdownBody: HTMLDivElement | null = null; // whole-line AI breakdown
+    private _explainBody: HTMLDivElement | null = null; // the rich "explain like a sensei" note
 
     /** @param _onClose called when the user dismisses the panel (×) so the owner
      *  can resume the video it paused. */
@@ -109,6 +110,7 @@ export class SaviWordPanel {
         scroll.replaceChildren();
         this._ctxBody = null;
         this._breakdownBody = null;
+        this._explainBody = null;
 
         const head = document.createElement('div');
         Object.assign(head.style, { fontSize: '22px', fontWeight: '700', lineHeight: '1.25' });
@@ -171,6 +173,13 @@ export class SaviWordPanel {
         scroll.appendChild(ctx);
         this._ctxBody = ctx;
 
+        // The detailed, professor-style teaching note — spinner until setExplanation.
+        const explain = document.createElement('div');
+        Object.assign(explain.style, { margin: '4px 0 6px', lineHeight: '1.65', fontSize: '13.5px', color: '#d6dbe2' });
+        explain.appendChild(loadingRow('asking the sensei…'));
+        scroll.appendChild(explain);
+        this._explainBody = explain;
+
         // Whole-line breakdown — spinner until setContext.
         scroll.appendChild(sectionLabel('Sentence breakdown'));
         const bd = document.createElement('div');
@@ -204,6 +213,27 @@ export class SaviWordPanel {
 
         el.style.display = 'flex';
         scroll.scrollTop = 0;
+    }
+
+    /** Fill the detailed teaching note (the professor-style in-context explanation).
+     *  null ⇒ no provider / all fail — show a graceful note; the dictionary stands. */
+    setExplanation(text: string | null) {
+        if (!this._explainBody) {
+            return;
+        }
+        this._explainBody.replaceChildren();
+        if (text && text.trim()) {
+            Object.assign(this._explainBody.style, { color: '#d6dbe2', fontStyle: 'normal', fontSize: '13.5px' });
+            for (const para of text.trim().split(/\n{2,}/)) {
+                const p = document.createElement('p');
+                Object.assign(p.style, { margin: '0 0 7px' });
+                p.textContent = para.trim();
+                this._explainBody.appendChild(p);
+            }
+        } else {
+            Object.assign(this._explainBody.style, { color: '#93a0ad', fontStyle: 'italic', fontSize: '13px' });
+            this._explainBody.textContent = 'Detailed explanation unavailable right now (provider busy).';
+        }
     }
 
     /** Fill the AI sections once the daemon segmentation resolves. `featured` is the
@@ -275,6 +305,7 @@ export class SaviWordPanel {
         this._scroll = null;
         this._ctxBody = null;
         this._breakdownBody = null;
+        this._explainBody = null;
     }
 
     private _ensure(): HTMLDivElement {
