@@ -109,6 +109,23 @@ export interface SaviTokenizeMessage {
     readonly text: string;
 }
 
+// AI context-aware segmentation of one line (resolves でも-conjunction vs で+も,
+// は-topic vs 葉, …). A superset of tokenize: tokens still concatenate back to the
+// line; AI chunks carry gloss/grammar. ai:false = rule-based fallback.
+export interface SaviSegmentLineMessage {
+    readonly command: 'savi-segment-line';
+    readonly lang: string;
+    readonly text: string;
+    readonly prevLines?: string[];
+    readonly nextLines?: string[];
+    readonly episodeId?: string;
+}
+
+export interface SaviSegmentLineResponse {
+    readonly ai: boolean;
+    readonly tokens: SaviToken[];
+}
+
 export interface SaviTokenizeResponse {
     readonly tokens: SaviToken[];
 }

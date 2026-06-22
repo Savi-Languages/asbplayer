@@ -26,6 +26,8 @@ import {
     SaviMineLineResponse,
     SaviRequestStartMessage,
     SaviGetIntentResponse,
+    SaviSegmentLineMessage,
+    SaviSegmentLineResponse,
     SaviStartCaptureMessage,
     SaviStartCaptureResponse,
     SaviStopCaptureMessage,
@@ -41,10 +43,18 @@ import {
     postEpisodeTranscript,
     postSubtitles,
     SaviDaemonConfig,
+    segmentLine,
     startCapture,
     tokenize,
 } from './daemon-client';
-import { getCachedDict, getCachedTokens, putCachedDict, putCachedTokens } from './persistent-cache';
+import {
+    getCachedDict,
+    getCachedSegment,
+    getCachedTokens,
+    putCachedDict,
+    putCachedSegment,
+    putCachedTokens,
+} from './persistent-cache';
 import { captureVisibleTab } from '@/services/capture-visible-tab';
 
 export default class SaviCommandHandler implements CommandHandler {
@@ -92,6 +102,11 @@ export default class SaviCommandHandler implements CommandHandler {
                 this._tokenize(command.message as SaviTokenizeMessage)
                     .then(sendResponse)
                     .catch(() => sendResponse({ tokens: [] }));
+                return true;
+            case 'savi-segment-line':
+                this._segment(command.message as SaviSegmentLineMessage)
+                    .then(sendResponse)
+                    .catch(() => sendResponse({ ai: false, tokens: [] }));
                 return true;
             case 'savi-dict':
                 this._lookupDict(command.message as SaviDictMessage)
@@ -149,6 +164,33 @@ export default class SaviCommandHandler implements CommandHandler {
             // Daemon unreachable — fall back to the persistent cache so a
             // previously-seen line still hovers offline.
             return { tokens: (await getCachedTokens(message.lang, message.text)) ?? [] };
+        }
+    }
+
+    // AI context-aware segmentation. Gated on the `saviAiSegmentation` setting:
+    // off → empty so the content script keeps its rule-based tokens. Cache-first
+    // (a previously AI-segmented line still upgrades while the daemon is offline).
+    private async _segment(message: SaviSegmentLineMessage): Promise<SaviSegmentLineResponse> {
+        const { saviAiSegmentation } = await this._settings.get(['saviAiSegmentation']);
+        if (!saviAiSegmentation) {
+            return { ai: false, tokens: [] };
+        }
+        const config = await this._daemonConfig();
+        if (!config) {
+            return (await getCachedSegment(message.lang, message.text)) ?? { ai: false, tokens: [] };
+        }
+        try {
+            const result = await segmentLine(config, message.lang, message.text, {
+                prevLines: message.prevLines,
+                nextLines: message.nextLines,
+                episodeId: message.episodeId,
+            });
+            if (result.ai && result.tokens.length > 0) {
+                await putCachedSegment(message.lang, message.text, result.ai, result.tokens);
+            }
+            return result;
+        } catch (e) {
+            return (await getCachedSegment(message.lang, message.text)) ?? { ai: false, tokens: [] };
         }
     }
 

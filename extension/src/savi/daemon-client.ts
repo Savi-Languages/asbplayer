@@ -115,6 +115,10 @@ export interface SaviToken {
     readonly text: string;
     readonly reading?: string;
     readonly lemma?: string;
+    // Present only on AI-segmented chunks: the meaning IN THIS sentence + the
+    // grammatical role here (e.g. でも → "but/however" / "conjunction").
+    readonly gloss?: string;
+    readonly grammar?: string;
 }
 
 export interface SaviDictSense {
@@ -146,6 +150,35 @@ export interface SaviDictResult {
 export const tokenize = async (config: SaviDaemonConfig, lang: string, text: string): Promise<SaviToken[]> => {
     const body = await request(config, '/api/tokenize', jsonInit({ lang, text }));
     return body.tokens ?? [];
+};
+
+export interface SaviSegmentResult {
+    readonly ai: boolean;
+    readonly tokens: SaviToken[];
+}
+
+/** AI context-aware segmentation of a line (resolves でも-conjunction vs で+も, は-topic
+ *  vs 葉, …). A superset of `tokenize`: tokens still concatenate back to the line, and
+ *  AI chunks carry `gloss`/`grammar`. `ai:false` = the daemon fell back to the rule-based
+ *  split (no provider / offline / a split that wouldn't reconcile with the line). */
+export const segmentLine = async (
+    config: SaviDaemonConfig,
+    lang: string,
+    text: string,
+    opts?: { prevLines?: string[]; nextLines?: string[]; episodeId?: string }
+): Promise<SaviSegmentResult> => {
+    const body = await request(
+        config,
+        '/api/segment',
+        jsonInit({
+            lang,
+            text,
+            prevLines: opts?.prevLines ?? [],
+            nextLines: opts?.nextLines ?? [],
+            episodeId: opts?.episodeId,
+        })
+    );
+    return { ai: body.ai === true, tokens: body.tokens ?? [] };
 };
 
 /** JP→EN dictionary lookup + per-kanji breakdown; both empty when nothing

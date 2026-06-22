@@ -87,6 +87,7 @@ const MiscSettingTab: React.FC<Props> = ({
         saviDaemonToken,
         saviHideNativeSubtitles,
         saviRecordingGuard,
+        saviAiSegmentation,
         subtitleAboveThumbnail,
         thumbnailPreview,
     } = settings;
@@ -473,6 +474,16 @@ const MiscSettingTab: React.FC<Props> = ({
                         />
                     }
                     label={'Warn me when recording stops (e.g. after a reload)'}
+                    labelPlacement="start"
+                />
+                <SwitchLabelWithHoverEffect
+                    control={
+                        <Switch
+                            checked={saviAiSegmentation}
+                            onChange={(e) => onSettingChanged('saviAiSegmentation', e.target.checked)}
+                        />
+                    }
+                    label={'AI context-aware word splitting (experimental; needs an LLM key on the daemon)'}
                     labelPlacement="start"
                 />
                 <SettingsTextField

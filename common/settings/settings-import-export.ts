@@ -562,6 +562,9 @@ const settingsSchema = {
         saviRecordingGuard: {
             type: 'boolean',
         },
+        saviAiSegmentation: {
+            type: 'boolean',
+        },
         pauseOnHoverMode: {
             type: 'number',
         },

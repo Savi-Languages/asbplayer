@@ -20,11 +20,14 @@ import {
     SaviEpisodeTranscriptResponse,
     SaviMineLineMessage,
     SaviMineLineResponse,
+    SaviSegmentLineMessage,
+    SaviSegmentLineResponse,
     SaviTokenizeMessage,
     SaviTokenizeResponse,
 } from './messages';
 import { serializeToSrt, SerializableSubtitle } from './subtitle-serializer';
 import { deriveEpisodeId } from './episode';
+import { SaviSegmentPanel } from './segment-panel';
 import { friendlySaviError } from './savi-errors';
 import { cropAndResize } from '@project/common/src/image-transformer';
 
@@ -106,6 +109,7 @@ export function rangeForCharSpan(root: HTMLElement, start: number, end: number):
 
 type SaviVideoMessage =
     | SaviTokenizeMessage
+    | SaviSegmentLineMessage
     | SaviDictMessage
     | SaviMineLineMessage
     | SaviEpisodeTranscriptMessage
@@ -218,12 +222,28 @@ const MINE_BTN_STYLE: Partial<CSSStyleDeclaration> = {
     cursor: 'pointer',
 };
 
+// Secondary button — opens the whole-line AI breakdown panel.
+const BREAKDOWN_BTN_STYLE: Partial<CSSStyleDeclaration> = {
+    display: 'block',
+    width: '100%',
+    marginTop: '6px',
+    padding: '5px 12px',
+    fontSize: '12.5px',
+    fontWeight: '600',
+    color: '#cfd6df',
+    background: 'transparent',
+    border: '1px solid #3a424e',
+    borderRadius: '7px',
+    cursor: 'pointer',
+};
+
 function renderEntry(
     term: string,
     token: SaviToken,
     entries: SaviDictEntry[],
     kanji: SaviKanjiInfo[],
-    onMine: (button: HTMLButtonElement) => void
+    onMine: (button: HTMLButtonElement) => void,
+    onBreakdown: () => void
 ): HTMLElement {
     const root = document.createElement('div');
 
@@ -242,6 +262,15 @@ function renderEntry(
         head.appendChild(reading);
     }
     root.appendChild(head);
+
+    // Context caption — only AI-segmented chunks carry a contextual gloss/grammar
+    // (でも → "but/however · conjunction"). Sits above the dictionary senses.
+    if (token.gloss || token.grammar) {
+        const ctx = document.createElement('div');
+        Object.assign(ctx.style, { fontSize: '12.5px', color: '#9fd1a0', margin: '0 0 6px', lineHeight: '1.4' });
+        ctx.textContent = `▸ ${[token.gloss, token.grammar].filter(Boolean).join(' · ')}`;
+        root.appendChild(ctx);
+    }
 
     for (const entry of entries.slice(0, 2)) {
         const ol = document.createElement('ol');
@@ -308,6 +337,19 @@ function renderEntry(
     mine.addEventListener('click', trigger);
     root.appendChild(mine);
 
+    // "Breakdown" — opens the whole-line AI segmentation panel.
+    const breakdown = document.createElement('button');
+    breakdown.textContent = '🔍 Breakdown';
+    Object.assign(breakdown.style, BREAKDOWN_BTN_STYLE);
+    const bdTrigger = (e: Event) => {
+        e.stopPropagation();
+        e.preventDefault();
+        onBreakdown();
+    };
+    breakdown.addEventListener('pointerdown', bdTrigger);
+    breakdown.addEventListener('click', bdTrigger);
+    root.appendChild(breakdown);
+
     return root;
 }
 
@@ -352,6 +394,9 @@ function positionPopup(popup: HTMLDivElement, arrow: HTMLDivElement, word: DOMRe
  *  cursor and shows a daemon-backed dictionary popup for it. */
 export class SaviHoverDictionary {
     private readonly _tokenizeCache = new Map<string, SaviToken[]>();
+    // null = the daemon returned no AI segmentation for this line → use rule-based.
+    private readonly _segmentCache = new Map<string, SaviToken[] | null>();
+    private _segmentPanel: SaviSegmentPanel | null = null;
     private readonly _dictCache = new Map<string, SaviDictResponse>();
     private _popup: HTMLDivElement | null = null;
     private _popupContent: HTMLDivElement | null = null;
@@ -389,6 +434,8 @@ export class SaviHoverDictionary {
         this._bound = false;
         document.removeEventListener('mousemove', this._onMouseMove, true);
         this._clear();
+        this._segmentPanel?.destroy();
+        this._segmentPanel = null;
     }
 
     /** True when (x, y) is over savi's own hover surfaces — the dictionary popup
@@ -450,13 +497,43 @@ export class SaviHoverDictionary {
             this._clear();
             return;
         }
+        // Render instantly with the rule-based tokens — no added latency.
         const tokens = await this._tokenize(text);
         if (generation !== this._generation) {
             return; // a newer hover (or a clear) superseded this one
         }
+        await this._applyTokens(line, text, offset, x, y, tokens, generation, false);
+
+        // Progressive upgrade: ask the daemon for an AI segmentation (cached after
+        // the first hover of a line). When it lands and this hover is still current,
+        // re-box + re-resolve with the context-aware chunks (でも → "but", not で).
+        this._segment(text)
+            .then((aiTokens) => {
+                if (aiTokens && generation === this._generation) {
+                    void this._applyTokens(line, text, offset, x, y, aiTokens, generation, true);
+                }
+            })
+            .catch(() => {});
+    }
+
+    /** Box the token at `offset` and show its popup. `ai` forces a re-render even
+     *  when the term is unchanged (so the AI upgrade can add the contextual gloss),
+     *  and never clears the existing render if the AI mapping lands oddly. */
+    private async _applyTokens(
+        line: HTMLElement,
+        text: string,
+        offset: number,
+        x: number,
+        y: number,
+        tokens: SaviToken[],
+        generation: number,
+        ai: boolean
+    ) {
         const span = tokenSpanAtOffset(tokens, offset);
         if (!span || !JAPANESE.test(span.token.text)) {
-            this._clear(); // between words / on whitespace / punctuation
+            if (!ai) {
+                this._clear(); // between words / on whitespace / punctuation
+            }
             return;
         }
 
@@ -470,10 +547,10 @@ export class SaviHoverDictionary {
             this._hideHighlight();
         }
 
-        // Look up the dictionary form — and fall back to the surface so words
-        // without a lemma (しかし, そこ, 東京) get defined instead of skipped.
+        // Look up the dictionary form — fall back to the surface so words without
+        // a lemma (しかし, そこ, 東京) get defined instead of skipped.
         const term = lookupTermFor(span.token);
-        if (term === this._currentTerm) {
+        if (!ai && term === this._currentTerm) {
             return; // already showing this word's definition
         }
         const result = await this._lookupDict(term);
@@ -494,7 +571,8 @@ export class SaviHoverDictionary {
                 span.token,
                 result.entries,
                 result.kanji,
-                (button) => void this._mine(text, span.token, term, button)
+                (button) => void this._mine(text, span.token, term, button),
+                () => void this._openBreakdown(text)
             )
         );
         popup.style.display = 'block';
@@ -517,6 +595,59 @@ export class SaviHoverDictionary {
         }
         this._tokenizeCache.set(text, tokens);
         return tokens;
+    }
+
+    /** AI segmentation for a line (cached). `null` when the daemon falls back to
+     *  rule-based (feature off / no provider / offline / a split that wouldn't
+     *  reconcile) — the caller then keeps the rule-based render. */
+    private async _segment(text: string): Promise<SaviToken[] | null> {
+        const cached = this._segmentCache.get(text);
+        if (cached !== undefined) {
+            return cached;
+        }
+        const { prevLines, nextLines } = this._neighborsOf(text);
+        const res = await sendToBackground<SaviSegmentLineResponse>({
+            command: 'savi-segment-line',
+            lang: LANG,
+            text,
+            prevLines,
+            nextLines,
+            episodeId: deriveEpisodeId(location.href, document.title),
+        });
+        const tokens = res.ai && res.tokens.length > 0 ? res.tokens : null;
+        if (this._segmentCache.size >= TOKENIZE_CACHE_MAX) {
+            const oldest = this._segmentCache.keys().next().value;
+            if (oldest !== undefined) this._segmentCache.delete(oldest);
+        }
+        this._segmentCache.set(text, tokens);
+        return tokens;
+    }
+
+    /** The ±2 subtitle lines around `text` (best-effort), for segmentation context. */
+    private _neighborsOf(text: string): { prevLines: string[]; nextLines: string[] } {
+        const subs = this._subtitleProvider();
+        const idx = subs.findIndex((s) => (s.text ?? '').replace(/\s+$/, '') === text);
+        if (idx < 0) {
+            return { prevLines: [], nextLines: [] };
+        }
+        return {
+            prevLines: subs.slice(Math.max(0, idx - 2), idx).map((s) => s.text),
+            nextLines: subs.slice(idx + 1, idx + 3).map((s) => s.text),
+        };
+    }
+
+    /** Open the whole-line breakdown panel (AI chunks, else rule-based tokens). */
+    private async _openBreakdown(text: string) {
+        const aiTokens = await this._segment(text).catch(() => null);
+        const tokens = aiTokens ?? (await this._tokenize(text));
+        this._ensureSegmentPanel().show(text, tokens);
+    }
+
+    private _ensureSegmentPanel(): SaviSegmentPanel {
+        if (!this._segmentPanel) {
+            this._segmentPanel = new SaviSegmentPanel();
+        }
+        return this._segmentPanel;
     }
 
     /** Mine the hovered line + word into Anki. The daemon derives the episode
