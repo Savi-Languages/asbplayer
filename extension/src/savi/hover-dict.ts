@@ -681,8 +681,13 @@ export class SaviHoverDictionary {
         }
         // Show the popup when there's anything useful — a definition OR just a
         // kanji breakdown (so even an unknown compound still teaches its kanji).
+        // Only the BASE render may hide on an empty result. An AI/loading re-resolve
+        // to an entry-less term (the AI's lemma isn't always a JMdict headword —
+        // お医者様, にとって) must KEEP the base popup, never blank it out.
         if (result.entries.length === 0 && result.kanji.length === 0) {
-            this._hidePopup();
+            if (!ai && !loading) {
+                this._hidePopup();
+            }
             return;
         }
         this._currentTerm = term;
