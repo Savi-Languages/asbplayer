@@ -483,7 +483,7 @@ const MiscSettingTab: React.FC<Props> = ({
                             onChange={(e) => onSettingChanged('saviAiSegmentation', e.target.checked)}
                         />
                     }
-                    label={'AI context-aware word splitting (needs an LLM key on the daemon)'}
+                    label={'AI in-context definitions when you tap a word (needs an LLM key on the daemon)'}
                     labelPlacement="start"
                 />
                 <SettingsTextField

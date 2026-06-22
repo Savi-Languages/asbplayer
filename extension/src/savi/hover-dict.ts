@@ -27,7 +27,7 @@ import {
 } from './messages';
 import { serializeToSrt, SerializableSubtitle } from './subtitle-serializer';
 import { deriveEpisodeId } from './episode';
-import { SaviSegmentPanel } from './segment-panel';
+import { SaviWordPanel, WordContext } from './word-panel';
 import { friendlySaviError } from './savi-errors';
 import { cropAndResize } from '@project/common/src/image-transformer';
 
@@ -48,9 +48,6 @@ const SHOT_MAX_WIDTH = 960; // cap the mined card's screenshot width (height sca
 const HIDE_GRACE_MS = 250;
 const TOKENIZE_CACHE_MAX = 64;
 const DICT_CACHE_MAX = 300;
-// Wait this long before showing the "AI in-context definition" loading caption.
-// A cached segmentation resolves well under this, so re-hovers never flash it.
-const AI_LOADER_DELAY_MS = 140;
 
 /** The token whose `[start, start+len)` range contains `offset`, plus that
  *  span — tokens concatenate back to the line (the daemon emits gap tokens for
@@ -240,109 +237,13 @@ const BREAKDOWN_BTN_STYLE: Partial<CSSStyleDeclaration> = {
     cursor: 'pointer',
 };
 
-const SVG_NS = 'http://www.w3.org/2000/svg';
-
-/** A tiny SMIL-animated spinner — no CSS/keyframes dependency, animates in any DOM. */
-function aiSpinner(): SVGSVGElement {
-    const svg = document.createElementNS(SVG_NS, 'svg');
-    svg.setAttribute('width', '12');
-    svg.setAttribute('height', '12');
-    svg.setAttribute('viewBox', '0 0 24 24');
-    svg.style.flex = '0 0 auto';
-
-    const track = document.createElementNS(SVG_NS, 'circle');
-    track.setAttribute('cx', '12');
-    track.setAttribute('cy', '12');
-    track.setAttribute('r', '9');
-    track.setAttribute('fill', 'none');
-    track.setAttribute('stroke', 'currentColor');
-    track.setAttribute('stroke-width', '3');
-    track.setAttribute('stroke-opacity', '0.25');
-
-    const arc = document.createElementNS(SVG_NS, 'path');
-    arc.setAttribute('d', 'M12 3 a9 9 0 0 1 9 9');
-    arc.setAttribute('fill', 'none');
-    arc.setAttribute('stroke', 'currentColor');
-    arc.setAttribute('stroke-width', '3');
-    arc.setAttribute('stroke-linecap', 'round');
-
-    const spin = document.createElementNS(SVG_NS, 'animateTransform');
-    spin.setAttribute('attributeName', 'transform');
-    spin.setAttribute('attributeType', 'XML');
-    spin.setAttribute('type', 'rotate');
-    spin.setAttribute('from', '0 12 12');
-    spin.setAttribute('to', '360 12 12');
-    spin.setAttribute('dur', '0.7s');
-    spin.setAttribute('repeatCount', 'indefinite');
-    arc.appendChild(spin);
-
-    svg.appendChild(track);
-    svg.appendChild(arc);
-    return svg;
-}
-
-/** The "AI in-context definition" block shown above the dictionary senses. Three
- *  states: loading (spinner while the daemon segments the line), ready (the
- *  contextual gloss · grammar for THIS sentence), or absent (rule-based fallback). */
-function aiContextCaption(loading: boolean, token: SaviToken): HTMLElement | null {
-    const hasGloss = Boolean(token.gloss || token.grammar);
-    if (!loading && !hasGloss) {
-        return null; // pure rule-based — no AI line at all
-    }
-    const box = document.createElement('div');
-    box.className = 'savi-ai-caption';
-    Object.assign(box.style, { margin: '0 0 7px', lineHeight: '1.4' });
-
-    const label = document.createElement('div');
-    Object.assign(label.style, {
-        display: 'flex',
-        alignItems: 'center',
-        gap: '5px',
-        fontSize: '10px',
-        fontWeight: '700',
-        letterSpacing: '0.05em',
-        textTransform: 'uppercase',
-        color: '#74c79a',
-        marginBottom: '3px',
-    });
-    const spark = document.createElement('span');
-    spark.textContent = '✦';
-    label.appendChild(spark);
-    const labelText = document.createElement('span');
-    labelText.textContent = 'AI in-context definition';
-    label.appendChild(labelText);
-    box.appendChild(label);
-
-    const body = document.createElement('div');
-    if (loading) {
-        Object.assign(body.style, {
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            fontSize: '12px',
-            color: '#93a0ad',
-            fontStyle: 'italic',
-        });
-        body.appendChild(aiSpinner());
-        const t = document.createElement('span');
-        t.textContent = 'reading the sentence…';
-        body.appendChild(t);
-    } else {
-        Object.assign(body.style, { fontSize: '12.5px', color: '#9fd1a0' });
-        body.textContent = `▸ ${[token.gloss, token.grammar].filter(Boolean).join(' · ')}`;
-    }
-    box.appendChild(body);
-    return box;
-}
-
 function renderEntry(
     term: string,
     token: SaviToken,
     entries: SaviDictEntry[],
     kanji: SaviKanjiInfo[],
-    loading: boolean,
     onMine: (button: HTMLButtonElement) => void,
-    onBreakdown: () => void
+    onDetails: () => void
 ): HTMLElement {
     const root = document.createElement('div');
 
@@ -362,13 +263,6 @@ function renderEntry(
     }
     root.appendChild(head);
 
-    // AI in-context definition — a labeled block that shows a spinner while the
-    // daemon segments the line, then the contextual gloss · grammar for THIS
-    // sentence (でも → "but/however"). Absent on rule-based fallback.
-    const caption = aiContextCaption(loading, token);
-    if (caption) {
-        root.appendChild(caption);
-    }
 
     for (const entry of entries.slice(0, 2)) {
         const ol = document.createElement('ol');
@@ -435,18 +329,19 @@ function renderEntry(
     mine.addEventListener('click', trigger);
     root.appendChild(mine);
 
-    // "Breakdown" — opens the whole-line AI segmentation panel.
-    const breakdown = document.createElement('button');
-    breakdown.textContent = '🔍 Breakdown';
-    Object.assign(breakdown.style, BREAKDOWN_BTN_STYLE);
-    const bdTrigger = (e: Event) => {
+    // "Details & context" — opens the tap panel: the full dictionary entry plus
+    // the on-demand AI in-context reading. (Tapping the word itself does the same.)
+    const details = document.createElement('button');
+    details.textContent = '✦ Details & context';
+    Object.assign(details.style, BREAKDOWN_BTN_STYLE);
+    const detailsTrigger = (e: Event) => {
         e.stopPropagation();
         e.preventDefault();
-        onBreakdown();
+        onDetails();
     };
-    breakdown.addEventListener('pointerdown', bdTrigger);
-    breakdown.addEventListener('click', bdTrigger);
-    root.appendChild(breakdown);
+    details.addEventListener('pointerdown', detailsTrigger);
+    details.addEventListener('click', detailsTrigger);
+    root.appendChild(details);
 
     return root;
 }
@@ -494,7 +389,7 @@ export class SaviHoverDictionary {
     private readonly _tokenizeCache = new Map<string, SaviToken[]>();
     // null = the daemon returned no AI segmentation for this line → use rule-based.
     private readonly _segmentCache = new Map<string, SaviToken[] | null>();
-    private _segmentPanel: SaviSegmentPanel | null = null;
+    private _wordPanel: SaviWordPanel | null = null;
     private readonly _dictCache = new Map<string, SaviDictResponse>();
     private _popup: HTMLDivElement | null = null;
     private _popupContent: HTMLDivElement | null = null;
@@ -505,7 +400,6 @@ export class SaviHoverDictionary {
     private _toastTimer: number | null = null;
     private _cursorLine: HTMLElement | null = null; // line we set cursor:pointer on
     private _currentTerm: string | null = null;
-    private _currentLoading = false; // the popup is showing the AI "thinking" caption
     private _hoverTimer: ReturnType<typeof setTimeout> | undefined;
     private _hideTimer: ReturnType<typeof setTimeout> | undefined; // delayed hide, cancellable
     private _generation = 0; // bumps to cancel stale async work
@@ -526,15 +420,17 @@ export class SaviHoverDictionary {
         if (this._bound) return;
         this._bound = true;
         document.addEventListener('mousemove', this._onMouseMove, true);
+        document.addEventListener('click', this._onClick, true);
     }
 
     stop() {
         if (!this._bound) return;
         this._bound = false;
         document.removeEventListener('mousemove', this._onMouseMove, true);
+        document.removeEventListener('click', this._onClick, true);
         this._clear();
-        this._segmentPanel?.destroy();
-        this._segmentPanel = null;
+        this._wordPanel?.destroy();
+        this._wordPanel = null;
     }
 
     /** True when (x, y) is over savi's own hover surfaces — the dictionary popup
@@ -596,50 +492,17 @@ export class SaviHoverDictionary {
             this._clear();
             return;
         }
-        // Render instantly with the rule-based tokens — no added latency.
+        // Hover is purely rule-based — instant, and never touches the LLM. The AI
+        // in-context read lives in the tap panel (_openWordDetail), so a slow or
+        // flaky provider can't delay or break the hover popup.
         const tokens = await this._tokenize(text);
         if (generation !== this._generation) {
             return; // a newer hover (or a clear) superseded this one
         }
-        await this._applyTokens(line, text, offset, x, y, tokens, generation, false, false);
-
-        // Progressive upgrade: ask the daemon for an AI segmentation (cached after
-        // the first hover of a line). When it lands and this hover is still current,
-        // re-box + re-resolve with the context-aware chunks (でも → "but", not で).
-        // While that call is in flight — and only if it's slow enough to notice (a
-        // cache hit settles first) — show the labeled "AI thinking" caption.
-        let settled = false;
-        const loaderTimer = setTimeout(() => {
-            if (!settled && generation === this._generation) {
-                void this._applyTokens(line, text, offset, x, y, tokens, generation, false, true);
-            }
-        }, AI_LOADER_DELAY_MS);
-        this._segment(text)
-            .then((aiTokens) => {
-                settled = true;
-                clearTimeout(loaderTimer);
-                if (generation !== this._generation) {
-                    return;
-                }
-                if (aiTokens) {
-                    void this._applyTokens(line, text, offset, x, y, aiTokens, generation, true, false);
-                } else {
-                    // No AI upgrade (fallback / no provider) — drop the loader if shown.
-                    void this._applyTokens(line, text, offset, x, y, tokens, generation, false, false);
-                }
-            })
-            .catch(() => {
-                settled = true;
-                clearTimeout(loaderTimer);
-                if (generation === this._generation) {
-                    void this._applyTokens(line, text, offset, x, y, tokens, generation, false, false);
-                }
-            });
+        await this._applyTokens(line, text, offset, x, y, tokens, generation);
     }
 
-    /** Box the token at `offset` and show its popup. `ai` forces a re-render even
-     *  when the term is unchanged (so the AI upgrade can add the contextual gloss),
-     *  and never clears the existing render if the AI mapping lands oddly. */
+    /** Box the token at `offset` and show its rule-based dictionary popup. */
     private async _applyTokens(
         line: HTMLElement,
         text: string,
@@ -647,15 +510,11 @@ export class SaviHoverDictionary {
         x: number,
         y: number,
         tokens: SaviToken[],
-        generation: number,
-        ai: boolean,
-        loading: boolean
+        generation: number
     ) {
         const span = tokenSpanAtOffset(tokens, offset);
         if (!span || !JAPANESE.test(span.token.text)) {
-            if (!ai && !loading) {
-                this._clear(); // between words / on whitespace / punctuation
-            }
+            this._clear(); // between words / on whitespace / punctuation
             return;
         }
 
@@ -672,8 +531,8 @@ export class SaviHoverDictionary {
         // Look up the dictionary form — fall back to the surface so words without
         // a lemma (しかし, そこ, 東京) get defined instead of skipped.
         const term = lookupTermFor(span.token);
-        if (!ai && !loading && term === this._currentTerm && !this._currentLoading) {
-            return; // already showing this word's definition in the same state
+        if (term === this._currentTerm) {
+            return; // already showing this word's definition
         }
         const result = await this._lookupDict(term);
         if (generation !== this._generation) {
@@ -681,17 +540,11 @@ export class SaviHoverDictionary {
         }
         // Show the popup when there's anything useful — a definition OR just a
         // kanji breakdown (so even an unknown compound still teaches its kanji).
-        // Only the BASE render may hide on an empty result. An AI/loading re-resolve
-        // to an entry-less term (the AI's lemma isn't always a JMdict headword —
-        // お医者様, にとって) must KEEP the base popup, never blank it out.
         if (result.entries.length === 0 && result.kanji.length === 0) {
-            if (!ai && !loading) {
-                this._hidePopup();
-            }
+            this._hidePopup();
             return;
         }
         this._currentTerm = term;
-        this._currentLoading = loading;
         const popup = this._ensurePopup();
         this._popupContent!.replaceChildren(
             renderEntry(
@@ -699,9 +552,8 @@ export class SaviHoverDictionary {
                 span.token,
                 result.entries,
                 result.kanji,
-                loading,
                 (button) => void this._mine(text, span.token, term, button),
-                () => void this._openBreakdown(text)
+                () => void this._openWordDetail(text, offset)
             )
         );
         popup.style.display = 'block';
@@ -765,18 +617,66 @@ export class SaviHoverDictionary {
         };
     }
 
-    /** Open the whole-line breakdown panel (AI chunks, else rule-based tokens). */
-    private async _openBreakdown(text: string) {
-        const aiTokens = await this._segment(text).catch(() => null);
-        const tokens = aiTokens ?? (await this._tokenize(text));
-        this._ensureSegmentPanel().show(text, tokens);
+    /** Tap handler: open the study panel for a Japanese subtitle word. */
+    private _onClick = (event: MouseEvent) => {
+        const line = lineElement(event.target);
+        if (!line) {
+            return; // not on a subtitle — let the click through (video controls, etc.)
+        }
+        const text = (line.textContent ?? '').replace(/\s+$/, '');
+        const offset = caretOffsetWithin(line, event.clientX, event.clientY);
+        if (offset === null || !text || !JAPANESE.test(text)) {
+            return;
+        }
+        // Swallow the tap so it doesn't also toggle the video's play/pause.
+        event.preventDefault();
+        event.stopPropagation();
+        void this._openWordDetail(text, offset);
+    };
+
+    /** Open the tap panel for the word at `offset`: full dictionary entry + kanji
+     *  immediately, then the AI in-context reading + whole-line breakdown fetched
+     *  on demand. This is the ONLY place the segmentation LLM runs, so a slow or
+     *  failed call only ever affects this panel — never the hover popup. */
+    private async _openWordDetail(text: string, offset: number) {
+        const tokens = await this._tokenize(text);
+        const span = tokenSpanAtOffset(tokens, offset);
+        if (!span || !JAPANESE.test(span.token.text)) {
+            return;
+        }
+        const term = lookupTermFor(span.token);
+        const dict = await this._lookupDict(term);
+        this._hidePopup(); // the small hover popup gives way to the full panel
+        const panel = this._ensureWordPanel();
+        panel.show({
+            term,
+            token: span.token,
+            entries: dict.entries,
+            kanji: dict.kanji,
+            onMine: (button) => void this._mine(text, span.token, term, button),
+        });
+        // AI in-context — fired ONLY here, on a deliberate tap. Far fewer calls than
+        // per-hover (so the providers stop rate-limiting), and a slow/failed call
+        // degrades to a graceful "unavailable" inside the panel.
+        this._segment(text)
+            .then((aiTokens) => {
+                let featured: WordContext | null = null;
+                if (aiTokens) {
+                    const aiSpan = tokenSpanAtOffset(aiTokens, offset);
+                    if (aiSpan) {
+                        featured = { gloss: aiSpan.token.gloss, grammar: aiSpan.token.grammar };
+                    }
+                }
+                panel.setContext(featured, aiTokens);
+            })
+            .catch(() => panel.setContext(null, null));
     }
 
-    private _ensureSegmentPanel(): SaviSegmentPanel {
-        if (!this._segmentPanel) {
-            this._segmentPanel = new SaviSegmentPanel();
+    private _ensureWordPanel(): SaviWordPanel {
+        if (!this._wordPanel) {
+            this._wordPanel = new SaviWordPanel();
         }
-        return this._segmentPanel;
+        return this._wordPanel;
     }
 
     /** Mine the hovered line + word into Anki. The daemon derives the episode
@@ -1006,7 +906,6 @@ export class SaviHoverDictionary {
 
     private _hidePopup() {
         this._currentTerm = null;
-        this._currentLoading = false;
         this._generation++;
         if (this._popup) this._popup.style.display = 'none';
         if (this._bridge) this._bridge.style.display = 'none';
