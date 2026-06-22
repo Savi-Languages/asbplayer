@@ -97,6 +97,10 @@ export class SaviWordPanel {
     private _ctxBody: HTMLDivElement | null = null; // "in this sentence" — the tapped word's AI gloss
     private _breakdownBody: HTMLDivElement | null = null; // whole-line AI breakdown
 
+    /** @param _onClose called when the user dismisses the panel (×) so the owner
+     *  can resume the video it paused. */
+    constructor(private readonly _onClose?: () => void) {}
+
     /** Render the word's rule-based details immediately; the AI sections show a
      *  spinner until `setContext` fills them. */
     show(input: WordPanelInput) {
@@ -259,6 +263,12 @@ export class SaviWordPanel {
         }
     }
 
+    /** Dismiss: hide + notify the owner (which resumes the paused video). */
+    private _close() {
+        this.hide();
+        this._onClose?.();
+    }
+
     destroy() {
         this._el?.remove();
         this._el = null;
@@ -314,7 +324,7 @@ export class SaviWordPanel {
         close.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
-            this.hide();
+            this._close();
         });
         el.appendChild(close);
 

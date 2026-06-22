@@ -390,6 +390,8 @@ export class SaviHoverDictionary {
     // null = the daemon returned no AI segmentation for this line → use rule-based.
     private readonly _segmentCache = new Map<string, SaviToken[] | null>();
     private _wordPanel: SaviWordPanel | null = null;
+    private _panelOpen = false; // the tap study panel is up → keep the video paused
+    private _pausedForPanel = false; // WE paused the video for the panel, so WE resume
     private readonly _dictCache = new Map<string, SaviDictResponse>();
     private _popup: HTMLDivElement | null = null;
     private _popupContent: HTMLDivElement | null = null;
@@ -429,6 +431,8 @@ export class SaviHoverDictionary {
         document.removeEventListener('mousemove', this._onMouseMove, true);
         document.removeEventListener('click', this._onClick, true);
         this._clear();
+        this._panelOpen = false;
+        this._pausedForPanel = false;
         this._wordPanel?.destroy();
         this._wordPanel = null;
     }
@@ -438,6 +442,9 @@ export class SaviHoverDictionary {
      *  video paused while the cursor moves from a subtitle word onto the popup
      *  (so reaching "+ Add to Anki" doesn't resume playback). */
     isOverHoverSurface(x: number, y: number): boolean {
+        if (this._panelOpen) {
+            return true; // study panel up — tell the binding to keep the video paused
+        }
         const el = document.elementFromPoint(x, y);
         if (!(el instanceof Node)) return false;
         return (!!this._popup && this._popup.contains(el)) || (!!this._bridge && this._bridge.contains(el));
@@ -655,6 +662,16 @@ export class SaviHoverDictionary {
             kanji: dict.kanji,
             onMine: (button) => void this._mine(text, span.token, term, button),
         });
+        // Pause the video while the study panel is up and KEEP it paused until the
+        // user dismisses it — independent of the cursor or the hover-pause setting.
+        // (isOverHoverSurface returns true while _panelOpen, so the binding's
+        // hover-resume can't fire; we resume on close only when WE were the pauser.)
+        this._panelOpen = true;
+        const video = this._videoProvider();
+        if (video && !video.paused) {
+            video.pause();
+            this._pausedForPanel = true;
+        }
         // AI in-context — fired ONLY here, on a deliberate tap. Far fewer calls than
         // per-hover (so the providers stop rate-limiting), and a slow/failed call
         // degrades to a graceful "unavailable" inside the panel.
@@ -674,9 +691,23 @@ export class SaviHoverDictionary {
 
     private _ensureWordPanel(): SaviWordPanel {
         if (!this._wordPanel) {
-            this._wordPanel = new SaviWordPanel();
+            this._wordPanel = new SaviWordPanel(() => this._onPanelClosed());
         }
         return this._wordPanel;
+    }
+
+    /** The study panel was dismissed. If WE paused the video for it, resume; if the
+     *  hover-pause feature paused it, clearing _panelOpen lets the binding resume on
+     *  the next mouse move (or stay paused, per the user's hover-pause mode). */
+    private _onPanelClosed() {
+        this._panelOpen = false;
+        if (this._pausedForPanel) {
+            this._pausedForPanel = false;
+            const video = this._videoProvider();
+            if (video) {
+                void video.play().catch(() => {});
+            }
+        }
     }
 
     /** Mine the hovered line + word into Anki. The daemon derives the episode
