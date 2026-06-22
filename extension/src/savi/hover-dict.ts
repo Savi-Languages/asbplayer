@@ -48,6 +48,9 @@ const SHOT_MAX_WIDTH = 960; // cap the mined card's screenshot width (height sca
 const HIDE_GRACE_MS = 250;
 const TOKENIZE_CACHE_MAX = 64;
 const DICT_CACHE_MAX = 300;
+// Wait this long before showing the "AI in-context definition" loading caption.
+// A cached segmentation resolves well under this, so re-hovers never flash it.
+const AI_LOADER_DELAY_MS = 140;
 
 /** The token whose `[start, start+len)` range contains `offset`, plus that
  *  span — tokens concatenate back to the line (the daemon emits gap tokens for
@@ -237,11 +240,107 @@ const BREAKDOWN_BTN_STYLE: Partial<CSSStyleDeclaration> = {
     cursor: 'pointer',
 };
 
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/** A tiny SMIL-animated spinner — no CSS/keyframes dependency, animates in any DOM. */
+function aiSpinner(): SVGSVGElement {
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('width', '12');
+    svg.setAttribute('height', '12');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.style.flex = '0 0 auto';
+
+    const track = document.createElementNS(SVG_NS, 'circle');
+    track.setAttribute('cx', '12');
+    track.setAttribute('cy', '12');
+    track.setAttribute('r', '9');
+    track.setAttribute('fill', 'none');
+    track.setAttribute('stroke', 'currentColor');
+    track.setAttribute('stroke-width', '3');
+    track.setAttribute('stroke-opacity', '0.25');
+
+    const arc = document.createElementNS(SVG_NS, 'path');
+    arc.setAttribute('d', 'M12 3 a9 9 0 0 1 9 9');
+    arc.setAttribute('fill', 'none');
+    arc.setAttribute('stroke', 'currentColor');
+    arc.setAttribute('stroke-width', '3');
+    arc.setAttribute('stroke-linecap', 'round');
+
+    const spin = document.createElementNS(SVG_NS, 'animateTransform');
+    spin.setAttribute('attributeName', 'transform');
+    spin.setAttribute('attributeType', 'XML');
+    spin.setAttribute('type', 'rotate');
+    spin.setAttribute('from', '0 12 12');
+    spin.setAttribute('to', '360 12 12');
+    spin.setAttribute('dur', '0.7s');
+    spin.setAttribute('repeatCount', 'indefinite');
+    arc.appendChild(spin);
+
+    svg.appendChild(track);
+    svg.appendChild(arc);
+    return svg;
+}
+
+/** The "AI in-context definition" block shown above the dictionary senses. Three
+ *  states: loading (spinner while the daemon segments the line), ready (the
+ *  contextual gloss · grammar for THIS sentence), or absent (rule-based fallback). */
+function aiContextCaption(loading: boolean, token: SaviToken): HTMLElement | null {
+    const hasGloss = Boolean(token.gloss || token.grammar);
+    if (!loading && !hasGloss) {
+        return null; // pure rule-based — no AI line at all
+    }
+    const box = document.createElement('div');
+    box.className = 'savi-ai-caption';
+    Object.assign(box.style, { margin: '0 0 7px', lineHeight: '1.4' });
+
+    const label = document.createElement('div');
+    Object.assign(label.style, {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '5px',
+        fontSize: '10px',
+        fontWeight: '700',
+        letterSpacing: '0.05em',
+        textTransform: 'uppercase',
+        color: '#74c79a',
+        marginBottom: '3px',
+    });
+    const spark = document.createElement('span');
+    spark.textContent = '✦';
+    label.appendChild(spark);
+    const labelText = document.createElement('span');
+    labelText.textContent = 'AI in-context definition';
+    label.appendChild(labelText);
+    box.appendChild(label);
+
+    const body = document.createElement('div');
+    if (loading) {
+        Object.assign(body.style, {
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            fontSize: '12px',
+            color: '#93a0ad',
+            fontStyle: 'italic',
+        });
+        body.appendChild(aiSpinner());
+        const t = document.createElement('span');
+        t.textContent = 'reading the sentence…';
+        body.appendChild(t);
+    } else {
+        Object.assign(body.style, { fontSize: '12.5px', color: '#9fd1a0' });
+        body.textContent = `▸ ${[token.gloss, token.grammar].filter(Boolean).join(' · ')}`;
+    }
+    box.appendChild(body);
+    return box;
+}
+
 function renderEntry(
     term: string,
     token: SaviToken,
     entries: SaviDictEntry[],
     kanji: SaviKanjiInfo[],
+    loading: boolean,
     onMine: (button: HTMLButtonElement) => void,
     onBreakdown: () => void
 ): HTMLElement {
@@ -263,13 +362,12 @@ function renderEntry(
     }
     root.appendChild(head);
 
-    // Context caption — only AI-segmented chunks carry a contextual gloss/grammar
-    // (でも → "but/however · conjunction"). Sits above the dictionary senses.
-    if (token.gloss || token.grammar) {
-        const ctx = document.createElement('div');
-        Object.assign(ctx.style, { fontSize: '12.5px', color: '#9fd1a0', margin: '0 0 6px', lineHeight: '1.4' });
-        ctx.textContent = `▸ ${[token.gloss, token.grammar].filter(Boolean).join(' · ')}`;
-        root.appendChild(ctx);
+    // AI in-context definition — a labeled block that shows a spinner while the
+    // daemon segments the line, then the contextual gloss · grammar for THIS
+    // sentence (でも → "but/however"). Absent on rule-based fallback.
+    const caption = aiContextCaption(loading, token);
+    if (caption) {
+        root.appendChild(caption);
     }
 
     for (const entry of entries.slice(0, 2)) {
@@ -407,6 +505,7 @@ export class SaviHoverDictionary {
     private _toastTimer: number | null = null;
     private _cursorLine: HTMLElement | null = null; // line we set cursor:pointer on
     private _currentTerm: string | null = null;
+    private _currentLoading = false; // the popup is showing the AI "thinking" caption
     private _hoverTimer: ReturnType<typeof setTimeout> | undefined;
     private _hideTimer: ReturnType<typeof setTimeout> | undefined; // delayed hide, cancellable
     private _generation = 0; // bumps to cancel stale async work
@@ -502,18 +601,40 @@ export class SaviHoverDictionary {
         if (generation !== this._generation) {
             return; // a newer hover (or a clear) superseded this one
         }
-        await this._applyTokens(line, text, offset, x, y, tokens, generation, false);
+        await this._applyTokens(line, text, offset, x, y, tokens, generation, false, false);
 
         // Progressive upgrade: ask the daemon for an AI segmentation (cached after
         // the first hover of a line). When it lands and this hover is still current,
         // re-box + re-resolve with the context-aware chunks (でも → "but", not で).
+        // While that call is in flight — and only if it's slow enough to notice (a
+        // cache hit settles first) — show the labeled "AI thinking" caption.
+        let settled = false;
+        const loaderTimer = setTimeout(() => {
+            if (!settled && generation === this._generation) {
+                void this._applyTokens(line, text, offset, x, y, tokens, generation, false, true);
+            }
+        }, AI_LOADER_DELAY_MS);
         this._segment(text)
             .then((aiTokens) => {
-                if (aiTokens && generation === this._generation) {
-                    void this._applyTokens(line, text, offset, x, y, aiTokens, generation, true);
+                settled = true;
+                clearTimeout(loaderTimer);
+                if (generation !== this._generation) {
+                    return;
+                }
+                if (aiTokens) {
+                    void this._applyTokens(line, text, offset, x, y, aiTokens, generation, true, false);
+                } else {
+                    // No AI upgrade (fallback / no provider) — drop the loader if shown.
+                    void this._applyTokens(line, text, offset, x, y, tokens, generation, false, false);
                 }
             })
-            .catch(() => {});
+            .catch(() => {
+                settled = true;
+                clearTimeout(loaderTimer);
+                if (generation === this._generation) {
+                    void this._applyTokens(line, text, offset, x, y, tokens, generation, false, false);
+                }
+            });
     }
 
     /** Box the token at `offset` and show its popup. `ai` forces a re-render even
@@ -527,11 +648,12 @@ export class SaviHoverDictionary {
         y: number,
         tokens: SaviToken[],
         generation: number,
-        ai: boolean
+        ai: boolean,
+        loading: boolean
     ) {
         const span = tokenSpanAtOffset(tokens, offset);
         if (!span || !JAPANESE.test(span.token.text)) {
-            if (!ai) {
+            if (!ai && !loading) {
                 this._clear(); // between words / on whitespace / punctuation
             }
             return;
@@ -550,8 +672,8 @@ export class SaviHoverDictionary {
         // Look up the dictionary form — fall back to the surface so words without
         // a lemma (しかし, そこ, 東京) get defined instead of skipped.
         const term = lookupTermFor(span.token);
-        if (!ai && term === this._currentTerm) {
-            return; // already showing this word's definition
+        if (!ai && !loading && term === this._currentTerm && !this._currentLoading) {
+            return; // already showing this word's definition in the same state
         }
         const result = await this._lookupDict(term);
         if (generation !== this._generation) {
@@ -564,6 +686,7 @@ export class SaviHoverDictionary {
             return;
         }
         this._currentTerm = term;
+        this._currentLoading = loading;
         const popup = this._ensurePopup();
         this._popupContent!.replaceChildren(
             renderEntry(
@@ -571,6 +694,7 @@ export class SaviHoverDictionary {
                 span.token,
                 result.entries,
                 result.kanji,
+                loading,
                 (button) => void this._mine(text, span.token, term, button),
                 () => void this._openBreakdown(text)
             )
@@ -877,6 +1001,7 @@ export class SaviHoverDictionary {
 
     private _hidePopup() {
         this._currentTerm = null;
+        this._currentLoading = false;
         this._generation++;
         if (this._popup) this._popup.style.display = 'none';
         if (this._bridge) this._bridge.style.display = 'none';
