@@ -135,7 +135,7 @@ export interface AudioModel {
     readonly error?: AudioErrorCode;
 }
 
-export type AnkiExportMode = 'gui' | 'updateLast' | 'default';
+export type AnkiExportMode = 'gui' | 'updateLast' | 'updateSpecific' | 'default';
 
 export interface AnkiDialogSettings extends AnkiSettings {
     themeType: string;
@@ -163,6 +163,7 @@ export interface AnkiUiState extends CardTextFieldValues {
 
 export interface AnkiUiInitialState extends AnkiUiState {
     readonly type: 'initial';
+    readonly cardSelectOpen?: boolean;
 }
 
 export interface AnkiUiResumeState extends AnkiUiState {
@@ -283,6 +284,7 @@ export enum PostMineAction {
     showAnkiDialog = 1,
     updateLastCard = 2,
     exportCard = 3,
+    showUpdateCardDialog = 4,
 }
 
 export enum PostMinePlayback {

@@ -144,6 +144,9 @@ export default defineConfig({
                 },
                 description: '__MSG_shortcutUpdateLastCardDescription__',
             },
+            'update-selected-card': {
+                description: '__MSG_shortcutSelectCardToUpdateDescription__',
+            },
             'toggle-video-select': {
                 suggested_key: {
                     default: 'Ctrl+Shift+F',

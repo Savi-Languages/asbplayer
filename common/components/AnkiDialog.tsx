@@ -179,6 +179,7 @@ export interface AnkiDialogState {
     initialTimestampInterval?: number[];
     timestampBoundaryInterval?: number[];
     timestampInterval?: number[];
+    buildExportParams: (mode: AnkiExportMode, noteId?: number) => ExportParams;
 }
 
 interface AnkiDialogProps {
@@ -268,6 +269,26 @@ const AnkiDialog = ({
     }, []);
     const { t } = useTranslation();
 
+    const buildExportParams = useCallback(
+        (mode: AnkiExportMode, noteId?: number): ExportParams => ({
+            text,
+            track1,
+            track2,
+            track3,
+            definition,
+            audioClip,
+            image,
+            word,
+            source,
+            url,
+            customFieldValues,
+            tags,
+            mode,
+            noteId,
+        }),
+        [text, track1, track2, track3, definition, audioClip, image, word, source, url, customFieldValues, tags]
+    );
+
     if (stateRef) {
         stateRef.current = {
             text,
@@ -286,6 +307,7 @@ const AnkiDialog = ({
             lastAppliedTimestampIntervalToText,
             lastAppliedTimestampIntervalToAudio,
             timestampInterval,
+            buildExportParams,
         };
     }
 
@@ -739,37 +761,9 @@ const AnkiDialog = ({
 
     const handleProceed = useCallback(
         (mode: AnkiExportMode) => {
-            onProceed({
-                text,
-                track1,
-                track2,
-                track3,
-                definition,
-                audioClip,
-                image,
-                word,
-                source,
-                url,
-                customFieldValues,
-                tags,
-                mode,
-            });
+            onProceed(buildExportParams(mode));
         },
-        [
-            text,
-            track1,
-            track2,
-            track3,
-            definition,
-            audioClip,
-            image,
-            word,
-            source,
-            url,
-            customFieldValues,
-            tags,
-            onProceed,
-        ]
+        [buildExportParams, onProceed]
     );
 
     const handleOpenInAnki = useCallback(() => handleProceed('gui'), [handleProceed]);

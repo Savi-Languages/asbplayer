@@ -782,6 +782,7 @@ export interface KeyBindSet {
     readonly copySubtitle: KeyBind;
     readonly ankiExport: KeyBind;
     readonly updateLastCard: KeyBind;
+    readonly updateSelectedCard: KeyBind;
     readonly exportCard: KeyBind;
     readonly takeScreenshot: KeyBind;
     readonly toggleRecording: KeyBind;
@@ -792,7 +793,7 @@ export interface WebSocketClientSettings {
     readonly webSocketClientEnabled: boolean;
 }
 
-export type ChromeBoundKeyBindName = 'copySubtitle' | 'ankiExport' | 'updateLastCard' | 'exportCard' | 'takeScreenshot';
+export type ChromeBoundKeyBindName = 'copySubtitle' | 'ankiExport' | 'updateLastCard' | 'updateSelectedCard' | 'exportCard' | 'takeScreenshot';
 export type SubtitleAlignment = 'top' | 'bottom';
 export enum SubtitleListPreference {
     noSubtitleList = 'noSubtitleList',
@@ -890,6 +891,7 @@ const keyBindNameMap: any = {
     'copy-subtitle': 'copySubtitle',
     'copy-subtitle-with-dialog': 'ankiExport',
     'update-last-card': 'updateLastCard',
+    'update-selected-card': 'updateSelectedCard',
     'export-card': 'exportCard',
     'take-screenshot': 'takeScreenshot',
     'toggle-recording': 'toggleRecording',
