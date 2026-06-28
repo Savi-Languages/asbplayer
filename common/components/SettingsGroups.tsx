@@ -33,7 +33,7 @@ const SettingsGroups: React.FC<Props> = ({ children, groupLabels, selectedGroupI
             <Stack
                 spacing={1}
                 sx={{
-                    p: 1,
+                    p: 1.5,
                     border: (theme) => `1px solid ${theme.palette.action.focus}`,
                     borderTop: 'none',
                     borderRadius: 1,
