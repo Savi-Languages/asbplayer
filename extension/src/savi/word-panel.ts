@@ -78,6 +78,62 @@ function loadingRow(message: string): HTMLDivElement {
 }
 
 /** Compact kanji rows (char + keyword + components) — instant, from the dict lookup. */
+/** A crisp, perfectly-centered × for the close button (flex-centered in a circle). */
+function closeIcon(): SVGSVGElement {
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('width', '11');
+    svg.setAttribute('height', '11');
+    svg.setAttribute('viewBox', '0 0 12 12');
+    svg.style.display = 'block';
+    const path = document.createElementNS(SVG_NS, 'path');
+    path.setAttribute('d', 'M2 2 L10 10 M10 2 L2 10');
+    path.setAttribute('stroke', 'currentColor');
+    path.setAttribute('stroke-width', '1.6');
+    path.setAttribute('stroke-linecap', 'round');
+    svg.appendChild(path);
+    return svg;
+}
+
+/** A click-to-toggle disclosure: an uppercase caret header + a show/hide body.
+ *  Keeps long lists (kanji examples, the sentence breakdown) out of the way until
+ *  the user wants them. Returns the body to fill. */
+function collapsible(label: string, defaultOpen: boolean): { root: HTMLDivElement; body: HTMLDivElement } {
+    const root = document.createElement('div');
+    const header = document.createElement('div');
+    Object.assign(header.style, {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '6px',
+        cursor: 'pointer',
+        fontSize: '10.5px',
+        fontWeight: '700',
+        letterSpacing: '0.05em',
+        textTransform: 'uppercase',
+        color: '#8a93a0',
+        margin: '10px 0 4px',
+        userSelect: 'none',
+    });
+    const caret = document.createElement('span');
+    Object.assign(caret.style, { fontSize: '9px', width: '8px', display: 'inline-block' });
+    caret.textContent = defaultOpen ? '▾' : '▸';
+    const text = document.createElement('span');
+    text.textContent = label;
+    header.appendChild(caret);
+    header.appendChild(text);
+    const body = document.createElement('div');
+    body.style.display = defaultOpen ? 'block' : 'none';
+    header.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const open = body.style.display === 'none';
+        body.style.display = open ? 'block' : 'none';
+        caret.textContent = open ? '▾' : '▸';
+    });
+    root.appendChild(header);
+    root.appendChild(body);
+    return { root, body };
+}
+
 function renderCompactKanji(container: HTMLElement, list: SaviKanjiInfo[]) {
     container.replaceChildren();
     for (const k of list) {
@@ -134,8 +190,8 @@ function renderFullKanji(container: HTMLElement, list: SaviKanjiFull[]) {
         }
 
         if (k.examples && k.examples.length > 0) {
-            const ex = document.createElement('div');
-            Object.assign(ex.style, { margin: '5px 0', fontSize: '12.5px', lineHeight: '1.6' });
+            const { root, body } = collapsible(`${k.examples.length} example words`, false);
+            Object.assign(body.style, { fontSize: '12.5px', lineHeight: '1.6', margin: '2px 0 4px' });
             for (const e of k.examples.slice(0, 6)) {
                 const row = document.createElement('div');
                 const w = document.createElement('span');
@@ -148,9 +204,9 @@ function renderFullKanji(container: HTMLElement, list: SaviKanjiFull[]) {
                     g.textContent = e.gloss;
                     row.appendChild(g);
                 }
-                ex.appendChild(row);
+                body.appendChild(row);
             }
-            card.appendChild(ex);
+            card.appendChild(root);
         }
 
         const stories: Array<[string, string | null | undefined]> = [
@@ -273,11 +329,12 @@ export class SaviWordPanel {
         scroll.appendChild(explain);
         this._explainBody = explain;
 
-        // Whole-line breakdown — spinner until setContext.
-        scroll.appendChild(sectionLabel('Sentence breakdown'));
-        const bd = document.createElement('div');
+        // Whole-line breakdown — collapsible (default collapsed to de-clutter);
+        // spinner until setContext fills it.
+        const breakdown = collapsible('Sentence breakdown', false);
+        const bd = breakdown.body;
         bd.appendChild(loadingRow('segmenting the line…'));
-        scroll.appendChild(bd);
+        scroll.appendChild(breakdown.root);
         this._breakdownBody = bd;
 
         const mine = document.createElement('button');
@@ -438,7 +495,6 @@ export class SaviWordPanel {
         el.style.display = 'none'; // hidden until show() flips it to flex
 
         const close = document.createElement('button');
-        close.textContent = '×';
         close.title = 'Close';
         Object.assign(close.style, {
             position: 'absolute',
@@ -451,9 +507,13 @@ export class SaviWordPanel {
             width: '26px',
             height: '26px',
             borderRadius: '50%',
-            font: '700 17px/1 sans-serif',
+            padding: '0',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
             flex: '0 0 auto',
         });
+        close.appendChild(closeIcon());
         close.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
