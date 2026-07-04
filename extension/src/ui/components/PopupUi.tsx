@@ -10,7 +10,10 @@ import {
 import { createTheme } from '@project/common/theme';
 import { AsbplayerSettings, SettingsProvider } from '@project/common/settings';
 import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
+import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
 import Paper from '@mui/material/Paper';
+import { SaviCommand } from '@/savi/messages';
 import { ExtensionSettingsStorage } from '../../services/extension-settings-storage';
 import Popup from './Popup';
 import { useRequestingActiveTabPermission } from '../hooks/use-requesting-active-tab-permission';
@@ -78,6 +81,26 @@ export function PopupUi({ commands }: Props) {
         browser.tabs.create({ active: true, url: 'https://docs.asbplayer.dev/docs/intro' });
     }, []);
 
+    const handleStartRecording = useCallback(async () => {
+        // Opening this popup granted the active tab the audio permission, so
+        // asking its savi capture controller to start will succeed. Closing the
+        // popup afterwards lets the user watch the video they just armed.
+        try {
+            const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+            const tabId = tabs[0]?.id;
+            if (tabId !== undefined) {
+                const command: SaviCommand<{ command: 'savi-request-start' }> = {
+                    sender: 'savi-extension-to-video',
+                    message: { command: 'savi-request-start' },
+                };
+                await browser.tabs.sendMessage(tabId, command);
+            }
+        } catch (e) {
+            // No savi-capturable video in the active tab; nothing to start.
+        }
+        window.close();
+    }, []);
+
     const { requestingActiveTabPermission, tabRequestingActiveTabPermission } = useRequestingActiveTabPermission();
 
     useEffect(() => {
@@ -126,6 +149,17 @@ export function PopupUi({ commands }: Props) {
                     }}
                 >
                     <Box>
+                        <Box sx={{ px: 1.5, pt: 1.5 }}>
+                            <Button
+                                fullWidth
+                                variant="contained"
+                                color="error"
+                                startIcon={<FiberManualRecordIcon />}
+                                onClick={handleStartRecording}
+                            >
+                                Start savi recording (this tab)
+                            </Button>
+                        </Box>
                         <Popup
                             commands={commands}
                             dictionaryProvider={dictionaryProvider}

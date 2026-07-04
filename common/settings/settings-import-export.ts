@@ -547,6 +547,24 @@ const settingsSchema = {
         webSocketServerUrl: {
             type: 'string',
         },
+        saviCaptureEnabled: {
+            type: 'boolean',
+        },
+        saviDaemonUrl: {
+            type: 'string',
+        },
+        saviDaemonToken: {
+            type: 'string',
+        },
+        saviHideNativeSubtitles: {
+            type: 'boolean',
+        },
+        saviRecordingGuard: {
+            type: 'boolean',
+        },
+        saviAiSegmentation: {
+            type: 'boolean',
+        },
         pauseOnHoverMode: {
             type: 'number',
         },

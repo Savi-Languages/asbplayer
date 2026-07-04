@@ -82,6 +82,12 @@ const MiscSettingTab: React.FC<Props> = ({
         pauseOnHoverMode,
         webSocketClientEnabled,
         webSocketServerUrl,
+        saviCaptureEnabled,
+        saviDaemonUrl,
+        saviDaemonToken,
+        saviHideNativeSubtitles,
+        saviRecordingGuard,
+        saviAiSegmentation,
         subtitleAboveThumbnail,
         thumbnailPreview,
     } = settings;
@@ -438,6 +444,62 @@ const MiscSettingTab: React.FC<Props> = ({
                             ),
                         },
                     }}
+                />
+                <SettingsSection>{'Savi capture'}</SettingsSection>
+                <SwitchLabelWithHoverEffect
+                    control={
+                        <Switch
+                            checked={saviCaptureEnabled}
+                            onChange={(e) => onSettingChanged('saviCaptureEnabled', e.target.checked)}
+                        />
+                    }
+                    label={'Auto-capture episodes to savi when subtitles load'}
+                    labelPlacement="start"
+                />
+                <SwitchLabelWithHoverEffect
+                    control={
+                        <Switch
+                            checked={saviHideNativeSubtitles}
+                            onChange={(e) => onSettingChanged('saviHideNativeSubtitles', e.target.checked)}
+                        />
+                    }
+                    label={"Hide the streaming site's own subtitles"}
+                    labelPlacement="start"
+                />
+                <SwitchLabelWithHoverEffect
+                    control={
+                        <Switch
+                            checked={saviRecordingGuard}
+                            onChange={(e) => onSettingChanged('saviRecordingGuard', e.target.checked)}
+                        />
+                    }
+                    label={'Warn me when recording stops (e.g. after a reload)'}
+                    labelPlacement="start"
+                />
+                <SwitchLabelWithHoverEffect
+                    control={
+                        <Switch
+                            checked={saviAiSegmentation}
+                            onChange={(e) => onSettingChanged('saviAiSegmentation', e.target.checked)}
+                        />
+                    }
+                    label={'AI in-context definitions when you tap a word (needs an LLM key on the daemon)'}
+                    labelPlacement="start"
+                />
+                <SettingsTextField
+                    color="primary"
+                    fullWidth
+                    label={'Savi daemon URL'}
+                    value={saviDaemonUrl}
+                    onChange={(e) => onSettingChanged('saviDaemonUrl', e.target.value)}
+                />
+                <SettingsTextField
+                    color="primary"
+                    fullWidth
+                    type="password"
+                    label={'Savi daemon token'}
+                    value={saviDaemonToken}
+                    onChange={(e) => onSettingChanged('saviDaemonToken', e.target.value)}
                 />
                 <SettingsSection>{t('settings.mining')}</SettingsSection>
                 <SettingsTextField

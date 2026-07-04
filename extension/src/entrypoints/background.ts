@@ -77,11 +77,20 @@ import BrowserFeaturesHandler from '@/handlers/asbplayerv2/browser-features-hand
 import OpenStatisticsHandler from '@/handlers/video/open-statistics-handler';
 import StatisticsOverlayForwarderHandler from '@/handlers/statistics-overlay/statistics-overlay-forwarder-handler';
 import OpenStatisticsOverlayHandler from '@/handlers/open-statistics-overlay-handler';
+import SaviCommandHandler from '@/savi/background-handler';
+import { SaviCommand } from '@/savi/messages';
+import { clearRecordingIntent } from '@/savi/recording-intent';
 
 export default defineBackground(() => {
     if (!isFirefoxBuild) {
         browser.storage.session.setAccessLevel({ accessLevel: 'TRUSTED_AND_UNTRUSTED_CONTEXTS' });
     }
+
+    // Recording-intent markers live in storage.session keyed by tabId; clear a
+    // tab's marker when it closes so a reused tabId never inherits stale intent.
+    browser.tabs.onRemoved.addListener((tabId) => {
+        clearRecordingIntent(tabId).catch(() => {});
+    });
 
     const settings = new SettingsProvider(new ExtensionSettingsStorage());
 
@@ -223,6 +232,7 @@ export default defineBackground(() => {
         new CurrentTabHandler(),
         new MobileOverlayForwarderHandler(),
         new StatisticsOverlayForwarderHandler(),
+        new SaviCommandHandler(settings),
     ];
 
     browser.runtime.onMessage.addListener((request: Command<Message>, sender, sendResponse) => {
@@ -254,9 +264,29 @@ export default defineBackground(() => {
             title: browser.i18n.getMessage('contextMenuMineSubtitle'),
             contexts: ['page', 'video'],
         });
+
+        // savi: a context-menu click is one of the gestures that grants the
+        // tab-audio permission, so this can start recording from the page.
+        browser.contextMenus?.create({
+            id: 'savi-record',
+            title: 'Start savi recording',
+            contexts: ['page', 'video'],
+        });
     });
 
-    browser.contextMenus?.onClicked.addListener((info) => {
+    browser.contextMenus?.onClicked.addListener((info, tab) => {
+        if (info.menuItemId === 'savi-record') {
+            // The click just granted activeTab for this tab; ask the savi
+            // capture controller to start (tabCapture will succeed now).
+            if (tab?.id !== undefined) {
+                const startCommand: SaviCommand<{ command: 'savi-request-start' }> = {
+                    sender: 'savi-extension-to-video',
+                    message: { command: 'savi-request-start' },
+                };
+                browser.tabs.sendMessage(tab.id, startCommand).catch(() => {});
+            }
+            return;
+        }
         if (info.menuItemId === 'load-subtitles') {
             const toggleVideoSelectCommand: ExtensionToVideoCommand<ToggleVideoSelectMessage> = {
                 sender: 'asbplayer-extension-to-video',
@@ -428,6 +458,23 @@ export default defineBackground(() => {
                         },
                     });
                     break;
+                case 'savi-record':
+                case 'savi-record-quick': {
+                    // The keypress just granted activeTab for this tab; ask the
+                    // savi capture controller to start (manually requested), so
+                    // tabCapture succeeds without the user clicking the icon.
+                    // Both shortcuts (Ctrl+Shift+S and the simpler ⌃R/Alt+R) run
+                    // this same path — either gesture grants the audio permission.
+                    const tabId = tabs[0]?.id;
+                    if (tabId !== undefined) {
+                        const startCommand: SaviCommand<{ command: 'savi-request-start' }> = {
+                            sender: 'savi-extension-to-video',
+                            message: { command: 'savi-request-start' },
+                        };
+                        browser.tabs.sendMessage(tabId, startCommand).catch(() => {});
+                    }
+                    break;
+                }
                 default:
                     throw new Error('Unknown command ' + command);
             }

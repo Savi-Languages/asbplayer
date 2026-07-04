@@ -24,15 +24,18 @@ import { AutoPausePreference, PostMineAction, PostMinePlayback, SubtitleHtml } f
 const isMacOs = (navigator.userAgentData?.platform ?? navigator.platform)?.toUpperCase()?.indexOf('MAC') > -1;
 
 const defaultSubtitleTextSettings = {
-    subtitleSize: 36,
-    subtitleColor: '#ffffff',
-    subtitleThickness: 700,
+    // savi defaults tuned to look like Language Reactor: soft white, regular
+    // weight, no black outline/shadow, sitting on a dark rounded box (the box
+    // fill is this opacity; video.css rounds it). See the SAVI.md styling note.
+    subtitleSize: 24,
+    subtitleColor: '#e8e8e8',
+    subtitleThickness: 400,
     subtitleOutlineThickness: 0,
     subtitleOutlineColor: '#000000',
-    subtitleShadowThickness: 3,
+    subtitleShadowThickness: 0,
     subtitleShadowColor: '#000000',
     subtitleBackgroundColor: '#000000',
-    subtitleBackgroundOpacity: 0,
+    subtitleBackgroundOpacity: 0.55,
     subtitleFontFamily: '',
     subtitlePreview: 'アあ安Aa',
     subtitleCustomStyles: [],
@@ -109,7 +112,9 @@ export const defaultSettings: AsbplayerSettings = {
     subtitleAboveThumbnail: true,
     thumbnailPreview: false,
     subtitleTracksV2: [],
-    subtitlesWidth: -1,
+    // savi: use most of the video width so long lines wrap less and the
+    // subtitle stack stays short (-1 = shrink-to-content, which wrapped early).
+    subtitlesWidth: 85,
     audioPaddingStart: 0,
     audioPaddingEnd: 500,
     maxImageWidth: 0,
@@ -129,7 +134,7 @@ export const defaultSettings: AsbplayerSettings = {
     fastForwardModePlaybackRate: 2.7,
     keyBindSet: {
         togglePlay: { keys: 'space' },
-        toggleAutoPause: { keys: isMacOs ? '⇧+P' : 'shift+P' },
+        toggleAutoPause: { keys: 'Q' },
         toggleCondensedPlayback: { keys: isMacOs ? '⇧+O' : 'shift+O' },
         toggleFastForwardPlayback: { keys: isMacOs ? '⇧+F' : 'shift+F' },
         toggleSubtitles: { keys: 'down' },
@@ -142,11 +147,11 @@ export const defaultSettings: AsbplayerSettings = {
         unblurAsbplayerTrack1: { keys: 'B+1' },
         unblurAsbplayerTrack2: { keys: 'B+2' },
         unblurAsbplayerTrack3: { keys: 'B+3' },
-        seekBackward: { keys: 'A' },
-        seekForward: { keys: 'D' },
-        seekToPreviousSubtitle: { keys: 'left' },
-        seekToNextSubtitle: { keys: 'right' },
-        seekToBeginningOfCurrentSubtitle: { keys: 'up' },
+        seekBackward: { keys: 'left' },
+        seekForward: { keys: 'right' },
+        seekToPreviousSubtitle: { keys: 'A' },
+        seekToNextSubtitle: { keys: 'D' },
+        seekToBeginningOfCurrentSubtitle: { keys: 'S' },
         adjustOffsetToPreviousSubtitle: { keys: isMacOs ? '⇧+left' : 'ctrl+left' },
         adjustOffsetToNextSubtitle: { keys: isMacOs ? '⇧+right' : 'ctrl+right' },
         decreaseOffset: { keys: isMacOs ? '⇧+⌃+right' : 'ctrl+shift+right' },
@@ -166,14 +171,17 @@ export const defaultSettings: AsbplayerSettings = {
         moveBottomSubtitlesDown: { keys: '' },
         moveTopSubtitlesUp: { keys: '' },
         moveTopSubtitlesDown: { keys: '' },
-        markHoveredToken5: { keys: 'Q+5' },
-        markHoveredToken4: { keys: 'Q+4' },
-        markHoveredToken3: { keys: 'Q+3' },
-        markHoveredToken2: { keys: 'Q+2' },
-        markHoveredToken1: { keys: 'Q+1' },
-        markHoveredToken0: { keys: 'Q+0' },
-        toggleHoveredTokenIgnored: { keys: 'Q+I' },
-        openStatistics: { keys: 'Q+S' },
+        // Hover word-marking moved off the Q prefix so Q is a clean auto-pause
+        // toggle (savi uses its own bucket system + Yomitan for word status).
+        // Rebind these in Settings → Keyboard shortcuts if you want them.
+        markHoveredToken5: { keys: '' },
+        markHoveredToken4: { keys: '' },
+        markHoveredToken3: { keys: '' },
+        markHoveredToken2: { keys: '' },
+        markHoveredToken1: { keys: '' },
+        markHoveredToken0: { keys: '' },
+        toggleHoveredTokenIgnored: { keys: '' },
+        openStatistics: { keys: '' },
     },
     recordWithAudioPlayback: true,
     preferMp3: true,
@@ -238,7 +246,15 @@ export const defaultSettings: AsbplayerSettings = {
     },
     webSocketClientEnabled: false,
     webSocketServerUrl: 'ws://127.0.0.1:8766/ws',
-    pauseOnHoverMode: 0,
+    saviCaptureEnabled: false,
+    saviDaemonUrl: 'http://127.0.0.1:4670',
+    saviDaemonToken: '',
+    saviHideNativeSubtitles: true,
+    saviRecordingGuard: true,
+    saviAiSegmentation: true,
+    // PauseOnHoverMode.inAndOut: hovering a subtitle word pauses the video and
+    // moving away resumes it (Language Reactor behavior). 0 = disabled.
+    pauseOnHoverMode: 1,
     lastSelectedAnkiExportMode: 'default',
     dictionaryTracks: [defaultDictionaryTrackSettings, defaultDictionaryTrackSettings, defaultDictionaryTrackSettings],
 };

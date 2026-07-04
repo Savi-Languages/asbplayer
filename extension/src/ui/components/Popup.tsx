@@ -37,6 +37,7 @@ import { createStatisticsPopup } from '@/services/statistics-util';
 import Tooltip from '@project/common/components/Tooltip';
 import { useCurrentTabId } from '../hooks/use-current-tab-id';
 import { useLastMediaIdOnce } from '../hooks/use-media-id';
+import SaviCapturePanel from '@/savi/ui/SaviCapturePanel';
 
 const globalStateProvider = new ExtensionGlobalStateProvider();
 
@@ -208,6 +209,7 @@ const Popup = ({
                     )}
                     <NavButton startIcon={<TutorialIcon />} onClick={onOpenUserGuide} label={t('action.userGuide')} />
                 </ButtonGroup>
+                <SaviCapturePanel settings={settings} />
                 <Grid
                     item
                     style={{

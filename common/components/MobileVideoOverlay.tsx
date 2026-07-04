@@ -1,12 +1,11 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import Grid, { GridProps } from '@mui/material/Grid';
 import IconButton from '@mui/material/IconButton';
-import NoteAddIcon from '@mui/icons-material/NoteAdd';
+import Button from '@mui/material/Button';
 import NavigateBeforeIcon from '@mui/icons-material/NavigateBefore';
 import NavigateNextIcon from '@mui/icons-material/NavigateNext';
-import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
 import TuneIcon from '@mui/icons-material/Tune';
-import { ControlType, MobileOverlayModel, PlayMode, PostMineAction } from '@project/common';
+import { ControlType, MobileOverlayModel, PlayMode } from '@project/common';
 import { makeStyles } from '@mui/styles';
 import { useTranslation } from 'react-i18next';
 import LogoIcon from './LogoIcon';
@@ -65,7 +64,7 @@ const GridContainer = React.forwardRef<HTMLDivElement, GridContainerProps>(funct
     ref
 ) {
     return (
-        <Grid ref={ref} container alignContent="center" justifyContent="center" {...props}>
+        <Grid ref={ref} container alignItems="center" alignContent="center" justifyContent="center" {...props}>
             {children}
         </Grid>
     );
@@ -78,7 +77,6 @@ interface Props {
     tooltipsEnabled: boolean;
     initialControlType: ControlType;
     onScrollToControlType: (controlType: ControlType) => void;
-    onMineSubtitle: () => void;
     onLoadSubtitles?: () => void;
     onOffset: (offset: number) => void;
     onPlaybackRate: (playbackRate: number) => void;
@@ -95,7 +93,6 @@ const MobileVideoOverlay = React.forwardRef<HTMLDivElement, Props>(function Mobi
         tooltipsEnabled,
         initialControlType,
         onScrollToControlType,
-        onMineSubtitle,
         onLoadSubtitles,
         onOffset,
         onPlaybackRate,
@@ -350,31 +347,6 @@ const MobileVideoOverlay = React.forwardRef<HTMLDivElement, Props>(function Mobi
             break;
     }
 
-    const miningButtonDisabled = (!model.emptySubtitleTrack && !model.subtitleDisplaying) || model.recording;
-
-    function miningButtonTooltip(model: MobileOverlayModel) {
-        if (!model) {
-            return null;
-        }
-
-        if (model.emptySubtitleTrack) {
-            if (model.recordingEnabled) {
-                return model.recording ? t('action.stopRecording') : t('action.startRecording');
-            }
-
-            return t('action.mine');
-        }
-
-        switch (model.postMineAction) {
-            case PostMineAction.exportCard:
-            case PostMineAction.showAnkiDialog:
-            case PostMineAction.none:
-                return t('action.mine');
-            case PostMineAction.updateLastCard:
-                return t('action.updateLastCard');
-        }
-    }
-
     const defaultTooltipProps = {
         className: classes.tooltip,
         placement: anchor,
@@ -385,39 +357,9 @@ const MobileVideoOverlay = React.forwardRef<HTMLDivElement, Props>(function Mobi
     return (
         <>
             <GridContainer ref={ref} direction="row" wrap="nowrap" className={containerClassName}>
-                {onLoadSubtitles && (
-                    <Grid item>
-                        <Tooltip {...defaultTooltipProps} title={t('action.loadSubtitles')!}>
-                            <span>
-                                <IconButton disabled={model.recording} onClick={onLoadSubtitles}>
-                                    <LogoIcon className={model.recording ? classes.inactiveButton : classes.button} />
-                                </IconButton>
-                            </span>
-                        </Tooltip>
-                    </Grid>
-                )}
-                <Grid item>
-                    <Tooltip {...defaultTooltipProps} title={miningButtonTooltip(model)!}>
-                        {model.emptySubtitleTrack && model.recordingEnabled ? (
-                            // Wrap in span so that Tooltip doesn't complain about disabled child. Spacing also looks better.
-                            <span>
-                                <IconButton onClick={onMineSubtitle}>
-                                    <FiberManualRecordIcon
-                                        className={model.recording ? classes.recordingButton : classes.button}
-                                    />
-                                </IconButton>
-                            </span>
-                        ) : (
-                            <span>
-                                <IconButton disabled={miningButtonDisabled} onClick={onMineSubtitle}>
-                                    <NoteAddIcon
-                                        className={miningButtonDisabled ? classes.inactiveButton : classes.button}
-                                    />
-                                </IconButton>
-                            </span>
-                        )}
-                    </Tooltip>
-                </Grid>
+                {/* savi: load-subtitles (logo) button + the native Mine button
+                    removed per user request — savi has its own Add-to-Anki flow
+                    via the hover-dictionary popup, so this one was redundant. */}
                 {!model.emptySubtitleTrack && (
                     <Grid item>
                         <Tooltip {...defaultTooltipProps} title={t('binds.toggleSubtitles')!}>
@@ -438,70 +380,29 @@ const MobileVideoOverlay = React.forwardRef<HTMLDivElement, Props>(function Mobi
                         </Tooltip>
                     </Grid>
                 )}
-                {!model.emptySubtitleTrack && (
-                    <Grid item>
-                        <Tooltip {...defaultTooltipProps} title={t('controls.playbackMode')!}>
-                            <span>
-                                <IconButton disabled={model.recording} onClick={handleOpenPlayModeSelector}>
-                                    <TuneIcon className={model.recording ? classes.inactiveButton : classes.button} />
-                                </IconButton>
-                            </span>
-                        </Tooltip>
-                    </Grid>
-                )}
-                {!model.recording && (
-                    <>
-                        <Grid item>
-                            <Tooltip {...defaultTooltipProps} title={leftNumberControlTitle}>
-                                <span>
-                                    <HoldableIconButton
-                                        onClick={handleLeftNumberControl}
-                                        onHold={handleHoldLeftNumberControl}
-                                        disabled={leftNumberControlDisabled}
-                                    >
-                                        <NavigateBeforeIcon
-                                            className={
-                                                leftNumberControlDisabled ? classes.inactiveButton : classes.button
-                                            }
-                                        />
-                                    </HoldableIconButton>
-                                </span>
-                            </Tooltip>
-                        </Grid>
-                        <Tooltip {...defaultTooltipProps} title={numberControlTitle}>
-                            <Grid item>
-                                <ScrollableNumberControls
-                                    offsetInputRef={offsetInputRef}
-                                    playbackRateInputRef={playbackInputRef}
-                                    offset={model.offset}
-                                    onOffset={onOffset}
-                                    playbackRate={model.playbackRate}
-                                    onPlaybackRate={onPlaybackRate}
-                                    initialControlType={initialControlType}
-                                    onScrollTo={handleScrollToControlType}
-                                    currentMilliseconds={model.currentTimestamp}
-                                />
+                {/* savi: "Playback Mode" and the offset/playback-rate number
+                    control removed per user request; pick a speed directly. */}
+                {!model.recording &&
+                    [0.5, 0.75, 1, 1.25, 1.5].map((rate) => {
+                        const active = Math.abs(model.playbackRate - rate) < 0.001;
+                        return (
+                            <Grid item key={rate}>
+                                <Button
+                                    size="small"
+                                    onClick={() => onPlaybackRate(rate)}
+                                    style={{
+                                        minWidth: 0,
+                                        padding: '2px 7px',
+                                        fontWeight: active ? 700 : 500,
+                                        color: active ? '#fff' : 'rgba(255, 255, 255, 0.6)',
+                                        backgroundColor: active ? 'rgba(255, 255, 255, 0.16)' : 'transparent',
+                                    }}
+                                >
+                                    {rate}×
+                                </Button>
                             </Grid>
-                        </Tooltip>
-                        <Grid item>
-                            <Tooltip {...defaultTooltipProps} title={rightNumberControlTitle}>
-                                <span>
-                                    <HoldableIconButton
-                                        onClick={handleRightNumberControl}
-                                        onHold={handleHoldRightNumberControl}
-                                        disabled={rightNumberControlDisabled}
-                                    >
-                                        <NavigateNextIcon
-                                            className={
-                                                rightNumberControlDisabled ? classes.inactiveButton : classes.button
-                                            }
-                                        />
-                                    </HoldableIconButton>
-                                </span>
-                            </Tooltip>
-                        </Grid>
-                    </>
-                )}
+                        );
+                    })}
             </GridContainer>
             {playModeSelectorOpen && (
                 <PlayModeSelector

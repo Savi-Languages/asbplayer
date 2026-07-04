@@ -94,6 +94,8 @@ import { DictionaryProvider } from '@project/common/dictionary-db/dictionary-pro
 import { ExtensionDictionaryStorage } from './extension-dictionary-storage';
 import { HoveredToken } from '@project/common/subtitle-annotations';
 import { v4 as uuidv4 } from 'uuid';
+import { SaviCaptureController } from '../savi/capture-controller';
+import { SaviHoverDictionary } from '../savi/hover-dict';
 
 let netflix = false;
 document.addEventListener('asbplayer-netflix-enabled', (e) => {
@@ -170,6 +172,8 @@ export default class Binding {
     readonly settings: SettingsProvider;
     private readonly _audioRecorder = new AudioRecorder();
     readonly bulkExportController: BulkExportController;
+    readonly saviCaptureController: SaviCaptureController;
+    readonly saviHoverDictionary: SaviHoverDictionary;
 
     private copyToClipboardOnMine: boolean;
     private clickToMineDefaultAction: PostMineAction;
@@ -231,6 +235,18 @@ export default class Binding {
         this.subtitleController.onOffsetChange = () => this.mobileVideoOverlayController.updateModel();
         this.mobileGestureController = new MobileGestureController(this);
         this.bulkExportController = new BulkExportController(this);
+        this.saviCaptureController = new SaviCaptureController({
+            video,
+            settings: this.settings,
+            currentSubtitles: () => this.subtitleController.subtitles,
+            videoSrc: () => this._registeredVideoSrc,
+            subtitleFileName: () => this.subtitleFileName(),
+            notify: (locKey, replacements) => this.subtitleController.notification(locKey, replacements),
+        });
+        this.saviHoverDictionary = new SaviHoverDictionary(
+            () => this.video,
+            () => this.subtitleController.subtitles
+        );
         this.hoveredToken = new HoveredToken();
         this.recordMedia = true;
         this.takeScreenshot = true;
@@ -525,6 +541,8 @@ export default class Binding {
         this.dragController.bind(this);
         this.mobileGestureController.bind();
         this.bulkExportController.bind();
+        this.saviCaptureController.bind();
+        this.saviHoverDictionary.start();
 
         const seek = (forward: boolean) => {
             const subtitle = adjacentSubtitle(
@@ -652,7 +670,13 @@ export default class Binding {
         this.video.addEventListener('ratechange', this.playbackRateListener);
 
         this.subtitleController.onMouseOver = (mouseEvent: MouseEvent) => {
-            if (this.pauseOnHoverMode !== PauseOnHoverMode.disabled && !this.video.paused) {
+            // Only pause when actually over subtitle TEXT — not the wide empty
+            // space of the subtitle container (hovering the blank area beside
+            // the text should not pause).
+            const overText =
+                mouseEvent.target instanceof Element &&
+                mouseEvent.target.closest('[data-track]') !== null;
+            if (overText && this.pauseOnHoverMode !== PauseOnHoverMode.disabled && !this.video.paused) {
                 this.video.pause();
                 this.pausedDueToHover = true;
 
@@ -662,10 +686,18 @@ export default class Binding {
                 }
 
                 this.mouseMoveListener = (e: MouseEvent) => {
-                    if (
-                        this._shouldAutoResumeOnSubtitlesMouseOut &&
-                        !this.subtitleController.intersects(e.clientX, e.clientY)
-                    ) {
+                    // Stay paused while the cursor is on subtitle text OR savi's
+                    // own hover surfaces (the dictionary popup / the word→popup
+                    // bridge) — so moving onto the popup to click "+ Add to Anki"
+                    // keeps it paused. Resume only once off both.
+                    const onText =
+                        e.target instanceof Element &&
+                        e.target.closest('[data-track]') !== null;
+                    const onHoverSurface = this.saviHoverDictionary.isOverHoverSurface(
+                        e.clientX,
+                        e.clientY
+                    );
+                    if (this._shouldAutoResumeOnSubtitlesMouseOut && !onText && !onHoverSurface) {
                         this.play();
                         this.pausedDueToHover = false;
                     }
@@ -1216,6 +1248,8 @@ export default class Binding {
             this.listener = undefined;
         }
 
+        this.saviCaptureController.unbind();
+        this.saviHoverDictionary.stop();
         this.unsubscribeStatisticsSeek?.();
         this.unsubscribeStatisticsSeek = undefined;
         this.unsubscribeStatisticsSubtitleMine?.();
@@ -1651,6 +1685,10 @@ export default class Binding {
         this._syncedTimestamp = Date.now();
         this._lastSyncedLocation = window.location.href;
 
+        if (subtitles.length > 0) {
+            this.saviCaptureController.onSubtitlesLoaded();
+        }
+
         if (this.video.paused) {
             this.mobileVideoOverlayController.show();
         }
@@ -1677,6 +1715,7 @@ export default class Binding {
     }
 
     private _resetSubtitles() {
+        this.saviCaptureController.onSubtitlesReset();
         this.subtitleController.reset();
         this.ankiUiSavedState = undefined;
         this._synced = false;

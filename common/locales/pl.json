@@ -467,6 +467,10 @@
         "missingFieldError": "Field \"{{field}}\" not found in note type",
         "webSocketClientEnabled": "Włącz klienta WebSocket",
         "webSocketServerUrl": "Adres URL serwera WebSocket",
+        "saviSection": "Savi capture",
+        "saviCaptureEnabled": "Auto-capture episodes to savi when subtitles load",
+        "saviDaemonUrl": "Savi daemon URL",
+        "saviDaemonToken": "Savi daemon token",
         "firefoxExtensionShortcutHelp": "Edytuj ten skrót z poziomu menedżera wtyczek na about:addons.",
         "postMinePlayback": "Stan odtwarzania po kopaniu",
         "pauseOnHoverMode": "Auto-pause when mousing over subtitles",
@@ -717,5 +721,18 @@
         "searchCategory": "Search category",
         "categoryAnime": "Anime",
         "categoryDrama": "Drama"
+    },
+    "savi": {
+        "notConfigured": "Savi: daemon URL/token not configured in settings",
+        "noSubtitles": "Savi: no subtitle track loaded to capture",
+        "captureStarted": "Savi: capturing episode",
+        "captureFinishing": "Savi: finishing episode…",
+        "captureFinished": "Savi: episode saved — {{lines}} lines, {{minutes}} min of dialogue",
+        "captureFailed": "Savi: capture failed — {{message}}",
+        "rateUnsupported": "Savi: playback rate {{rate}} cannot be captured (supported: 0.5–2)",
+        "capturing": "Capturing: {{title}}",
+        "idle": "Savi capture idle",
+        "start": "Capture",
+        "stop": "Stop"
     }
 }

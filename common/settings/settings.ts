@@ -589,6 +589,20 @@ export interface WebSocketClientSettings {
     readonly webSocketClientEnabled: boolean;
 }
 
+// Savi integration: streaming-capture daemon connection (see extension/src/savi)
+export interface SaviSettings {
+    readonly saviCaptureEnabled: boolean;
+    readonly saviDaemonUrl: string;
+    readonly saviDaemonToken: string;
+    readonly saviHideNativeSubtitles: boolean;
+    // Warn (loud button + banner + chime) when a video is playing but recording
+    // is OFF — e.g. a reload silently dropped it. See extension/src/savi/recording-guard.
+    readonly saviRecordingGuard: boolean;
+    // AI context-aware word segmentation in the hover dictionary (resolves
+    // でも-conjunction vs で+も, は-topic vs 葉, …). Opt-in; needs an LLM key on the daemon.
+    readonly saviAiSegmentation: boolean;
+}
+
 export type ChromeBoundKeyBindName = 'copySubtitle' | 'ankiExport' | 'updateLastCard' | 'exportCard' | 'takeScreenshot';
 export type SubtitleAlignment = 'top' | 'bottom';
 export enum SubtitleListPreference {
@@ -679,7 +693,8 @@ export interface AsbplayerSettings
         SubtitleSettings,
         DictionarySettings,
         StreamingVideoSettings,
-        WebSocketClientSettings {
+        WebSocketClientSettings,
+        SaviSettings {
     readonly subtitlePreview: string;
 }
 

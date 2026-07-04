@@ -160,6 +160,26 @@ export default defineConfig({
             'toggle-recording': {
                 description: '__MSG_shortcutToggleRecordingDescription__',
             },
+            // savi: one keypress grants the per-tab audio permission (a command
+            // gesture grants activeTab) AND starts the savi capture — so the
+            // user never has to hunt for the toolbar icon after a reload.
+            'savi-record': {
+                suggested_key: {
+                    default: 'Ctrl+Shift+S',
+                    mac: 'MacCtrl+Shift+S',
+                },
+                description: 'Savi: grant audio permission and start recording this tab',
+            },
+            // A simpler, optional SECOND shortcut for the same start/resume.
+            // Chrome caps suggested defaults at 4 (all four above are taken), so
+            // this one ships WITHOUT a default key — bind it once at
+            // chrome://extensions/shortcuts (e.g. Control+R on Mac / Alt+R
+            // elsewhere; Ctrl+R / Cmd+R can't be used — they're the reserved
+            // browser Reload). As a real command it still grants the per-tab
+            // audio permission, so it works for the post-reload resume too.
+            'savi-record-quick': {
+                description: 'Savi: start/resume recording (simpler shortcut — assign your own key)',
+            },
         };
 
         if (isDev) {
@@ -188,6 +208,24 @@ export default defineConfig({
                 ...key,
                 minimum_chrome_version: '116',
                 commands,
+                // Savi integration: the savi daemon serves no CORS headers, so
+                // extension-context fetches to it need host permissions. Covers
+                // localhost and mDNS .local hostnames (the daemon's supported
+                // runtime topology — bare LAN IPs are intentionally excluded).
+                host_permissions: [
+                    'http://127.0.0.1/*',
+                    'https://127.0.0.1/*',
+                    'http://localhost/*',
+                    'https://localhost/*',
+                    'http://*.local/*',
+                    'https://*.local/*',
+                    // Streaming sites: tabs.captureVisibleTab needs a host
+                    // permission to screenshot a mined card's video frame, since
+                    // the "+ Add to Anki" button is an in-page gesture and does
+                    // not grant the activeTab permission an icon/command would.
+                    'https://*.netflix.com/*',
+                    'https://*.youtube.com/*',
+                ],
             };
         }
 

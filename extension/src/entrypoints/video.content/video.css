@@ -22,8 +22,24 @@
     padding-right: 10px;
     user-select: text !important;
     cursor: text !important;
-    line-height: normal !important;
+    /* savi: roomier vertical rhythm — line-height spaces wrapped lines within
+       a cue; the margin opens a gap between stacked cues (the target line and
+       its translation). Character spacing is applied per-cue to Japanese only
+       (see saviSubtitleStyle), so English letters stay normal. */
+    line-height: 1.4 !important;
+    margin: 6px 0 !important;
     white-space: pre-wrap !important;
+}
+
+/* savi: round each per-line subtitle background into a Language Reactor-style
+   box and give the text comfortable breathing room inside it. The dark fill
+   comes from the subtitleBackgroundOpacity setting; box-decoration-break keeps
+   each line rounded when a subtitle wraps instead of one ragged shape. */
+.asbplayer-subtitles span[data-track] {
+    border-radius: 7px;
+    padding: 0.16em 0.6em;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
 }
 
 .asbplayer-subtitles-blurred {
@@ -258,4 +274,181 @@
     /* +1 more than mobile overlay */
     z-index: 2147483647 !important;
     pointer-events: auto !important;
+}
+
+/* savi: floating Record control for capture (managed by record-button.ts).
+   Hidden until the controller shows it; semi-transparent when idle so it
+   doesn't distract, solid + pulsing while recording. */
+.savi-record-button {
+    position: fixed;
+    right: 18px;
+    top: 18px;
+    z-index: 2147483640;
+    display: none;
+    align-items: center;
+    gap: 7px;
+    margin: 0;
+    padding: 7px 13px 7px 11px;
+    border: none;
+    border-radius: 999px;
+    background: rgba(20, 22, 28, 0.82);
+    color: #f0f0f0;
+    font:
+        600 13px -apple-system,
+        BlinkMacSystemFont,
+        'Segoe UI',
+        Roboto,
+        sans-serif;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0.72;
+    transition:
+        opacity 120ms ease,
+        background 120ms ease;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+}
+
+.savi-record-button:hover {
+    opacity: 1;
+}
+
+.savi-record-button .savi-record-dot {
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    background: #9aa0a6; /* gray when idle (not recording) */
+}
+
+.savi-record-button.recording {
+    opacity: 1;
+    background: rgba(48, 14, 14, 0.9);
+}
+
+.savi-record-button.recording .savi-record-dot {
+    background: #ff3b30; /* red + pulsing while live */
+    animation: savi-rec-pulse 1.4s ease-in-out infinite;
+}
+
+/* savi: "a video is playing but you are NOT recording" — the loud counterpart to
+   the calm idle state (e.g. a reload silently dropped recording). Bright red,
+   fully opaque, and the whole pill pulses so it can't go unnoticed. */
+.savi-record-button.alert {
+    opacity: 1;
+    background: rgba(176, 24, 24, 0.96);
+    box-shadow: 0 2px 16px rgba(255, 45, 45, 0.55);
+    animation: savi-rec-pulse 1.4s ease-in-out infinite;
+}
+
+.savi-record-button.alert .savi-record-dot {
+    background: #fff;
+}
+
+/* Transient "you need to do something" state (e.g. press Ctrl+Shift+S). */
+.savi-record-button.hint {
+    opacity: 1;
+    background: rgba(62, 46, 12, 0.95);
+}
+
+/* Sentence-level "Replay line" control — mirror of the record button, on the
+   opposite (right) side, so it never overlaps the centred subtitles. */
+.savi-replay-button {
+    position: fixed;
+    /* Above the subtitle container (2147483646) — it's pointer-events:auto with
+       cursor:text and its box can extend past the top line (when the caption
+       line below is wider), covering the button so clicks/cursor miss it. */
+    z-index: 2147483647;
+    display: none;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    padding: 7px 13px;
+    border: none;
+    border-radius: 999px;
+    background: rgba(20, 22, 28, 0.82);
+    color: #f0f0f0;
+    font:
+        600 13px -apple-system,
+        BlinkMacSystemFont,
+        'Segoe UI',
+        Roboto,
+        sans-serif;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0.72;
+    transition:
+        opacity 120ms ease,
+        background 120ms ease;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+}
+
+.savi-replay-button:hover {
+    opacity: 1;
+    background: rgba(30, 33, 40, 0.95);
+}
+
+.savi-replay-button .savi-replay-icon {
+    font-size: 16px;
+    line-height: 1;
+}
+
+@keyframes savi-rec-pulse {
+    0%,
+    100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 0.3;
+        transform: scale(0.78);
+    }
+}
+
+/* savi: playback-speed quick-select (managed by speed-control.ts). Sits just
+   BELOW asbplayer's own top control bar (logo / mine / subtitles / playback
+   mode / offset) so the two don't collide — both are centered at the top.
+   Semi-transparent until hovered; the active rate is a filled pill. */
+.savi-speed-control {
+    position: fixed;
+    top: 84px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 2147483640;
+    display: none;
+    align-items: center;
+    gap: 2px;
+    padding: 3px;
+    border-radius: 999px;
+    background: rgba(20, 22, 28, 0.78);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+    opacity: 0.45;
+    transition: opacity 120ms ease;
+}
+
+.savi-speed-control:hover {
+    opacity: 1;
+}
+
+.savi-speed-button {
+    border: none;
+    background: transparent;
+    color: #e8e8e8;
+    font:
+        600 12px -apple-system,
+        BlinkMacSystemFont,
+        'Segoe UI',
+        Roboto,
+        sans-serif;
+    line-height: 1;
+    padding: 5px 10px;
+    border-radius: 999px;
+    cursor: pointer;
+}
+
+.savi-speed-button:hover {
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.savi-speed-button.active {
+    background: #f0f0f0;
+    color: #15171c;
 }
