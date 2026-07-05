@@ -403,11 +403,14 @@ export class SaviWordPanel {
             if (featured && (featured.gloss || featured.grammar)) {
                 Object.assign(this._ctxBody.style, { color: '#9fd1a0', fontSize: '13.5px', fontStyle: 'normal' });
                 this._ctxBody.textContent = `▸ ${[featured.gloss, featured.grammar].filter(Boolean).join(' · ')}`;
-            } else {
+            } else if (aiTokens) {
                 Object.assign(this._ctxBody.style, { color: '#93a0ad', fontSize: '13px', fontStyle: 'italic' });
-                this._ctxBody.textContent = aiTokens
-                    ? 'No distinct in-context reading — the dictionary entry above applies.'
-                    : 'AI context unavailable right now (provider busy) — the dictionary entry above applies.';
+                this._ctxBody.textContent = 'No distinct in-context reading — the dictionary entry above applies.';
+            } else {
+                // Segmentation failed, but the rich explanation below may still have
+                // succeeded — don't contradict it with an "unavailable" note. Leave this
+                // terse line empty; setExplanation() owns the all-failed messaging.
+                this._ctxBody.textContent = '';
             }
         }
         if (this._breakdownBody) {
