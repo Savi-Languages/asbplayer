@@ -1,4 +1,4 @@
-import { currentAccessToken, daemonToken, signIn, signOut, storedAccount } from './account';
+import { currentAccessToken, daemonToken, remoteDaemonToken, signIn, signOut, storedAccount } from './account';
 
 // account.ts talks to browser.storage.local + fetch (GoTrue REST); both are
 // faked in-memory, following recording-intent.test.ts's browser-fake pattern.
@@ -164,5 +164,34 @@ describe('savi account', () => {
         fetchMock.mockClear();
         await signOut();
         expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    // The offscreen document has NO browser.storage (Chrome exposes only
+    // chrome.runtime messaging there) — remoteDaemonToken must work with
+    // messaging alone and never touch storage.
+    it('remoteDaemonToken asks the background and prefers its token', async () => {
+        delete (globalThis as any).browser.storage; // offscreen has no storage API
+        (globalThis as any).browser.runtime = {
+            sendMessage: jest.fn(async (message: any) =>
+                message?.command === 'savi-current-account-token' ? { accessToken: 'access-bg' } : undefined
+            ),
+        };
+
+        expect(await remoteDaemonToken('lan-token')).toBe('access-bg');
+    });
+
+    it('remoteDaemonToken falls back to the LAN token when the background has no session or is unreachable', async () => {
+        delete (globalThis as any).browser.storage;
+        (globalThis as any).browser.runtime = {
+            sendMessage: jest.fn(async () => ({ accessToken: undefined })),
+        };
+        expect(await remoteDaemonToken(' lan-token ')).toBe('lan-token');
+
+        (globalThis as any).browser.runtime = {
+            sendMessage: jest.fn(async () => {
+                throw new Error('Could not establish connection');
+            }),
+        };
+        expect(await remoteDaemonToken('lan-token')).toBe('lan-token');
     });
 });

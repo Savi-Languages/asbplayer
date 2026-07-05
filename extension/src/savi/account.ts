@@ -7,12 +7,16 @@
 // Deliberately NOT @supabase/supabase-js: we need exactly three GoTrue REST
 // calls (password grant, refresh grant, logout), storage must be
 // extension-wide (`browser.storage.local`, readable from the background
-// worker, the offscreen document, content scripts, and the options page —
-// supabase-js wants a per-context localStorage), and its timer-based
-// auto-refresh dies with the MV3 service worker anyway. Refresh here is
-// on-demand (any reader refreshes a stale session, single-flight per context)
-// plus a background `browser.alarms` heartbeat so the common case never even
-// hits the stale path.
+// worker, content scripts, and the options page — supabase-js wants a
+// per-context localStorage), and its timer-based auto-refresh dies with the
+// MV3 service worker anyway. Refresh here is on-demand (any reader refreshes
+// a stale session, single-flight per context) plus a background
+// `browser.alarms` heartbeat so the common case never even hits the stale path.
+//
+// The OFFSCREEN DOCUMENT is the exception: Chrome gives it no extension APIs
+// beyond `chrome.runtime` messaging — `browser.storage` is undefined there —
+// so it must use `remoteDaemonToken` (asks the background) instead of
+// `daemonToken`.
 //
 // The Supabase URL + publishable key are public client config (like a
 // Firebase web config) — the same values savi commits in apps/.env.
@@ -159,10 +163,50 @@ export const currentAccessToken = (): Promise<string | undefined> => accessToken
  *  outlive several of them. */
 export const daemonToken = async (lanToken: string): Promise<string> => (await currentAccessToken()) ?? lanToken.trim();
 
+// ── Offscreen-document access ────────────────────────────────────────────
+// Offscreen documents have NO `browser.storage` (Chrome exposes only
+// `chrome.runtime` messaging there), so they can't call `daemonToken`
+// directly — chunk uploads crashed on `undefined.local`. Instead the
+// background answers a token request over runtime messaging.
+
+const currentTokenCommand = 'savi-current-account-token';
+
+/** Background-side responder for `remoteDaemonToken`. Registered by
+ *  `bindSaviAccountRefresh` on every worker wake. Ignores (returns undefined
+ *  for) every other message so coexisting listeners are unaffected. */
+const bindTokenServer = (): void => {
+    browser.runtime.onMessage.addListener(
+        (message: any, _sender: unknown, sendResponse: (response: unknown) => void) => {
+            if (message?.command !== currentTokenCommand) {
+                return undefined;
+            }
+            currentAccessToken().then(
+                (accessToken) => sendResponse({ accessToken }),
+                () => sendResponse({ accessToken: undefined })
+            );
+            return true; // async sendResponse
+        }
+    );
+};
+
+/** `daemonToken` for storage-less contexts (the offscreen document): asks the
+ *  background for the current account token, LAN token as the fallback. Call
+ *  per REQUEST, like `daemonToken`. */
+export const remoteDaemonToken = async (lanToken: string): Promise<string> => {
+    try {
+        const response: any = await browser.runtime.sendMessage({ command: currentTokenCommand });
+        return (response?.accessToken as string | undefined) ?? lanToken.trim();
+    } catch (e) {
+        // No listener / worker unreachable — the LAN token still works.
+        return lanToken.trim();
+    }
+};
+
 /** Background-worker heartbeat: keep the session fresh so on-demand readers
- *  (chunk uploads, hover lookups) virtually never block on a refresh. Call at
- *  the service worker's top level — `alarms.create` with an existing name is a
- *  no-op, and MV3 requires the listener re-registered on every worker wake. */
+ *  (chunk uploads, hover lookups) virtually never block on a refresh, plus the
+ *  token server the offscreen document depends on. Call at the service
+ *  worker's top level — `alarms.create` with an existing name is a no-op, and
+ *  MV3 requires listeners re-registered on every worker wake. */
 export const bindSaviAccountRefresh = (): void => {
     void browser.alarms.create(alarmName, { periodInMinutes: alarmPeriodMinutes });
     browser.alarms.onAlarm.addListener((alarm) => {
@@ -170,4 +214,5 @@ export const bindSaviAccountRefresh = (): void => {
             void accessTokenWithMargin(alarmMarginSeconds);
         }
     });
+    bindTokenServer();
 };

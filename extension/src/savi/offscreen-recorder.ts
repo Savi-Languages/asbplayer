@@ -26,7 +26,7 @@ import {
 } from './messages';
 import { SegmentMeta } from './segmenter';
 import { ChunkQueue } from './chunk-queue';
-import { daemonToken } from './account';
+import { remoteDaemonToken } from './account';
 import { CaptureFinishInfo, finishCapture, postChunk, SaviDaemonConfig } from './daemon-client';
 
 const chunkTimesliceMs = 3000;
@@ -140,7 +140,8 @@ const startCapture = async (message: SaviOffscreenStartMessage): Promise<void> =
     // expiry/refresh.
     const configFor = async (): Promise<SaviDaemonConfig> => ({
         baseUrl: message.baseUrl,
-        token: await daemonToken(message.lanToken),
+        // Via the background — this offscreen document has no browser.storage.
+        token: await remoteDaemonToken(message.lanToken),
     });
     const capture: ActiveCapture = {
         captureId: message.captureId,
