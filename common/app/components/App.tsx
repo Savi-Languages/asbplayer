@@ -7,6 +7,7 @@ import { useLocationHash } from '@project/common/hooks/use-location-hash';
 import {
     MediaFragment,
     OpenStatisticsOverlayMessage,
+    RequestLocalSubtitlesMessage,
     SubtitleModel,
     VideoTabModel,
     LegacyPlayerSyncMessage,
@@ -25,7 +26,7 @@ import {
     RequestSubtitlesResponse,
 } from '@project/common';
 import { createTheme } from '@project/common/theme';
-import { AsbplayerSettings, Profile, SettingsProvider } from '@project/common/settings';
+import { AsbplayerSettings, DictionaryTrack, Profile, SettingsProvider } from '@project/common/settings';
 import { humanReadableTime, download, extractText, timeDurationDisplay } from '@project/common/util';
 import { AudioClip, Mp3Encoder } from '@project/common/audio-clip';
 import { ExportParams } from '@project/common/anki';
@@ -105,6 +106,7 @@ const subtitleExtensions = [
     '.vtt',
     '.sup',
     '.nfvtt',
+    '.nfimsc',
     '.ytxml',
     '.ytsrv3',
     '.dfxp',
@@ -253,7 +255,12 @@ function Content(props: ContentProps) {
     );
 }
 
-function AppStatisticsOverlay({ dictionaryProvider, mediaId, ...rest }: StatisticsOverlayProps & { mediaId: string }) {
+function AppStatisticsOverlay({
+    dictionaryProvider,
+    mediaId,
+    dictionaryTracks,
+    ...rest
+}: StatisticsOverlayProps & { mediaId: string; dictionaryTracks: DictionaryTrack[] }) {
     const [position, setPosition] = useState({ x: 0, y: 0 });
 
     useEffect(() => {
@@ -270,7 +277,7 @@ function AppStatisticsOverlay({ dictionaryProvider, mediaId, ...rest }: Statisti
     }, []);
 
     const [oneUncollectedSentenceDetailsDialogState, setOneUncollectedSentenceDetailsDialogState] = useState<
-        Omit<ComponentProps<typeof OneUncollectedSentenceDetailsDialog>, 'onClose'>
+        Omit<ComponentProps<typeof OneUncollectedSentenceDetailsDialog>, 'dictionaryTracks' | 'onClose'>
     >({
         open: false,
         entries: [],
@@ -298,6 +305,7 @@ function AppStatisticsOverlay({ dictionaryProvider, mediaId, ...rest }: Statisti
                 {...oneUncollectedSentenceDetailsDialogState}
                 mediaId={mediaId}
                 dictionaryProvider={dictionaryProvider}
+                dictionaryTracks={dictionaryTracks}
                 onClose={() => setOneUncollectedSentenceDetailsDialogState((s) => ({ ...s, open: false }))}
             />
         </>
@@ -583,6 +591,9 @@ function App({
                     setAlertOpen(true);
                     break;
                 case PostMineAction.showAnkiDialog:
+                    handleAnkiDialogRequest(newCard);
+                    break;
+                case PostMineAction.showUpdateCardDialog:
                     handleAnkiDialogRequest(newCard);
                     break;
                 case PostMineAction.exportCard:
@@ -1148,6 +1159,7 @@ function App({
         if (inVideoPlayer) {
             extension.videoPlayer = true;
             extension.loadedSubtitles = false;
+            extension.setSubtitleTracks([], []);
             extension.syncedVideoElement = undefined;
             extension.startHeartbeat();
             return undefined;
@@ -1228,12 +1240,22 @@ function App({
                 } else {
                     openStatisticsOverlay();
                 }
+            } else if (message.data.command === 'request-local-subtitles') {
+                const requestMessage = message.data as RequestLocalSubtitlesMessage;
+                extension.sendSubtitles(requestMessage.messageId, {
+                    subtitles,
+                    subtitleFileNames: sources.subtitleFiles.map((f) => f.name),
+                });
             }
         }
 
         const unsubscribe = extension.subscribe(onMessage);
         extension.videoPlayer = false;
         extension.loadedSubtitles = subtitles.length > 0;
+        extension.setSubtitleTracks(
+            subtitles,
+            sources.subtitleFiles.map((f) => f.name)
+        );
         extension.syncedVideoElement = tab;
         extension.startHeartbeat();
         return unsubscribe;
@@ -1243,6 +1265,7 @@ function App({
         supportsDictionaryStatistics,
         inVideoPlayer,
         sources.videoFileUrl,
+        sources.subtitleFiles,
         statisticsOverlayOpen,
         tab,
         handleFiles,
@@ -1807,6 +1830,7 @@ function App({
                                             open={statisticsOverlayOpen}
                                             mediaId={extension.id}
                                             dictionaryProvider={dictionaryProvider}
+                                            dictionaryTracks={settings.dictionaryTracks}
                                             onOpenStatistics={handleOpenStatistics}
                                             onReceivedSnapshot={handleReceivedStatisticsSnapshot}
                                             onSnapshotCleared={handleStatisticsOverlaySnapshotCleared}
