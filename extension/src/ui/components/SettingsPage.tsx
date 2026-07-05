@@ -19,6 +19,7 @@ import { useTheme, type Theme } from '@mui/material/styles';
 import { settingsPageConfigs } from '@/services/pages';
 import { DictionaryProvider } from '@project/common/dictionary-db';
 import { useLocationHash } from '@project/common/hooks/use-location-hash';
+import { useSaviAccount } from '../hooks/use-savi-account';
 
 const useStyles = makeStyles<Theme>((theme) => ({
     root: {
@@ -86,6 +87,7 @@ const SettingsPage = ({
     }, [updateLocalFontsPermission, updateLocalFonts]);
 
     const commands = useCommandKeyBinds();
+    const saviAccount = useSaviAccount();
 
     const handleOpenExtensionShortcuts = useCallback(() => {
         browser.tabs.create({ active: true, url: 'chrome://extensions/shortcuts' });
@@ -144,6 +146,9 @@ const SettingsPage = ({
                         onAnnotationTutorialSeen={onAnnotationTutorialSeen}
                         testCard={extensionTestCard}
                         scrollToId={scrollToId}
+                        saviAccountEmail={saviAccount.email}
+                        onSaviSignIn={saviAccount.signIn}
+                        onSaviSignOut={saviAccount.signOut}
                     />
                 </DialogContent>
                 <Box style={{ marginBottom: theme.spacing(2) }} className={classes.profilesContainer}>

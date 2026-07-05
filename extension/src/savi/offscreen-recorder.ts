@@ -26,6 +26,7 @@ import {
 } from './messages';
 import { SegmentMeta } from './segmenter';
 import { ChunkQueue } from './chunk-queue';
+import { daemonToken } from './account';
 import { CaptureFinishInfo, finishCapture, postChunk, SaviDaemonConfig } from './daemon-client';
 
 const chunkTimesliceMs = 3000;
@@ -37,7 +38,9 @@ interface ActiveCapture {
     readonly episodeId: string;
     readonly show?: string;
     readonly title: string;
-    readonly config: SaviDaemonConfig;
+    /** Resolved per daemon call, NOT snapshotted: the account JWT expires
+     *  ~hourly and an episode capture routinely outlives it. */
+    readonly configFor: () => Promise<SaviDaemonConfig>;
     readonly requester: SaviRequester;
     readonly stream: MediaStream;
     readonly audioContext: AudioContext;
@@ -132,19 +135,25 @@ const startCapture = async (message: SaviOffscreenStartMessage): Promise<void> =
     audioContext.createMediaStreamSource(stream).connect(monitorGain);
     monitorGain.connect(audioContext.destination);
 
-    const config: SaviDaemonConfig = { baseUrl: message.baseUrl, token: message.token };
+    // Current account token per chunk, LAN token as the fallback — reading it
+    // at upload time is what keeps an hours-long capture alive across JWT
+    // expiry/refresh.
+    const configFor = async (): Promise<SaviDaemonConfig> => ({
+        baseUrl: message.baseUrl,
+        token: await daemonToken(message.lanToken),
+    });
     const capture: ActiveCapture = {
         captureId: message.captureId,
         episodeId: message.episodeId,
         show: message.show,
         title: message.title,
-        config,
+        configFor,
         requester: message.requester,
         stream,
         audioContext,
         monitorGain,
-        queue: new ChunkQueue((chunk) =>
-            postChunk(config, {
+        queue: new ChunkQueue(async (chunk) =>
+            postChunk(await configFor(), {
                 captureId: message.captureId,
                 segmentId: chunk.segmentId,
                 mediaTimeMs: chunk.mediaTimeMs,
@@ -188,7 +197,7 @@ const finishAndNotify = async (): Promise<void> => {
     try {
         await endSegment(capture);
         const stats = await capture.queue.drain();
-        const info = await finishCapture(capture.config, capture.captureId);
+        const info = await finishCapture(await capture.configFor(), capture.captureId);
         notifyCaptureEnded(capture.requester, {
             ok: true,
             info,

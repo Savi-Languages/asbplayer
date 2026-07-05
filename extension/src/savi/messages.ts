@@ -243,7 +243,11 @@ export interface SaviOffscreenStartMessage {
     readonly show?: string;
     readonly title: string;
     readonly baseUrl: string;
-    readonly token: string;
+    /** The legacy LAN token, as a FALLBACK only (may be ''). The offscreen
+     *  document resolves the signed-in account's token per chunk — a capture
+     *  outlives the ~1h JWT, so a token snapshotted at start would go stale
+     *  mid-episode. */
+    readonly lanToken: string;
     readonly requester: SaviRequester;
 }
 

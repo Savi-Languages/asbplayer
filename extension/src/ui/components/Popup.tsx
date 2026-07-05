@@ -31,6 +31,7 @@ import { DictionaryProvider } from '@project/common/dictionary-db';
 import { useAnnotationTutorial } from '@project/common/hooks/use-annotation-tutorial';
 import { ExtensionGlobalStateProvider } from '@/services/extension-global-state-provider';
 import { uiTabRegistry, useMediaId } from '../hooks/use-media-id';
+import { useSaviAccount } from '../hooks/use-savi-account';
 import Statistics from '@project/common/components/Statistics';
 import Box from '@mui/material/Box';
 import { createStatisticsPopup } from '@/services/statistics-util';
@@ -118,6 +119,7 @@ const Popup = ({
     }, []);
     const { supportedLanguages } = useSupportedLanguages();
     const { localFontsAvailable, localFontsPermission, localFontFamilies } = useLocalFontFamilies();
+    const saviAccount = useSaviAccount();
     const theme = useTheme();
     const { handleAnnotationTutorialSeen, inAnnotationTutorial } = useAnnotationTutorial({ globalStateProvider });
     const [scrollToId, setScrollToId] = useState<string>();
@@ -256,6 +258,9 @@ const Popup = ({
                             inAnnotationTutorial={inAnnotationTutorial}
                             onAnnotationTutorialSeen={handleAnnotationTutorialSeen}
                             scrollToId={scrollToId}
+                            saviAccountEmail={saviAccount.email}
+                            onSaviSignIn={saviAccount.signIn}
+                            onSaviSignOut={saviAccount.signOut}
                         />
                     )}
                     {statisticsOpen && (
