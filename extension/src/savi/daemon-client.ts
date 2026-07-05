@@ -59,7 +59,15 @@ const candidateBaseUrls = (configuredBase: string): string[] => {
             return [configuredBase];
         }
         const preferred = Number(url.port || (url.protocol === 'https:' ? 443 : 80));
-        const ports = [preferred, ...PORT_CANDIDATES.filter((p) => p !== preferred)];
+        // Configured port → the named family → preferred+1..+5 as a last
+        // resort — the same walk as the shell's pick_port.
+        const ports = [
+            ...new Set([
+                preferred,
+                ...PORT_CANDIDATES,
+                ...Array.from({ length: 5 }, (_, i) => preferred + 1 + i),
+            ]),
+        ];
         return ports.map((port) => {
             const candidate = new URL(url.origin);
             candidate.port = String(port);
