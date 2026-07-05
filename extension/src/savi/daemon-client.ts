@@ -1,19 +1,28 @@
-// Thin HTTP client for the savi daemon's capture API.
+// Thin HTTP client for the savi daemon's capture API (API v2 — every daemon
+// route lives under /v2/; the pre-restructure unversioned /api/ surface is
+// gone).
 //
-// Contract (savi-server crates/savi-server/src/capture.rs):
-//   POST {base}/api/capture/start     {episodeId, show?, title?, lang?} → {captureId}
-//        Capture v2: episodeId is platform-stable, so captureId is
-//        deterministic (safe(episodeId)) and an existing episode resumes.
-//        show/title are best-effort page metadata for the per-show library.
-//   POST {base}/api/capture/chunk?captureId=&segmentId=&mediaTimeMs=&rate=
+// Contract (savi crates/savi-daemon/src/capture.rs, docs/daemon-api/):
+//   POST {base}/v2/capture/start     {episodeId, show?, title?, lang?} → {captureId}
+//        episodeId is platform-stable, so captureId is deterministic
+//        (safe(episodeId)) and an existing episode resumes. show/title are
+//        best-effort page metadata for the per-show library.
+//   POST {base}/v2/capture/chunk?captureId=&segmentId=&mediaTimeMs=&rate=
 //        raw audio bytes; mediaTimeMs/rate read from a segment's FIRST chunk
-//   POST {base}/api/capture/subtitles {captureId, content, format}
-//   POST {base}/api/capture/finish    {captureId} → episode summary
+//   POST {base}/v2/capture/subtitles {captureId, content, format}
+//   POST {base}/v2/capture/finish    {captureId} → episode summary
 //
 // All requests carry `Authorization: Bearer <token>`. The extension
 // declares host permissions for localhost/127.0.0.1/*.local, which is
 // what exempts these cross-origin fetches from CORS (the daemon serves
 // no CORS headers by design — it expects same-origin or trusted callers).
+//
+// PORT DISCOVERY: if the daemon's preferred port is taken by another program,
+// the desktop shell walks preferred..preferred+5 and binds the first free one.
+// When a request fails at the network level, we probe the same candidate range
+// with GET /v2/health (which requires the bearer token — a 200 proves it's OUR
+// daemon, not whatever else answered) and pin the discovered base until it
+// stops responding.
 
 export interface SaviDaemonConfig {
     readonly baseUrl: string;
@@ -29,9 +38,47 @@ export interface CaptureFinishInfo {
 
 export const normalizedBaseUrl = (baseUrl: string) => baseUrl.trim().replace(/\/+$/, '');
 
-const request = async (config: SaviDaemonConfig, path: string, init: RequestInit) => {
-    const url = `${normalizedBaseUrl(config.baseUrl)}${path}`;
-    const response = await fetch(url, {
+// Must match the desktop shell's pick_port() walk (savi apps/desktop).
+const PORT_CANDIDATES = 6;
+
+// The base that most recently answered /v2/health after a network failure on
+// the configured URL. Module state per extension context (background and the
+// offscreen document each discover independently — that's fine, it's one
+// health probe each).
+let discoveredBaseUrl: string | null = null;
+
+/** The configured base plus its port-walk siblings (loopback hosts only —
+ *  a remote/mDNS daemon has a fixed, deliberately-configured address). */
+const candidateBaseUrls = (configuredBase: string): string[] => {
+    try {
+        const url = new URL(configuredBase);
+        if (url.hostname !== '127.0.0.1' && url.hostname !== 'localhost') {
+            return [configuredBase];
+        }
+        const preferred = Number(url.port || (url.protocol === 'https:' ? 443 : 80));
+        return Array.from({ length: PORT_CANDIDATES }, (_, i) => {
+            const candidate = new URL(url.origin);
+            candidate.port = String(preferred + i);
+            return normalizedBaseUrl(candidate.origin);
+        });
+    } catch (e) {
+        return [configuredBase];
+    }
+};
+
+const probeHealth = async (base: string, token: string): Promise<boolean> => {
+    try {
+        const response = await fetch(`${base}/v2/health`, {
+            headers: { Authorization: `Bearer ${token}` },
+        });
+        return response.ok;
+    } catch (e) {
+        return false;
+    }
+};
+
+const doFetch = async (base: string, config: SaviDaemonConfig, path: string, init: RequestInit) => {
+    const response = await fetch(`${base}${path}`, {
         ...init,
         headers: {
             ...init.headers,
@@ -55,6 +102,37 @@ const request = async (config: SaviDaemonConfig, path: string, init: RequestInit
     return await response.json();
 };
 
+const request = async (config: SaviDaemonConfig, path: string, init: RequestInit) => {
+    const configured = normalizedBaseUrl(config.baseUrl);
+    const base = discoveredBaseUrl ?? configured;
+
+    try {
+        return await doFetch(base, config, path, init);
+    } catch (e) {
+        // HTTP-level errors (auth, 4xx/5xx) come back as our Error above and
+        // mean the daemon WAS reached — rethrow. Only a network-level failure
+        // (fetch rejection: nothing listening / port moved) triggers discovery.
+        if (e instanceof Error && e.message.startsWith('savi daemon:')) {
+            throw e;
+        }
+
+        discoveredBaseUrl = null;
+
+        for (const candidate of candidateBaseUrls(configured)) {
+            if (candidate === base) {
+                continue; // just failed
+            }
+
+            if (await probeHealth(candidate, config.token)) {
+                discoveredBaseUrl = candidate;
+                return await doFetch(candidate, config, path, init);
+            }
+        }
+
+        throw e;
+    }
+};
+
 const jsonInit = (body: any): RequestInit => ({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -65,7 +143,7 @@ export const startCapture = async (
     config: SaviDaemonConfig,
     { episodeId, show, title, lang }: { episodeId: string; show?: string; title?: string; lang?: string }
 ): Promise<string> => {
-    const body = await request(config, '/api/capture/start', jsonInit({ episodeId, show, title, lang }));
+    const body = await request(config, '/v2/capture/start', jsonInit({ episodeId, show, title, lang }));
     return body.captureId;
 };
 
@@ -73,17 +151,17 @@ export const postSubtitles = async (
     config: SaviDaemonConfig,
     { captureId, content, format }: { captureId: string; content: string; format: 'srt' | 'vtt' }
 ): Promise<void> => {
-    await request(config, '/api/capture/subtitles', jsonInit({ captureId, content, format }));
+    await request(config, '/v2/capture/subtitles', jsonInit({ captureId, content, format }));
 };
 
-// POST {base}/api/episode/transcript {episodeId, content, format} — store the
+// POST {base}/v2/episode/transcript {episodeId, content, format} — store the
 // full subtitle track keyed by episode WITHOUT a capture session, so the daemon
 // can build a whole-episode gist for hover-only (never-recorded) episodes.
 export const postEpisodeTranscript = async (
     config: SaviDaemonConfig,
     { episodeId, content, format }: { episodeId: string; content: string; format: 'srt' | 'vtt' }
 ): Promise<void> => {
-    await request(config, '/api/episode/transcript', jsonInit({ episodeId, content, format }));
+    await request(config, '/v2/episode/transcript', jsonInit({ episodeId, content, format }));
 };
 
 export const postChunk = async (
@@ -102,7 +180,7 @@ export const postChunk = async (
         mediaTimeMs: String(mediaTimeMs),
         rate: String(rate),
     });
-    await request(config, `/api/capture/chunk?${query.toString()}`, {
+    await request(config, `/v2/capture/chunk?${query.toString()}`, {
         method: 'POST',
         headers: { 'Content-Type': 'audio/webm' },
         body: data,
@@ -148,7 +226,7 @@ export interface SaviDictResult {
 /** Tokenize a line; tokens concatenate back to the input so the caller can
  *  map a cursor offset to a token. Empty when the daemon has no analyzer. */
 export const tokenize = async (config: SaviDaemonConfig, lang: string, text: string): Promise<SaviToken[]> => {
-    const body = await request(config, '/api/tokenize', jsonInit({ lang, text }));
+    const body = await request(config, '/v2/tokenize', jsonInit({ lang, text }));
     return body.tokens ?? [];
 };
 
@@ -169,7 +247,7 @@ export const segmentLine = async (
 ): Promise<SaviSegmentResult> => {
     const body = await request(
         config,
-        '/api/segment',
+        '/v2/segment',
         jsonInit({
             lang,
             text,
@@ -193,7 +271,7 @@ export const explainWord = async (
 ): Promise<string | null> => {
     const body = await request(
         config,
-        '/api/explain',
+        '/v2/explain',
         jsonInit({
             lang,
             term,
@@ -210,7 +288,7 @@ export const explainWord = async (
 /** JP→EN dictionary lookup + per-kanji breakdown; both empty when nothing
  *  matches or no dictionary is loaded. */
 export const lookupDict = async (config: SaviDaemonConfig, lang: string, term: string): Promise<SaviDictResult> => {
-    const path = `/api/dict/${encodeURIComponent(lang)}/${encodeURIComponent(term)}`;
+    const path = `/v2/dict/${encodeURIComponent(lang)}/${encodeURIComponent(term)}`;
     const body = await request(config, path, { method: 'GET' });
     return { entries: body.entries ?? [], kanji: body.kanji ?? [] };
 };
@@ -240,7 +318,7 @@ export interface SaviKanjiFull {
  *  components + stories, example words). Heavier than the dict lookup's lean kanji,
  *  so it's a separate call the tap panel makes; empty when nothing matches. */
 export const lookupKanji = async (config: SaviDaemonConfig, lang: string, term: string): Promise<SaviKanjiFull[]> => {
-    const path = `/api/kanji/${encodeURIComponent(lang)}/${encodeURIComponent(term)}`;
+    const path = `/v2/kanji/${encodeURIComponent(lang)}/${encodeURIComponent(term)}`;
     const body = await request(config, path, { method: 'GET' });
     return body.kanji ?? [];
 };
@@ -286,7 +364,7 @@ export const mineLine = async (
 ): Promise<MineLineResult> => {
     const body = await request(
         config,
-        '/api/anki/mine',
+        '/v2/anki/mine',
         jsonInit({ episodeId, lineText, surface, term, reading, deck, imageBase64 })
     );
     return {
@@ -299,7 +377,7 @@ export const mineLine = async (
 };
 
 export const finishCapture = async (config: SaviDaemonConfig, captureId: string): Promise<CaptureFinishInfo> => {
-    const body = await request(config, '/api/capture/finish', jsonInit({ captureId }));
+    const body = await request(config, '/v2/capture/finish', jsonInit({ captureId }));
     return {
         episodeId: body.episodeId,
         segmentsStitched: body.segmentsStitched,
