@@ -118,7 +118,7 @@ This gives the LR-style target + native view.
 
 ## Furigana + word coloring (savi player)
 
-The savi player (served by the daemon at `http://localhost:4670`) shows the
+The savi player (served by the daemon at `http://localhost:4030`) shows the
 **condensed transcript with furigana over kanji** and **words colored by your
 learning bucket** (new = highlight, learning = amber, known = dimmed). Toggle
 **Furigana** / **Colors** above the transcript. This is for _review /

@@ -38,8 +38,11 @@ export interface CaptureFinishInfo {
 
 export const normalizedBaseUrl = (baseUrl: string) => baseUrl.trim().replace(/\/+$/, '');
 
-// Must match the desktop shell's pick_port() walk (savi apps/desktop).
-const PORT_CANDIDATES = 6;
+// Must match the desktop shell's pick_port() walk (savi apps/desktop): the
+// configured port first, then the savi port family — 4030 ("Savi" ASCII-sum
+// ×10, the default), 4350 ("savi"), 3070 ("SAVI"), 6880 ("Khalifa"),
+// 8290 ("Tianxiao"). None are registered or common local-dev ports.
+const PORT_CANDIDATES = [4030, 4350, 3070, 6880, 8290];
 
 // The base that most recently answered /v2/health after a network failure on
 // the configured URL. Module state per extension context (background and the
@@ -56,9 +59,10 @@ const candidateBaseUrls = (configuredBase: string): string[] => {
             return [configuredBase];
         }
         const preferred = Number(url.port || (url.protocol === 'https:' ? 443 : 80));
-        return Array.from({ length: PORT_CANDIDATES }, (_, i) => {
+        const ports = [preferred, ...PORT_CANDIDATES.filter((p) => p !== preferred)];
+        return ports.map((port) => {
             const candidate = new URL(url.origin);
-            candidate.port = String(preferred + i);
+            candidate.port = String(port);
             return normalizedBaseUrl(candidate.origin);
         });
     } catch (e) {
