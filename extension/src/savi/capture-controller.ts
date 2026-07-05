@@ -13,6 +13,7 @@
 // here so the upstream diff stays minimal.
 
 import { SettingsProvider } from '@project/common/settings';
+import { daemonToken } from './account';
 import { Segmenter, SegmenterOutput } from './segmenter';
 import { serializeToSrt, SerializableSubtitle } from './subtitle-serializer';
 import { deriveEpisodeId, deriveShowAndTitle, deriveShowAndTitleFromBasename } from './episode';
@@ -242,8 +243,9 @@ export class SaviCaptureController {
                     'saviRecordingGuard',
                 ]);
 
-            if (!saviDaemonUrl.trim() || !saviDaemonToken.trim()) {
-                this._host.notify('Savi: daemon URL/token not configured in settings');
+            // Account JWT when signed in, legacy LAN token otherwise.
+            if (!saviDaemonUrl.trim() || !(await daemonToken(saviDaemonToken))) {
+                this._host.notify('Savi: sign in (or set a daemon token) in the extension settings');
                 return;
             }
 

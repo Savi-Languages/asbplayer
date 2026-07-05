@@ -6,6 +6,7 @@ import Radio from '@mui/material/Radio';
 import RadioGroup from '@mui/material/RadioGroup';
 import Switch from '@mui/material/Switch';
 import Stack from '@mui/material/Stack';
+import Typography from '@mui/material/Typography';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import FormGroup from '@mui/material/FormGroup';
 import Checkbox from '@mui/material/Checkbox';
@@ -51,6 +52,12 @@ interface Props {
     extensionSupportsPauseOnHover?: boolean;
     extensionSupportsSeekableTrackSetting?: boolean;
     extensionSupportsAutoCopyableTrackSetting?: boolean;
+    // Savi account (unified auth): supplied only by extension hosts, which own
+    // the session storage. When present the daemon-token field collapses into
+    // a sign-in block (the account JWT replaces the copy-pasted token).
+    saviAccountEmail?: string;
+    onSaviSignIn?: (email: string, password: string) => Promise<{ ok: boolean; errorMessage?: string }>;
+    onSaviSignOut?: () => Promise<void>;
 }
 
 const MiscSettingTab: React.FC<Props> = ({
@@ -63,6 +70,9 @@ const MiscSettingTab: React.FC<Props> = ({
     extensionSupportsPauseOnHover,
     extensionSupportsSeekableTrackSetting,
     extensionSupportsAutoCopyableTrackSetting,
+    saviAccountEmail,
+    onSaviSignIn,
+    onSaviSignOut,
 }) => {
     const { t } = useTranslation();
     const {
@@ -92,6 +102,24 @@ const MiscSettingTab: React.FC<Props> = ({
         thumbnailPreview,
     } = settings;
     const validRegex = useMemo(() => regexIsValid(subtitleRegexFilter), [subtitleRegexFilter]);
+    const [saviEmail, setSaviEmail] = useState('');
+    const [saviPassword, setSaviPassword] = useState('');
+    const [saviSigningIn, setSaviSigningIn] = useState(false);
+    const [saviSignInError, setSaviSignInError] = useState<string>();
+    const handleSaviSignIn = useCallback(async () => {
+        if (onSaviSignIn === undefined) {
+            return;
+        }
+        setSaviSigningIn(true);
+        setSaviSignInError(undefined);
+        const result = await onSaviSignIn(saviEmail.trim(), saviPassword);
+        setSaviSigningIn(false);
+        if (result.ok) {
+            setSaviPassword('');
+        } else {
+            setSaviSignInError(result.errorMessage ?? 'sign-in failed');
+        }
+    }, [onSaviSignIn, saviEmail, saviPassword]);
     const [webSocketConnectionSucceeded, setWebSocketConnectionSucceeded] = useState<boolean>();
     const pingWebSocketServer = useCallback(() => {
         const client = new WebSocketClient();
@@ -493,14 +521,66 @@ const MiscSettingTab: React.FC<Props> = ({
                     value={saviDaemonUrl}
                     onChange={(e) => onSettingChanged('saviDaemonUrl', e.target.value)}
                 />
-                <SettingsTextField
-                    color="primary"
-                    fullWidth
-                    type="password"
-                    label={'Savi daemon token'}
-                    value={saviDaemonToken}
-                    onChange={(e) => onSettingChanged('saviDaemonToken', e.target.value)}
-                />
+                {onSaviSignIn !== undefined && saviAccountEmail ? (
+                    <Stack direction="row" spacing={1} alignItems="center">
+                        <Typography variant="body2" sx={{ flexGrow: 1 }}>
+                            {`Signed in as ${saviAccountEmail}`}
+                        </Typography>
+                        <Button variant="outlined" size="small" onClick={() => void onSaviSignOut?.()}>
+                            {'Sign out'}
+                        </Button>
+                    </Stack>
+                ) : onSaviSignIn !== undefined ? (
+                    // Signed out: the account sign-in, with the legacy LAN-token
+                    // field still available as the transition fallback.
+                    <>
+                        <SettingsTextField
+                            color="primary"
+                            fullWidth
+                            type="email"
+                            label={'Savi account email'}
+                            value={saviEmail}
+                            onChange={(e) => setSaviEmail(e.target.value)}
+                        />
+                        <SettingsTextField
+                            color="primary"
+                            fullWidth
+                            type="password"
+                            label={'Savi account password'}
+                            value={saviPassword}
+                            onChange={(e) => setSaviPassword(e.target.value)}
+                            error={saviSignInError !== undefined}
+                            helperText={saviSignInError}
+                        />
+                        <Stack direction="row">
+                            <Button
+                                variant="contained"
+                                disabled={!saviEmail.trim() || !saviPassword || saviSigningIn}
+                                onClick={() => void handleSaviSignIn()}
+                            >
+                                {saviSigningIn ? 'Signing in…' : 'Sign in to savi'}
+                            </Button>
+                        </Stack>
+                        <SettingsTextField
+                            color="primary"
+                            fullWidth
+                            type="password"
+                            label={'Savi daemon token (legacy fallback)'}
+                            value={saviDaemonToken}
+                            onChange={(e) => onSettingChanged('saviDaemonToken', e.target.value)}
+                        />
+                    </>
+                ) : (
+                    // Hosts without account support (no session storage here).
+                    <SettingsTextField
+                        color="primary"
+                        fullWidth
+                        type="password"
+                        label={'Savi daemon token'}
+                        value={saviDaemonToken}
+                        onChange={(e) => onSettingChanged('saviDaemonToken', e.target.value)}
+                    />
+                )}
                 <SettingsSection>{t('settings.mining')}</SettingsSection>
                 <SettingsTextField
                     type="number"

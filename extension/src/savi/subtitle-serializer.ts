@@ -1,5 +1,5 @@
 // Serializes asbplayer's in-memory subtitle models to SRT text for the
-// savi daemon (POST /api/capture/subtitles, format: "srt").
+// savi daemon (POST /v2/capture/subtitles, format: "srt").
 //
 // SRT was chosen over VTT because the timestamp format is the only
 // structure required and asbplayer's SubtitleModel already carries plain

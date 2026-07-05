@@ -192,7 +192,8 @@ export default defineConfig({
             };
         }
 
-        let permissions = ['tabs', 'storage', 'unlimitedStorage'];
+        // 'alarms': the savi account-session refresh heartbeat (savi/account.ts).
+        let permissions = ['tabs', 'storage', 'unlimitedStorage', 'alarms'];
 
         if (browser === 'chrome') {
             permissions = [...permissions, 'tabCapture', 'activeTab', 'contextMenus', 'sidePanel', 'offscreen'];

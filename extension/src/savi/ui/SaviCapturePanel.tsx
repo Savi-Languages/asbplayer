@@ -12,6 +12,7 @@ import Paper from '@mui/material/Paper';
 import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
 import StopIcon from '@mui/icons-material/Stop';
 import { AsbplayerSettings } from '@project/common/settings';
+import { storedAccount } from '../account';
 import { SaviCaptureState, SaviCommand, SaviCaptureStateMessage, SaviRequestStartMessage } from '../messages';
 
 interface Props {
@@ -34,6 +35,11 @@ const queryCaptureState = async (): Promise<SaviCaptureState> => {
 const SaviCapturePanel = ({ settings }: Props) => {
     const [captureState, setCaptureState] = useState<SaviCaptureState>({ active: false });
     const [lastResult, setLastResult] = useState<string>();
+    const [signedIn, setSignedIn] = useState<boolean>(false);
+
+    useEffect(() => {
+        void storedAccount().then((account) => setSignedIn(account !== undefined));
+    }, []);
 
     const refreshState = useCallback(() => {
         queryCaptureState().then(setCaptureState);
@@ -84,7 +90,9 @@ const SaviCapturePanel = ({ settings }: Props) => {
         refreshState();
     }, [refreshState]);
 
-    if (!settings.saviDaemonUrl.trim() || !settings.saviDaemonToken.trim()) {
+    // Configured = a daemon URL plus SOME credential: the signed-in account
+    // (preferred) or the legacy LAN token (transition fallback).
+    if (!settings.saviDaemonUrl.trim() || (!signedIn && !settings.saviDaemonToken.trim())) {
         return null;
     }
 

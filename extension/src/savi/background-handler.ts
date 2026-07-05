@@ -39,6 +39,7 @@ import {
     SaviTokenizeMessage,
     SaviTokenizeResponse,
 } from './messages';
+import { daemonToken } from './account';
 import { clearRecordingIntent, hasRecordingIntent, setRecordingIntent } from './recording-intent';
 import {
     lookupDict,
@@ -156,12 +157,16 @@ export default class SaviCommandHandler implements CommandHandler {
         return false;
     }
 
+    // Bearer preference: the signed-in account's JWT, else the legacy LAN
+    // token setting (the transition fallback). Resolved per request — JWTs
+    // expire ~hourly.
     private async _daemonConfig(): Promise<SaviDaemonConfig | null> {
         const { saviDaemonUrl, saviDaemonToken } = await this._settings.get(['saviDaemonUrl', 'saviDaemonToken']);
-        if (!saviDaemonUrl.trim() || !saviDaemonToken.trim()) {
+        const token = await daemonToken(saviDaemonToken);
+        if (!saviDaemonUrl.trim() || !token) {
             return null;
         }
-        return { baseUrl: normalizedBaseUrl(saviDaemonUrl), token: saviDaemonToken.trim() };
+        return { baseUrl: normalizedBaseUrl(saviDaemonUrl), token };
     }
 
     private async _tokenize(message: SaviTokenizeMessage): Promise<SaviTokenizeResponse> {
@@ -341,13 +346,16 @@ export default class SaviCommandHandler implements CommandHandler {
             return { started: false, errorCode: 'other', errorMessage: 'no tab id for capture request' };
         }
 
-        const { saviDaemonUrl, saviDaemonToken } = await this._settings.get(['saviDaemonUrl', 'saviDaemonToken']);
+        const { saviDaemonToken } = await this._settings.get(['saviDaemonToken']);
+        const config = await this._daemonConfig();
 
-        if (!saviDaemonUrl.trim() || !saviDaemonToken.trim()) {
-            return { started: false, errorCode: 'not-configured', errorMessage: 'savi daemon URL/token not set' };
+        if (!config) {
+            return {
+                started: false,
+                errorCode: 'not-configured',
+                errorMessage: 'sign in to savi (or set a daemon token) in the extension settings',
+            };
         }
-
-        const config = { baseUrl: normalizedBaseUrl(saviDaemonUrl), token: saviDaemonToken.trim() };
 
         const state = await this._captureState();
 
@@ -394,7 +402,9 @@ export default class SaviCommandHandler implements CommandHandler {
                 show: message.show,
                 title: message.title,
                 baseUrl: config.baseUrl,
-                token: config.token,
+                // The LAN fallback only — the offscreen document re-resolves
+                // the account token per chunk (a capture outlives a JWT).
+                lanToken: saviDaemonToken.trim(),
                 requester: { tabId, src: message.src },
             },
         };

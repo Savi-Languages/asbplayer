@@ -208,6 +208,12 @@ interface Props {
     onSettingsChanged: (settings: Partial<AsbplayerSettings>) => void;
     onOpenChromeExtensionShortcuts: () => void;
     onUnlockLocalFonts: () => void;
+    // Savi account (unified auth) — supplied only by the extension hosts,
+    // which own the session storage; without these the daemon-token field
+    // renders instead.
+    saviAccountEmail?: string;
+    onSaviSignIn?: (email: string, password: string) => Promise<{ ok: boolean; errorMessage?: string }>;
+    onSaviSignOut?: () => Promise<void>;
 }
 
 // Filter out keys that look like '0', '1', ... as those are invalid
@@ -256,6 +262,9 @@ export default function SettingsForm({
     onSettingsChanged,
     onOpenChromeExtensionShortcuts,
     onUnlockLocalFonts,
+    saviAccountEmail,
+    onSaviSignIn,
+    onSaviSignOut,
 }: Props) {
     const supportsDictionary = !extensionInstalled || extensionSupportsDictionary;
     const supportsDictionaryBrowser = !extensionInstalled || extensionSupportsDictionaryBrowser;
@@ -541,6 +550,9 @@ export default function SettingsForm({
                     extensionSupportsPauseOnHover={extensionSupportsPauseOnHover}
                     extensionSupportsSeekableTrackSetting={extensionSupportsSeekableTrackSetting}
                     extensionSupportsAutoCopyableTrackSetting={extensionSupportsAutoCopyableTrackSetting}
+                    saviAccountEmail={saviAccountEmail}
+                    onSaviSignIn={onSaviSignIn}
+                    onSaviSignOut={onSaviSignOut}
                 />
             </TabPanel>
             <TabPanel value={tabIndex} index={tabIndicesById['about']} tabsOrientation={tabsOrientation}>

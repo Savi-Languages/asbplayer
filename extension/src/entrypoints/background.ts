@@ -78,6 +78,7 @@ import OpenStatisticsHandler from '@/handlers/video/open-statistics-handler';
 import StatisticsOverlayForwarderHandler from '@/handlers/statistics-overlay/statistics-overlay-forwarder-handler';
 import OpenStatisticsOverlayHandler from '@/handlers/open-statistics-overlay-handler';
 import SaviCommandHandler from '@/savi/background-handler';
+import { bindSaviAccountRefresh } from '@/savi/account';
 import { SaviCommand } from '@/savi/messages';
 import { clearRecordingIntent } from '@/savi/recording-intent';
 
@@ -85,6 +86,10 @@ export default defineBackground(() => {
     if (!isFirefoxBuild) {
         browser.storage.session.setAccessLevel({ accessLevel: 'TRUSTED_AND_UNTRUSTED_CONTEXTS' });
     }
+
+    // Keep the savi account session fresh (alarm heartbeat) so daemon calls
+    // never block on a token refresh.
+    bindSaviAccountRefresh();
 
     // Recording-intent markers live in storage.session keyed by tabId; clear a
     // tab's marker when it closes so a reused tabId never inherits stale intent.
