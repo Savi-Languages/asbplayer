@@ -63,6 +63,26 @@ interface GetBoundMediaResponseBody {
     media: BoundMedia[];
 }
 
+export interface GetSubtitlesCommand {
+    command: 'get-subtitles';
+    messageId: string;
+    body: {
+        mediaId?: string;
+        trackNumbers?: number[];
+    };
+}
+
+export interface SubtitleCue {
+    text: string;
+    start: number;
+    end: number;
+    track: number;
+}
+
+interface GetSubtitlesResponseBody {
+    subtitles: SubtitleCue[];
+}
+
 export class WebSocketClient {
     private _socket?: WebSocket;
     private _pingInterval?: NodeJS.Timeout;
@@ -74,6 +94,7 @@ export class WebSocketClient {
     onLoadSubtitles?: (command: LoadSubtitlesCommand) => Promise<void>;
     onSeekTimestamp?: (command: SeekTimestampCommand) => Promise<void>;
     onGetBoundMedia?: () => Promise<BoundMedia[]>;
+    onGetSubtitles?: (mediaId: string | undefined, trackNumbers: number[] | undefined) => Promise<SubtitleCue[]>;
 
     get socket() {
         return this._socket;
@@ -165,6 +186,20 @@ export class WebSocketClient {
                             };
                             this._socket?.send(JSON.stringify(response));
                         }
+                    } else if (payload.command === 'get-subtitles') {
+                        if (this.onGetSubtitles !== undefined) {
+                            const messageId = payload.messageId;
+                            const subtitles = await this.onGetSubtitles(
+                                payload.body?.mediaId,
+                                payload.body?.trackNumbers
+                            );
+                            const response: Response<GetSubtitlesResponseBody> = {
+                                command: 'response',
+                                messageId,
+                                body: { subtitles },
+                            };
+                            this._socket?.send(JSON.stringify(response));
+                        }
                     }
                 }
             };
@@ -235,5 +270,6 @@ export class WebSocketClient {
         this.onSeekTimestamp = undefined;
         this.onLoadSubtitles = undefined;
         this.onGetBoundMedia = undefined;
+        this.onGetSubtitles = undefined;
     }
 }

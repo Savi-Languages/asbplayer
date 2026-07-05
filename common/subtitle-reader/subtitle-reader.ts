@@ -1,5 +1,6 @@
 import { compile as parseAss } from 'ass-compiler';
 import SrtParser from '@qgustavor/srt-parser';
+import { subtitlesToSrt } from './subtitles-to-srt';
 import { WebVTT } from 'videojs-vtt.js';
 import { XMLParser } from 'fast-xml-parser';
 import { SubtitleHtml, SubtitleTextImage, Token, Tokenization } from '@project/common';
@@ -764,16 +765,7 @@ export default class SubtitleReader {
     }
 
     subtitlesToSrt(subtitles: SubtitleNode[]) {
-        const parser = new SrtParser({ numericTimestamps: true });
-        const nodes = subtitles.map((subtitleNode, i) => {
-            return {
-                id: String(i),
-                startTime: subtitleNode.start,
-                endTime: subtitleNode.end,
-                text: subtitleNode.text,
-            };
-        });
-        return parser.toSrt(nodes);
+        return subtitlesToSrt(subtitles);
     }
 
     async filesToSrt(files: File[]) {

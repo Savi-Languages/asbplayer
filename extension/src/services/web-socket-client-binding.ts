@@ -4,6 +4,7 @@ import {
     LoadSubtitlesCommand,
     MineSubtitleCommand,
     SeekTimestampCommand,
+    SubtitleCue,
     WebSocketClient,
 } from '@project/common/web-socket-client';
 import TabRegistry from './tab-registry';
@@ -14,6 +15,11 @@ import {
     ExtensionToVideoCommand,
     Message,
     PostMineAction,
+    LocalSubtitlesResponseMessage,
+    RequestLocalSubtitlesMessage,
+    RequestSubtitlesMessage,
+    RequestSubtitlesResponse,
+    SubtitleModel,
     ToggleVideoSelectMessage,
 } from '@project/common';
 
@@ -42,6 +48,39 @@ const cyrb53 = (str: string) => {
 };
 
 const boundMediaId = (key: string) => cyrb53(key);
+
+// Filters subtitles to the requested tracks, or returns all of them when none are specified.
+const filterByTracks = (subtitles: SubtitleModel[], trackNumbers: number[] | undefined) => {
+    if (trackNumbers === undefined || trackNumbers.length === 0) {
+        return subtitles;
+    }
+
+    return subtitles.filter((subtitle) => trackNumbers.includes(subtitle.track));
+};
+
+const toSubtitleCues = (subtitles: SubtitleModel[]): SubtitleCue[] =>
+    subtitles.map(({ text, start, end, track }) => ({ text, start, end, track }));
+
+// Requests the loaded subtitles from a local asbplayer app instance
+const requestSubtitlesFromAsbplayer = async (
+    tabRegistry: TabRegistry,
+    asbplayerId: string
+): Promise<SubtitleModel[] | undefined> => {
+    const response = await tabRegistry.publishCommandToAsbplayersAndAwaitResponse<
+        RequestLocalSubtitlesMessage,
+        LocalSubtitlesResponseMessage
+    >({
+        asbplayerId,
+        responseCommand: 'local-subtitles-response',
+        commandFactory: (asbplayer, messageId): ExtensionToAsbPlayerCommand<RequestLocalSubtitlesMessage> => ({
+            sender: 'asbplayer-extension-to-player',
+            message: { command: 'request-local-subtitles', messageId },
+            asbplayerId: asbplayer.id,
+        }),
+    });
+
+    return response?.response.subtitles;
+};
 
 export const bindWebSocketClient = async (settings: SettingsProvider, tabRegistry: TabRegistry) => {
     client?.unbind();
@@ -213,6 +252,55 @@ export const bindWebSocketClient = async (settings: SettingsProvider, tabRegistr
             });
 
         return [...streamingMedia, ...localMedia];
+    };
+    client.onGetSubtitles = async (
+        mediaId: string | undefined,
+        trackNumbers: number[] | undefined
+    ): Promise<SubtitleCue[]> => {
+        const videoElements = await tabRegistry.activeVideoElements();
+        let match: (typeof videoElements)[number] | undefined;
+
+        if (mediaId !== undefined) {
+            match = videoElements.find(
+                (videoElement) => boundMediaId(`streaming:${videoElement.id}:${videoElement.src}`) === mediaId
+            );
+        } else {
+            // Default to the active tab's video element
+            const [activeTab] = await browser.tabs.query({ active: true, currentWindow: true });
+            match = videoElements.find((videoElement) => videoElement.id === activeTab?.id);
+        }
+
+        const target = match && { tabId: match.id, src: match.src };
+
+        let subtitles: SubtitleModel[] | undefined;
+
+        if (target !== undefined) {
+            const requestSubtitlesCommand: ExtensionToVideoCommand<RequestSubtitlesMessage> = {
+                sender: 'asbplayer-extension-to-video',
+                src: target.src,
+                message: { command: 'request-subtitles' },
+            };
+
+            try {
+                const response = (await browser.tabs.sendMessage(target.tabId, requestSubtitlesCommand)) as
+                    | RequestSubtitlesResponse
+                    | undefined;
+                subtitles = response?.subtitles;
+            } catch (e) {
+                // Targeting a non-active/discarded tab can fail
+                subtitles = undefined;
+            }
+        } else if (mediaId !== undefined) {
+            // Fall back to a local asbplayer app instance (only resolvable by explicit mediaId)
+            const asbplayerInstances = await tabRegistry.asbplayerInstances();
+            const asbplayer = asbplayerInstances.find((instance) => boundMediaId(`local:${instance.id}`) === mediaId);
+
+            if (asbplayer !== undefined) {
+                subtitles = await requestSubtitlesFromAsbplayer(tabRegistry, asbplayer.id);
+            }
+        }
+
+        return toSubtitleCues(filterByTracks(subtitles ?? [], trackNumbers));
     };
 };
 
