@@ -246,7 +246,7 @@ const SaviSettingsTab: React.FC<Props> = ({
                         onChange={(e) => onSettingChanged('saviAiSegmentation', e.target.checked)}
                     />
                 }
-                label={'AI in-context definitions when you tap a word (needs an LLM key on the daemon)'}
+                label={'AI in-context definitions when you tap a word (requires sign-in)'}
                 labelPlacement="start"
             />
             <SettingsTextField
