@@ -25,6 +25,9 @@ import {
     AddProfileMessage,
     RemoveProfileMessage,
     RequestSubtitlesFromAppMessage,
+    RequestSubtitlesResponse,
+    LocalSubtitlesResponseMessage,
+    SubtitleTrack,
     LoadSubtitlesMessage,
     RequestCopyHistoryMessage,
     RequestCopyHistoryResponse,
@@ -54,6 +57,7 @@ import {
     AckTabsMessage,
     BrowserFeatures,
 } from '@project/common';
+import { buildSubtitleTracks } from '@project/common/util';
 import { DictionaryStatisticsSnapshot } from '@project/common/dictionary-statistics';
 import {
     DictionaryLocalTokenInput,
@@ -109,6 +113,7 @@ export default class ChromeExtension {
     videoPlayer: boolean | undefined;
     syncedVideoElement: VideoTabModel | undefined;
     loadedSubtitles: boolean = false;
+    subtitleTracks: SubtitleTrack[] = [];
 
     private readonly windowEventListener: (event: MessageEvent) => void;
     private readonly _responseResolves: { [key: string]: (value: any) => void } = {};
@@ -169,6 +174,7 @@ export default class ChromeExtension {
                         sidePanel: this.sidePanel,
                         sidePanelAppRequestedLocation: this.sidePanelAppRequestedLocation,
                         loadedSubtitles: this.loadedSubtitles,
+                        subtitleTracks: this.subtitleTracks,
                         syncedVideoElement: this.syncedVideoElement,
                         videoPlayer: this.videoPlayer ?? false,
                     };
@@ -190,6 +196,10 @@ export default class ChromeExtension {
         };
 
         window.addEventListener('message', this.windowEventListener);
+    }
+
+    get supportsDictionaryTokenAnnotationConfig() {
+        return this.installed && gte(this.version, '1.19.0');
     }
 
     get supportsDictionaryMatchAcrossScripts() {
@@ -309,6 +319,10 @@ export default class ChromeExtension {
         return id;
     }
 
+    setSubtitleTracks(subtitles: { track: number }[], subtitleFileNames: string[]) {
+        this.subtitleTracks = buildSubtitleTracks(subtitles, subtitleFileNames);
+    }
+
     startHeartbeat() {
         if (!this.installed) {
             return;
@@ -349,6 +363,7 @@ export default class ChromeExtension {
             sidePanel: this.sidePanel,
             sidePanelAppRequestedLocation: this.sidePanelAppRequestedLocation,
             loadedSubtitles,
+            subtitleTracks: this.subtitleTracks,
             syncedVideoElement,
         };
         window.postMessage({
@@ -460,6 +475,18 @@ export default class ChromeExtension {
         };
         window.postMessage(command);
         return this._createResponsePromise(messageId);
+    }
+
+    sendSubtitles(messageId: string, response: RequestSubtitlesResponse) {
+        const command: AsbPlayerCommand<LocalSubtitlesResponseMessage> = {
+            sender: 'asbplayerv2',
+            message: {
+                command: 'local-subtitles-response',
+                messageId,
+                response,
+            },
+        };
+        window.postMessage(command);
     }
 
     saveTokenLocal(
