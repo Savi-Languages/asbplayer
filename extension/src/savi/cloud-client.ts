@@ -8,9 +8,11 @@
 
 import { currentAccessToken } from './account';
 
-// Our own domain — its `/v2` proxy targets the Cloud Run backend, so this host
-// survives Cloud Run URL changes (matches the desktop's default SAVI_CLOUD_URL).
-const SAVI_CLOUD_URL = 'https://savi.tianxiaocao.com';
+// The cloud base URL is the caller's `saviCloudUrl` setting (default
+// https://savi.tianxiaocao.com — our own domain, whose `/v2` proxy targets Cloud
+// Run so the host survives URL changes). Passing it in — rather than hardcoding
+// prod — lets `dev:local` point the extension at http://localhost:8080.
+const normalizeBaseUrl = (baseUrl: string): string => baseUrl.trim().replace(/\/+$/, '');
 
 export interface TranslateResult {
     /** The translated text. */
@@ -21,14 +23,15 @@ export interface TranslateResult {
     detectedSourceLang?: string;
 }
 
-/** Translate `text` into `targetLang` (e.g. 'en') via the cloud AI proxy —
- *  DeepL first, LLM fallback. `sourceLang` is optional (auto-detected).
- *  `context` (e.g. the full subtitle line) influences the translation but is
- *  not itself translated — it powers a context-aware single-word gloss (SV-12/13;
- *  DeepL has no word alignment, so context is the mechanism). Requires the user
- *  to be signed in (the JWT is relayed to the cloud, which holds every key).
- *  Throws when signed out or on a non-2xx response. */
+/** Translate `text` into `targetLang` (e.g. 'en') via the cloud AI proxy at
+ *  `cloudUrl` — DeepL first, LLM fallback. `sourceLang` is optional
+ *  (auto-detected). `context` (e.g. the full subtitle line) influences the
+ *  translation but is not itself translated — it powers a context-aware
+ *  single-word gloss (SV-12/13; DeepL has no word alignment, so context is the
+ *  mechanism). Requires the user to be signed in (the JWT is relayed to the
+ *  cloud, which holds every key). Throws when signed out or on a non-2xx response. */
 export const translate = async (
+    cloudUrl: string,
     text: string,
     targetLang: string,
     sourceLang?: string,
@@ -38,7 +41,7 @@ export const translate = async (
     if (!token) {
         throw new Error('sign in to use AI translation');
     }
-    const response = await fetch(`${SAVI_CLOUD_URL}/v2/ai/translate`, {
+    const response = await fetch(`${normalizeBaseUrl(cloudUrl)}/v2/ai/translate`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -57,16 +60,16 @@ export const translate = async (
 /** A word's learning bucket, mirroring savi-core's `Bucket` (serde snake_case). */
 export type WordBucket = 'new' | 'word_box' | 'known';
 
-/** Known-INCLUSIVE per-lemma bucket map for `lang` (GET /v2/words/{lang}/buckets).
- *  Untracked lemmas are absent. Glossing (SV-13) reads this to gloss a word iff
- *  its lemma is not yet `known`. Returns `{}` when signed out (so glossing
- *  degrades to glossing all content words); throws on a non-2xx response. */
-export const wordBuckets = async (lang: string): Promise<Record<string, WordBucket>> => {
+/** Known-INCLUSIVE per-lemma bucket map for `lang` (GET /v2/words/{lang}/buckets)
+ *  at `cloudUrl`. Untracked lemmas are absent. Glossing (SV-13) reads this to
+ *  gloss a word iff its lemma is not yet `known`. Returns `{}` when signed out (so
+ *  glossing degrades to glossing all content words); throws on a non-2xx response. */
+export const wordBuckets = async (cloudUrl: string, lang: string): Promise<Record<string, WordBucket>> => {
     const token = await currentAccessToken();
     if (!token) {
         return {};
     }
-    const response = await fetch(`${SAVI_CLOUD_URL}/v2/words/${encodeURIComponent(lang)}/buckets`, {
+    const response = await fetch(`${normalizeBaseUrl(cloudUrl)}/v2/words/${encodeURIComponent(lang)}/buckets`, {
         headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
     });
     if (!response.ok) {

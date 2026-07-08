@@ -244,9 +244,16 @@ export default class SaviCommandHandler implements CommandHandler {
     // Empty response = signed out / all providers failed → the label is skipped.
     private async _glossTranslate(message: SaviGlossTranslateMessage): Promise<SaviGlossTranslateResponse> {
         try {
-            // cloud-client.translate(text, targetLang=INTO, sourceLang=FROM, context):
+            const { saviCloudUrl } = await this._settings.get(['saviCloudUrl']);
+            // cloud-client.translate(cloudUrl, text, targetLang=INTO, sourceLang=FROM, context):
             // the word is FROM the learning language, translated INTO the gloss language.
-            const result = await cloudTranslate(message.word, message.glossLang, message.targetLang, message.context);
+            const result = await cloudTranslate(
+                saviCloudUrl,
+                message.word,
+                message.glossLang,
+                message.targetLang,
+                message.context
+            );
             return { text: result.text, provider: result.provider };
         } catch (e) {
             return {};
@@ -258,7 +265,8 @@ export default class SaviCommandHandler implements CommandHandler {
     // Known. Empty map = signed out / unreachable → gloss all content words.
     private async _wordBuckets(message: SaviWordBucketsMessage): Promise<SaviWordBucketsResponse> {
         try {
-            return { buckets: await cloudWordBuckets(message.lang) };
+            const { saviCloudUrl } = await this._settings.get(['saviCloudUrl']);
+            return { buckets: await cloudWordBuckets(saviCloudUrl, message.lang) };
         } catch (e) {
             return { buckets: {} };
         }
