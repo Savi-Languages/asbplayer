@@ -371,12 +371,19 @@ export default class VideoDataSyncController {
     private async _trySaviAutoLoad(): Promise<boolean> {
         try {
             if (!(await this._settings.getSingle('saviAutoLoadSubtitles'))) {
+                console.info('[savi auto-load] disabled in Settings → Savi');
                 return false;
             }
 
             const { targetLanguage, openSubtitlesApiKey } = await getCachedRoamingSettings();
+            const detected = this._syncedData?.subtitles ?? [];
+            const detectedLangs = detected.map((s) => s.language ?? '?');
 
             if (targetLanguage.trim().length === 0) {
+                console.info(
+                    '[savi auto-load] no target language set — set one in Settings → Savi (detected tracks: %s)',
+                    detectedLangs.join(', ') || 'none yet'
+                );
                 return false;
             }
 
@@ -384,6 +391,12 @@ export default class VideoDataSyncController {
             const track = selectTrackForLanguage(this._syncedData?.subtitles, targetLanguage);
 
             if (track !== undefined) {
+                console.info(
+                    '[savi auto-load] loading "%s" (%s) for target %s',
+                    track.label,
+                    track.language,
+                    targetLanguage
+                );
                 await this._syncData([track]);
                 await this._rememberSaviLanguageForCapture(targetLanguage);
                 return true;
@@ -391,6 +404,11 @@ export default class VideoDataSyncController {
 
             // Path B: OpenSubtitles fallback — only when the user configured a key.
             if (openSubtitlesApiKey.trim().length > 0) {
+                console.info(
+                    '[savi auto-load] no %s track among [%s] — trying OpenSubtitles',
+                    targetLanguage,
+                    detectedLangs.join(', ') || 'none'
+                );
                 const loaded = await this._trySaviOpenSubtitlesFallback(targetLanguage);
 
                 if (loaded) {
@@ -400,9 +418,14 @@ export default class VideoDataSyncController {
                 return loaded;
             }
 
+            console.info(
+                '[savi auto-load] no %s track among [%s], and no OpenSubtitles key set',
+                targetLanguage,
+                detectedLangs.join(', ') || 'none'
+            );
             return false;
         } catch (e) {
-            console.error('savi: subtitle auto-load failed', e);
+            console.error('[savi auto-load] failed', e);
             return false;
         }
     }
