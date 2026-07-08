@@ -599,7 +599,8 @@ export interface SaviSettings {
     // is OFF — e.g. a reload silently dropped it. See extension/src/savi/recording-guard.
     readonly saviRecordingGuard: boolean;
     // AI context-aware word segmentation in the hover dictionary (resolves
-    // でも-conjunction vs で+も, は-topic vs 葉, …). Opt-in; needs an LLM key on the daemon.
+    // でも-conjunction vs で+も, は-topic vs 葉, …). Opt-in; runs on savi's cloud
+    // AI (SV-16), so it needs you signed in — no local key.
     readonly saviAiSegmentation: boolean;
 }
 
