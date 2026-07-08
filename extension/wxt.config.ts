@@ -27,18 +27,24 @@ const addToPublicPathsType = (srcPath: string, destPath: string, paths: string[]
 
 const extName = 'asbplayer';
 
+// A persistent, dev-only Chrome profile (under the gitignored .wxt/) so a Netflix
+// sign-in survives across `yarn dev:extension` runs instead of a throwaway guest
+// profile. Pre-created because chrome-launcher opens its chrome-out.log INSIDE
+// this dir and won't mkdir it itself (ENOENT otherwise). Never touches your real
+// Chrome profile.
+const devChromeProfile = path.resolve(__dirname, '.wxt', 'chrome-dev-profile');
+fs.mkdirSync(devChromeProfile, { recursive: true });
+
 // See https://wxt.dev/api/config.html
 export default defineConfig({
     modules: ['@wxt-dev/module-react'],
     srcDir: 'src',
-    // Dev browser runner (`wxt` / `yarn dev:extension`): a PERSISTENT Chrome
-    // profile so a Netflix sign-in (and any other state) survives across dev
-    // runs, instead of a throwaway guest profile each launch. It lives in the
-    // gitignored .wxt/ dir and never touches your real Chrome profile — sign in
-    // once, and it sticks. (Chromium keepProfileChanges is experimental in
-    // web-ext but works for this dedicated profile.)
+    // Dev browser runner (`wxt` / `yarn dev:extension`): reuse the persistent
+    // profile above so a Netflix sign-in sticks across runs. Chromium
+    // keepProfileChanges is experimental in web-ext but works for this dedicated,
+    // pre-created profile.
     webExt: {
-        chromiumProfile: path.resolve(__dirname, '.wxt/chrome-dev-profile'),
+        chromiumProfile: devChromeProfile,
         keepProfileChanges: true,
     },
     vite: () => ({
