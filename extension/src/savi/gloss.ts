@@ -359,8 +359,11 @@ export class SaviGlossController implements GlossProvider {
             }
             const html = buildGlossHtml(segments, (lemma) => glosses.get(lemma));
             this._lineHtml.set(text, html);
-            if (priority && html.length > 0) {
-                this._onGlossReady(); // re-render the showing line so labels appear now
+            // Re-render whenever a gloss resolves — not just for the on-screen line:
+            // a prefetch that lands just after its cue shows must still surface its
+            // labels (the re-render is cheap; it reads settled results from cache).
+            if (html.length > 0) {
+                this._onGlossReady();
             }
         } finally {
             this._inFlight.delete(text);
