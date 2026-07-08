@@ -19,7 +19,11 @@
     "scripts": {
         "verify": "scripts/loc/loc-keys-match && scripts/loc/loc-codes-in-extension-config && scripts/page-file-references-are-correct && yarn workspace @project/common run test && yarn workspace @project/client run test && yarn workspace @project/extension run test && yarn run eslint common extension/src && yarn run pretty:check",
         "pretty": "yarn prettier --write './(client|common|extension)/**/*.(js|ts|tsx|css)'",
-        "pretty:check": "yarn prettier --check './(client|common|extension)/**/*.(js|ts|tsx|css)'"
+        "pretty:check": "yarn prettier --check './(client|common|extension)/**/*.(js|ts|tsx|css)'",
+        "build:extension": "yarn workspace @project/extension run build",
+        "build:extension:firefox": "yarn workspace @project/extension run build:firefox",
+        "dev:extension": "yarn workspace @project/extension run dev",
+        "test:extension": "yarn workspace @project/extension run test"
     },
     "packageManager": "yarn@3.2.0",
     "resolutions": {
