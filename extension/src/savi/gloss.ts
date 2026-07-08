@@ -162,9 +162,34 @@ export interface GlossProvider {
     glossHtmlFor(text: string, track?: number): string | undefined;
 }
 
+// A subtitle cue, as much as prefetch needs (matches asbplayer's SubtitleModel).
+export interface CueLike {
+    readonly text: string;
+    readonly start: number; // ms
+    readonly track?: number;
+}
+
+/** Timing/limits for prefetch + retry. Prefetch translates cues starting within
+ *  the lookahead window so a label is ready before its cue shows; the concurrency
+ *  cap keeps that from becoming a rate-limit storm (which itself caused missing
+ *  glosses). A fully-failed line is retried a bounded number of times. */
+const PREFETCH_LOOKAHEAD_MS = 12000;
+const PREFETCH_MAX_CUES = 8;
+const PREFETCH_TICK_MS = 500;
+const MAX_LINE_ATTEMPTS = 3;
+const MAX_CONCURRENT_TRANSLATIONS = 6;
+
+export interface GlossSources {
+    /** The playing media element, for prefetch timing. */
+    readonly video?: () => { currentTime: number } | null | undefined;
+    /** All loaded cues, for looking ahead of the playhead. */
+    readonly subtitles?: () => CueLike[];
+}
+
 export class SaviGlossController implements GlossProvider {
     private readonly _settings: Pick<SettingsProvider, 'get'>;
     private readonly _onGlossReady: () => void;
+    private readonly _sources: GlossSources;
 
     private _enabled = false;
     private _targetLang = '';
@@ -172,19 +197,33 @@ export class SaviGlossController implements GlossProvider {
     // lemma → 'known' means "already learned" (skip). Empty when signed out /
     // unfetched → every content word is glossed (SV-12 behaviour).
     private _known: Set<string> = new Set();
-    // Final gloss HTML per line ('' = computed, nothing to gloss). Doubles as the
-    // in-flight guard (a line is present once compute starts, value filled on done).
-    private readonly _lineHtml = new Map<string, string | undefined>();
+    // FINAL gloss HTML per line ('' = nothing to gloss). A line is present here
+    // only once it has settled (success, empty, or gave-up).
+    private _lineHtml = new Map<string, string>();
+    // Lines currently being translated (dedup guard, separate from _lineHtml so a
+    // retry is possible without a permanent empty entry).
+    private _inFlight = new Set<string>();
+    // Attempts per line — a fully-failed line retries up to MAX_LINE_ATTEMPTS
+    // (transient rate-limit/hiccup) before we give up and settle it as ''.
+    private _attempts = new Map<string, number>();
+    // (lemma   line) → gloss, so a retry / re-render never re-translates a
+    // word that already resolved (only failures are re-attempted).
+    private _wordGloss = new Map<string, string>();
+    private _prefetchTimer?: ReturnType<typeof setInterval>;
+    // Simple concurrency gate over the per-word translate calls.
+    private _active = 0;
+    private _waiters: Array<{ run: () => void; priority: boolean }> = [];
 
-    constructor(settings: Pick<SettingsProvider, 'get'>, onGlossReady: () => void) {
+    constructor(settings: Pick<SettingsProvider, 'get'>, onGlossReady: () => void, sources: GlossSources = {}) {
         this._settings = settings;
         this._onGlossReady = onGlossReady;
+        this._sources = sources;
     }
 
-    /** Read the enabled flag + target language, then prefetch the known-word set.
-     *  Called from the binding's bind(); safe to call again (re-reads). */
+    /** Read the enabled flag + target language, prefetch the known-word set, and
+     *  start looking ahead. Called from the binding's bind(); safe to call again. */
     async start(): Promise<void> {
-        this._lineHtml.clear();
+        this._reset();
         try {
             const { saviGlossing } = await this._settings.get(['saviGlossing']);
             this._enabled = saviGlossing;
@@ -196,29 +235,40 @@ export class SaviGlossController implements GlossProvider {
         }
         if (this._glossable) {
             await this._loadKnown();
+            this._prefetchTimer = setInterval(() => this._prefetchTick(), PREFETCH_TICK_MS);
         }
     }
 
     stop(): void {
-        this._lineHtml.clear();
-        this._known = new Set();
+        if (this._prefetchTimer !== undefined) {
+            clearInterval(this._prefetchTimer);
+            this._prefetchTimer = undefined;
+        }
+        this._reset();
         this._glossable = false;
+    }
+
+    private _reset(): void {
+        this._lineHtml = new Map();
+        this._inFlight = new Set();
+        this._attempts = new Map();
+        this._wordGloss = new Map();
+        this._known = new Set();
     }
 
     glossHtmlFor(text: string, track?: number): string | undefined {
         if (!this._glossable || (track ?? PRIMARY_TRACK) !== PRIMARY_TRACK) {
             return undefined;
         }
-        const trimmed = text.trim();
-        if (trimmed.length === 0) {
+        if (text.trim().length === 0) {
             return undefined;
         }
-        if (this._lineHtml.has(text)) {
-            return this._lineHtml.get(text) || undefined; // '' → undefined → plain text
+        const settled = this._lineHtml.get(text);
+        if (settled !== undefined) {
+            return settled || undefined; // '' → undefined → plain text
         }
-        // Not seen yet: reserve the slot (in-flight guard) and compute.
-        this._lineHtml.set(text, undefined);
-        void this._computeLine(text);
+        // The showing line takes priority in the translate queue.
+        this._maybeCompute(text, true);
         return undefined;
     }
 
@@ -241,30 +291,89 @@ export class SaviGlossController implements GlossProvider {
         }
     }
 
-    private async _computeLine(text: string): Promise<void> {
-        const segments = segmentLine(text);
-        const lemmas = glossableLemmas(segments, this._known);
-        if (lemmas.length === 0) {
-            this._lineHtml.set(text, ''); // nothing glossable → stays plain, no re-render
+    // Translate cues starting within the lookahead window so they're cached before
+    // they show (hides the per-word DeepL latency). Runs off a timer; no-ops while
+    // paused (the upcoming set is unchanged → already computed).
+    private _prefetchTick(): void {
+        const video = this._sources.video?.();
+        const cues = this._sources.subtitles?.();
+        if (!video || !cues) {
             return;
         }
-        // Translate every glossable word in parallel, each with the whole line as
-        // context so DeepL resolves the in-sentence sense.
-        const entries = await Promise.all(
-            lemmas.map(async (lemma) => [lemma, await this._translate(lemma, text)] as const)
-        );
-        const glosses = new Map<string, string>();
-        for (const [lemma, gloss] of entries) {
-            if (gloss) {
-                glosses.set(lemma, gloss);
-            }
+        const nowMs = video.currentTime * 1000;
+        const upcoming = cues
+            .filter(
+                (c) =>
+                    (c.track ?? PRIMARY_TRACK) === PRIMARY_TRACK &&
+                    c.start > nowMs &&
+                    c.start <= nowMs + PREFETCH_LOOKAHEAD_MS &&
+                    c.text.trim().length > 0
+            )
+            .sort((a, b) => a.start - b.start)
+            .slice(0, PREFETCH_MAX_CUES);
+        for (const cue of upcoming) {
+            this._maybeCompute(cue.text, false);
         }
-        this._lineHtml.set(text, buildGlossHtml(segments, (lemma) => glosses.get(lemma)));
-        // Ask the SubtitleController to re-render so the labels appear.
-        this._onGlossReady();
     }
 
-    private async _translate(word: string, context: string): Promise<string | undefined> {
+    /** Kick off a line's translation unless it's already settled, in flight, or
+     *  has exhausted its retries. `priority` marks the on-screen line. */
+    private _maybeCompute(text: string, priority: boolean): void {
+        if (this._lineHtml.has(text) || this._inFlight.has(text)) {
+            return;
+        }
+        if ((this._attempts.get(text) ?? 0) >= MAX_LINE_ATTEMPTS) {
+            return; // gave up after repeated failures
+        }
+        void this._computeLine(text, priority);
+    }
+
+    private async _computeLine(text: string, priority: boolean): Promise<void> {
+        this._inFlight.add(text);
+        try {
+            const segments = segmentLine(text);
+            const lemmas = glossableLemmas(segments, this._known);
+            if (lemmas.length === 0) {
+                this._lineHtml.set(text, ''); // nothing glossable → settle empty, no retry
+                return;
+            }
+            const entries = await Promise.all(
+                lemmas.map(async (lemma) => [lemma, await this._translate(lemma, text, priority)] as const)
+            );
+            const glosses = new Map<string, string>();
+            for (const [lemma, gloss] of entries) {
+                if (gloss) {
+                    glosses.set(lemma, gloss);
+                }
+            }
+            if (glosses.size === 0) {
+                // Every translation failed — almost always transient (rate limit /
+                // provider hiccup). Don't settle '' permanently; allow a bounded
+                // retry on the next show/prefetch so the labels can still appear.
+                const attempts = (this._attempts.get(text) ?? 0) + 1;
+                this._attempts.set(text, attempts);
+                if (attempts >= MAX_LINE_ATTEMPTS) {
+                    this._lineHtml.set(text, ''); // give up → plain text
+                }
+                return;
+            }
+            const html = buildGlossHtml(segments, (lemma) => glosses.get(lemma));
+            this._lineHtml.set(text, html);
+            if (priority && html.length > 0) {
+                this._onGlossReady(); // re-render the showing line so labels appear now
+            }
+        } finally {
+            this._inFlight.delete(text);
+        }
+    }
+
+    private async _translate(word: string, context: string, priority: boolean): Promise<string | undefined> {
+        const key = `${word} ${context}`;
+        const cached = this._wordGloss.get(key);
+        if (cached !== undefined) {
+            return cached; // a previously-resolved word never re-hits the network
+        }
+        await this._acquire(priority);
         try {
             const response = await sendToBackground<SaviGlossTranslateResponse>({
                 command: 'savi-gloss-translate',
@@ -274,9 +383,46 @@ export class SaviGlossController implements GlossProvider {
                 context,
             });
             const gloss = response?.text?.trim();
-            return gloss && gloss.length > 0 ? gloss : undefined;
+            if (gloss && gloss.length > 0) {
+                this._wordGloss.set(key, gloss);
+                return gloss;
+            }
+            return undefined;
         } catch {
             return undefined;
+        } finally {
+            this._release();
+        }
+    }
+
+    // Bound the number of concurrent translate calls so prefetch doesn't storm the
+    // provider. On-screen (priority) words jump ahead of prefetch in the queue.
+    private _acquire(priority: boolean): Promise<void> {
+        if (this._active < MAX_CONCURRENT_TRANSLATIONS) {
+            this._active++;
+            return Promise.resolve();
+        }
+        return new Promise<void>((resolve) => {
+            const waiter = {
+                run: () => {
+                    this._active++;
+                    resolve();
+                },
+                priority,
+            };
+            if (priority) {
+                this._waiters.unshift(waiter);
+            } else {
+                this._waiters.push(waiter);
+            }
+        });
+    }
+
+    private _release(): void {
+        this._active = Math.max(0, this._active - 1);
+        const next = this._waiters.shift();
+        if (next) {
+            next.run();
         }
     }
 }

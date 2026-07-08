@@ -252,9 +252,15 @@ export default class Binding {
             () => this.subtitleController.subtitles
         );
         // Glossing (SV-12/13): supplies gloss-ruby HTML to the subtitle controller;
-        // a resolved gloss asks the controller to re-render the showing lines.
-        this.saviGlossController = new SaviGlossController(this.settings, () =>
-            this.subtitleController.notifyGlossReady()
+        // a resolved gloss asks the controller to re-render the showing lines. The
+        // video + subtitle list let it prefetch translations ahead of the playhead.
+        this.saviGlossController = new SaviGlossController(
+            this.settings,
+            () => this.subtitleController.notifyGlossReady(),
+            {
+                video: () => this.video,
+                subtitles: () => this.subtitleController.subtitles,
+            }
         );
         this.subtitleController.saviGloss = this.saviGlossController;
         this.hoveredToken = new HoveredToken();
