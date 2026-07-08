@@ -676,6 +676,9 @@ const settingsSchema = {
         saviAutoLoadSubtitles: {
             type: 'boolean',
         },
+        saviGlossing: {
+            type: 'boolean',
+        },
         saviCloudUrl: {
             type: 'string',
         },

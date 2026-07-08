@@ -133,6 +133,24 @@
     display: revert !important; /* Safari doesn't support 'ruby-text' */
 }
 
+/* savi glossing (SV-12/13): a small translation label above a target-language
+   word — the same ruby-over-word engine as furigana, tuned for latin-script
+   glosses (whole words, not kana readings). */
+.asb-gloss {
+    ruby-position: over !important;
+}
+
+.asb-gloss rt {
+    font-size: 0.5em !important;
+    line-height: 1.1 !important;
+    font-weight: 400 !important;
+    letter-spacing: normal !important; /* undo the subtitle's tracking for the label */
+    color: #ffe08a !important; /* soft gold — distinct from the white subtitle */
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9) !important; /* legible over video */
+    white-space: nowrap !important;
+    display: revert !important; /* Safari doesn't support 'ruby-text' */
+}
+
 .asb-pitch-accent {
     --asb-pitch-accent-lift: var(--asb-pitch-accent-size); /* Extra space to clear diacritics */
     display: inline-block;

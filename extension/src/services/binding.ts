@@ -98,6 +98,7 @@ import { HoveredToken } from '@project/common/subtitle-annotations';
 import { v4 as uuidv4 } from 'uuid';
 import { SaviCaptureController } from '../savi/capture-controller';
 import { SaviHoverDictionary } from '../savi/hover-dict';
+import { SaviGlossController } from '../savi/gloss';
 
 let netflix = false;
 document.addEventListener('asbplayer-netflix-enabled', (e) => {
@@ -176,6 +177,7 @@ export default class Binding {
     readonly bulkExportController: BulkExportController;
     readonly saviCaptureController: SaviCaptureController;
     readonly saviHoverDictionary: SaviHoverDictionary;
+    readonly saviGlossController: SaviGlossController;
 
     private copyToClipboardOnMine: boolean;
     private clickToMineDefaultAction: PostMineAction;
@@ -249,6 +251,12 @@ export default class Binding {
             () => this.video,
             () => this.subtitleController.subtitles
         );
+        // Glossing (SV-12/13): supplies gloss-ruby HTML to the subtitle controller;
+        // a resolved gloss asks the controller to re-render the showing lines.
+        this.saviGlossController = new SaviGlossController(this.settings, () =>
+            this.subtitleController.notifyGlossReady()
+        );
+        this.subtitleController.saviGloss = this.saviGlossController;
         this.hoveredToken = new HoveredToken();
         this.recordMedia = true;
         this.takeScreenshot = true;
@@ -545,6 +553,7 @@ export default class Binding {
         this.bulkExportController.bind();
         this.saviCaptureController.bind();
         this.saviHoverDictionary.start();
+        void this.saviGlossController.start();
 
         const seek = (forward: boolean) => {
             const subtitle = adjacentSubtitle(
@@ -1260,6 +1269,7 @@ export default class Binding {
 
         this.saviCaptureController.unbind();
         this.saviHoverDictionary.stop();
+        this.saviGlossController.stop();
         this.unsubscribeStatisticsSeek?.();
         this.unsubscribeStatisticsSeek = undefined;
         this.unsubscribeStatisticsSubtitleMine?.();

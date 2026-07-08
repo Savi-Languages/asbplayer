@@ -812,6 +812,10 @@ export interface SaviSettings {
     // The target language + OpenSubtitles key are account-roaming (see
     // extension/src/savi/cloud-settings.ts), not stored here.
     readonly saviAutoLoadSubtitles: boolean;
+    // Show a small translation label above each not-yet-known target-language
+    // word in the subtitles (SV-12/13). Context-aware DeepL via savi's cloud, so
+    // it needs you signed in. Space-delimited languages only (e.g. Spanish).
+    readonly saviGlossing: boolean;
     // Base URL of the savi cloud the extension reads roaming settings from.
     readonly saviCloudUrl: string;
 }

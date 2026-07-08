@@ -75,6 +75,7 @@ const SaviSettingsTab: React.FC<Props> = ({
         saviHideNativeSubtitles,
         saviRecordingGuard,
         saviAiSegmentation,
+        saviGlossing,
     } = settings;
 
     const [saviEmail, setSaviEmail] = useState('');
@@ -175,6 +176,16 @@ const SaviSettingsTab: React.FC<Props> = ({
                     />
                 }
                 label={'Auto-load subtitles in your target language from the player (or OpenSubtitles)'}
+                labelPlacement="start"
+            />
+            <SwitchLabelWithHoverEffect
+                control={
+                    <Switch
+                        checked={saviGlossing}
+                        onChange={(e) => onSettingChanged('saviGlossing', e.target.checked)}
+                    />
+                }
+                label={'Show translations above words you haven’t learned yet (requires sign-in)'}
                 labelPlacement="start"
             />
             {roamingSupported && (

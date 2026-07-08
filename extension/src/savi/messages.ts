@@ -249,6 +249,42 @@ export interface SaviRoamingSettingsResponse {
     readonly openSubtitlesApiKey: string;
 }
 
+// ── Glossing (SV-12 / SV-13) ────────────────────────────────────────────
+// Translate ONE target-language word into the user's known language for the
+// on-subtitle gloss label. The full line rides as `context` so the cloud's
+// DeepL call is sentence-aware (banco → "bank" vs "bench"). Runs in the
+// background because MV3 blocks cross-origin fetches (to the cloud) from
+// content scripts; the account JWT is added there, never in the message.
+export interface SaviGlossTranslateMessage {
+    readonly command: 'savi-gloss-translate';
+    readonly word: string;
+    /** BCP-47 target (learning) language, e.g. `es` — the source for translation. */
+    readonly targetLang: string;
+    /** Language to gloss INTO (the user's known language), e.g. `en`. */
+    readonly glossLang: string;
+    /** The whole subtitle line (± neighbours) — influences the translation, not translated itself. */
+    readonly context?: string;
+}
+
+export interface SaviGlossTranslateResponse {
+    /** The gloss, or undefined when signed out / every provider failed. */
+    readonly text?: string;
+    /** "deepl" or "llm:<provider>", for diagnostics. */
+    readonly provider?: string;
+}
+
+// Known-inclusive per-lemma buckets for the target language (SV-13). The content
+// script uses it to gloss a word iff its lemma is not yet `known`. Empty map =
+// signed out / unreachable → the caller falls back to glossing all content words.
+export interface SaviWordBucketsMessage {
+    readonly command: 'savi-word-buckets';
+    readonly lang: string;
+}
+
+export interface SaviWordBucketsResponse {
+    readonly buckets: Record<string, 'new' | 'word_box' | 'known'>;
+}
+
 // Capture a JPEG of the current video frame for a mined card. A content script
 // can't call tabs.captureVisibleTab (background-only), so it asks the
 // background for the full-tab data URL, then crops it locally to the video.

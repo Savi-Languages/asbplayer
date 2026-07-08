@@ -15,6 +15,10 @@ import {
     SaviCaptureFrameResponse,
     SaviCaptureState,
     SaviCommand,
+    SaviGlossTranslateMessage,
+    SaviGlossTranslateResponse,
+    SaviWordBucketsMessage,
+    SaviWordBucketsResponse,
     SaviOffscreenStartMessage,
     SaviOffscreenStateMessage,
     SaviOffscreenStopMessage,
@@ -43,6 +47,7 @@ import {
     SaviTokenizeResponse,
 } from './messages';
 import { daemonToken } from './account';
+import { translate as cloudTranslate, wordBuckets as cloudWordBuckets } from './cloud-client';
 import { clearRecordingIntent, hasRecordingIntent, setRecordingIntent } from './recording-intent';
 import {
     lookupDict,
@@ -168,6 +173,16 @@ export default class SaviCommandHandler implements CommandHandler {
                     .then(sendResponse)
                     .catch(() => sendResponse(undefined));
                 return true;
+            case 'savi-gloss-translate':
+                this._glossTranslate(command.message as SaviGlossTranslateMessage)
+                    .then(sendResponse)
+                    .catch(() => sendResponse({} as SaviGlossTranslateResponse));
+                return true;
+            case 'savi-word-buckets':
+                this._wordBuckets(command.message as SaviWordBucketsMessage)
+                    .then(sendResponse)
+                    .catch(() => sendResponse({ buckets: {} } as SaviWordBucketsResponse));
+                return true;
             case 'savi-capture-ended':
                 this._forwardCaptureEnded(command.message as SaviCaptureEndedMessage);
                 break;
@@ -221,6 +236,32 @@ export default class SaviCommandHandler implements CommandHandler {
         const { saviCloudUrl } = await this._settings.get(['saviCloudUrl']);
         const { targetLanguage, openSubtitlesApiKey } = await loadRoamingSettings(saviCloudUrl);
         return { targetLanguage, openSubtitlesApiKey };
+    }
+
+    // Glossing (SV-12): translate ONE word into the user's known language, with
+    // the whole line as DeepL context. Straight to the cloud with the account
+    // JWT (added in cloud-client) — CORS blocks this from the content script.
+    // Empty response = signed out / all providers failed → the label is skipped.
+    private async _glossTranslate(message: SaviGlossTranslateMessage): Promise<SaviGlossTranslateResponse> {
+        try {
+            // cloud-client.translate(text, targetLang=INTO, sourceLang=FROM, context):
+            // the word is FROM the learning language, translated INTO the gloss language.
+            const result = await cloudTranslate(message.word, message.glossLang, message.targetLang, message.context);
+            return { text: result.text, provider: result.provider };
+        } catch (e) {
+            return {};
+        }
+    }
+
+    // Glossing (SV-13): the Known-inclusive per-lemma buckets for the target
+    // language, so the content script glosses a word iff its lemma is not yet
+    // Known. Empty map = signed out / unreachable → gloss all content words.
+    private async _wordBuckets(message: SaviWordBucketsMessage): Promise<SaviWordBucketsResponse> {
+        try {
+            return { buckets: await cloudWordBuckets(message.lang) };
+        } catch (e) {
+            return { buckets: {} };
+        }
     }
 
     private async _tokenize(message: SaviTokenizeMessage): Promise<SaviTokenizeResponse> {

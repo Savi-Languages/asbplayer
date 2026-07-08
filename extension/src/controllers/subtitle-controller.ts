@@ -45,6 +45,7 @@ import {
 import { v4 as uuidv4 } from 'uuid';
 import { DictionaryProvider } from '@project/common/dictionary-db';
 import Binding from '@/services/binding';
+import { GlossProvider } from '@/savi/gloss';
 
 const BOUNDING_BOX_PADDING = 25;
 
@@ -146,6 +147,9 @@ export default class SubtitleController {
     onOffsetChange?: () => void;
     onMouseOver?: (event: MouseEvent) => void;
     onMouseOut?: (event: MouseEvent) => void;
+    // savi glossing (SV-12/13): supplies per-line gloss-ruby HTML for the primary
+    // (target-language) track. Set by the binding; absent → no glossing.
+    saviGloss?: GlossProvider;
 
     constructor(context: Binding, dictionary: DictionaryProvider, settings: SettingsProvider) {
         this.context = context;
@@ -650,14 +654,33 @@ export default class SubtitleController {
     }
 
     private _buildTextHtml(text: string, track?: number, richText?: string, richTextOnHover?: string) {
+        // savi glossing (SV-12/13): the gloss-ruby HTML for this line takes the
+        // richText slot (Spanish tracks have no Yomitan richText anyway). Undefined
+        // until the async translations land — then a re-render picks it up. Kicks
+        // off the translate work as a side effect of the lookup.
+        const glossHtml = this.saviGloss?.glossHtmlFor(text, track);
+        const effectiveRichText = glossHtml ?? richText;
         // Keep savi's per-text subtitle style; adopt upstream's annotation HTML (which
         // supersedes savi's manual hover-rich spans and adds richTextOnHover).
         const styles = `${this._subtitleStyles(track)};${saviSubtitleStyle(text)}`;
         return `<span data-track="${track ?? 0}" class="${this._subtitleClasses(track)}" style="${styles}">${getAnnotationsHtml(
             text,
-            richText,
+            effectiveRichText,
             richTextOnHover
         )}</span>`;
+    }
+
+    /** savi glossing: a line's gloss labels resolved asynchronously — drop the
+     *  cached HTML for the showing lines and force a re-render so they appear. */
+    notifyGlossReady() {
+        for (const overlay of [this.bottomSubtitlesElementOverlay, this.topSubtitlesElementOverlay]) {
+            if (overlay instanceof CachingElementOverlay) {
+                for (const subtitle of this.showingSubtitles ?? []) {
+                    overlay.removeCachedHtml(String(subtitle.index));
+                }
+            }
+        }
+        this.refreshCurrentSubtitle = true;
     }
 
     unbind() {
