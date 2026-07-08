@@ -11,8 +11,20 @@ import { currentAccessToken } from './account';
 // The cloud base URL is the caller's `saviCloudUrl` setting (default
 // https://savi.tianxiaocao.com — our own domain, whose `/v2` proxy targets Cloud
 // Run so the host survives URL changes). Passing it in — rather than hardcoding
-// prod — lets `dev:local` point the extension at http://localhost:8080.
+// prod — lets a build point the extension at http://localhost:8080.
 const normalizeBaseUrl = (baseUrl: string): string => baseUrl.trim().replace(/\/+$/, '');
+
+// A DEV build (`yarn build:dev` or `yarn dev:extension` — both Vite `development`
+// mode) routes the gloss cloud calls at the local cloud, so you never touch the
+// "Savi cloud URL" field. Override the host/port with WXT_SAVI_CLOUD_URL at build
+// time. A production build leaves this undefined → the caller's setting is used.
+const DEV_CLOUD_URL: string | undefined = import.meta.env.DEV
+    ? (import.meta.env.WXT_SAVI_CLOUD_URL as string | undefined)?.trim() || 'http://localhost:8080'
+    : undefined;
+
+/** The cloud base to hit: the dev override when a dev build baked one in, else
+ *  the caller's configured `saviCloudUrl`. */
+const resolveCloudBase = (cloudUrl: string): string => normalizeBaseUrl(DEV_CLOUD_URL ?? cloudUrl);
 
 export interface TranslateResult {
     /** The translated text. */
@@ -41,7 +53,7 @@ export const translate = async (
     if (!token) {
         throw new Error('sign in to use AI translation');
     }
-    const response = await fetch(`${normalizeBaseUrl(cloudUrl)}/v2/ai/translate`, {
+    const response = await fetch(`${resolveCloudBase(cloudUrl)}/v2/ai/translate`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -69,7 +81,7 @@ export const wordBuckets = async (cloudUrl: string, lang: string): Promise<Recor
     if (!token) {
         return {};
     }
-    const response = await fetch(`${normalizeBaseUrl(cloudUrl)}/v2/words/${encodeURIComponent(lang)}/buckets`, {
+    const response = await fetch(`${resolveCloudBase(cloudUrl)}/v2/words/${encodeURIComponent(lang)}/buckets`, {
         headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
     });
     if (!response.ok) {

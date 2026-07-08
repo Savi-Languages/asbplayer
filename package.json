@@ -21,6 +21,7 @@
         "pretty": "yarn prettier --write './(client|common|extension)/**/*.(js|ts|tsx|css)'",
         "pretty:check": "yarn prettier --check './(client|common|extension)/**/*.(js|ts|tsx|css)'",
         "build:extension": "yarn workspace @project/extension run build",
+        "build:extension:dev": "yarn workspace @project/extension run build:dev",
         "build:extension:firefox": "yarn workspace @project/extension run build:firefox",
         "dev:extension": "yarn workspace @project/extension run dev",
         "test:extension": "yarn workspace @project/extension run test"

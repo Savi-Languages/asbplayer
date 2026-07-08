@@ -31,6 +31,16 @@ const extName = 'asbplayer';
 export default defineConfig({
     modules: ['@wxt-dev/module-react'],
     srcDir: 'src',
+    // Dev browser runner (`wxt` / `yarn dev:extension`): a PERSISTENT Chrome
+    // profile so a Netflix sign-in (and any other state) survives across dev
+    // runs, instead of a throwaway guest profile each launch. It lives in the
+    // gitignored .wxt/ dir and never touches your real Chrome profile — sign in
+    // once, and it sticks. (Chromium keepProfileChanges is experimental in
+    // web-ext but works for this dedicated profile.)
+    webExt: {
+        chromiumProfile: path.resolve(__dirname, '.wxt/chrome-dev-profile'),
+        keepProfileChanges: true,
+    },
     vite: () => ({
         plugins: [
             {
