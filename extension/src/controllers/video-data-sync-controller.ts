@@ -385,18 +385,46 @@ export default class VideoDataSyncController {
 
             if (track !== undefined) {
                 await this._syncData([track]);
+                await this._rememberSaviLanguageForCapture(targetLanguage);
                 return true;
             }
 
             // Path B: OpenSubtitles fallback — only when the user configured a key.
             if (openSubtitlesApiKey.trim().length > 0) {
-                return await this._trySaviOpenSubtitlesFallback(targetLanguage);
+                const loaded = await this._trySaviOpenSubtitlesFallback(targetLanguage);
+
+                if (loaded) {
+                    await this._rememberSaviLanguageForCapture(targetLanguage);
+                }
+
+                return loaded;
             }
 
             return false;
         } catch (e) {
             console.error('savi: subtitle auto-load failed', e);
             return false;
+        }
+    }
+
+    // savi capture reads the episode language from streamingLastLanguagesSynced
+    // (see extension/src/savi/capture-controller.ts) — the same place the picker's
+    // "remember track choices" writes it. An auto-load never opens the picker, so
+    // record the target language here too, or a captured episode would reach the
+    // daemon with no language and skip tokenization. Best-effort: the subtitle is
+    // already loaded, so a failed write must not fail the auto-load.
+    private async _rememberSaviLanguageForCapture(language: string) {
+        try {
+            const trimmed = language.trim();
+
+            if (trimmed.length === 0) {
+                return;
+            }
+
+            this.lastLanguagesSynced = [trimmed];
+            await this._context.settings.set({ streamingLastLanguagesSynced: this._lastLanguagesSynced });
+        } catch (e) {
+            // Auto-load already succeeded; remembering the language is best-effort.
         }
     }
 

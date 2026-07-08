@@ -49,11 +49,12 @@ const track = (id: string, language: string, label: string) => ({
 describe('VideoDataSyncController savi auto-load (SV-8)', () => {
     let loadSubtitles: jest.Mock;
     let getSingle: jest.Mock;
+    let settingsSet: jest.Mock;
     let controller: any;
     let sendMessage: jest.Mock;
 
     const makeController = () => {
-        const context = { loadSubtitles } as any;
+        const context = { loadSubtitles, settings: { set: settingsSet } } as any;
         const settings = { getSingle } as any;
         return new VideoDataSyncController(context, settings);
     };
@@ -61,6 +62,7 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
     beforeEach(() => {
         loadSubtitles = jest.fn();
         getSingle = jest.fn().mockResolvedValue(true); // saviAutoLoadSubtitles
+        settingsSet = jest.fn().mockResolvedValue(undefined);
         sendMessage = jest.fn();
         roamingMock.mockReset();
         (globalThis as any).browser = { runtime: { getURL: (p: string) => p, sendMessage } };
@@ -86,6 +88,8 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
         const [files] = loadSubtitles.mock.calls[0];
         expect(files[0].name).toBe('Show - Spanish.nfimsc');
         expect(sendMessage).not.toHaveBeenCalled();
+        // Records the language for savi capture (localhost is the jsdom host).
+        expect(settingsSet).toHaveBeenCalledWith({ streamingLastLanguagesSynced: { localhost: ['es'] } });
     });
 
     it('does nothing when auto-load is disabled', async () => {
@@ -127,6 +131,7 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
         });
         expect(loadSubtitles).toHaveBeenCalledTimes(1);
         expect(loadSubtitles.mock.calls[0][0][0].name).toBe('Show.es.srt');
+        expect(settingsSet).toHaveBeenCalledWith({ streamingLastLanguagesSynced: { localhost: ['es'] } });
     });
 
     it('does not use OpenSubtitles when no key is configured', async () => {
