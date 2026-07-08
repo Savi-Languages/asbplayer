@@ -13,6 +13,7 @@ import {
     putRoamingSetting,
     SaviRoamingSettings,
 } from '@/savi/cloud-settings';
+import { resolveCloudBase } from '@/savi/cloud-client';
 
 export interface SaviRoamingSettingsHook {
     readonly targetLanguage: string;
@@ -43,7 +44,9 @@ export const useSaviRoamingSettings = (cloudUrl: string): SaviRoamingSettingsHoo
             };
         }
 
-        void loadRoamingSettings(cloudUrl).then((settings) => {
+        // Dev builds roam against the local cloud too, so this page reads/writes
+        // the same target language the desktop app and glossing use.
+        void loadRoamingSettings(resolveCloudBase(cloudUrl)).then((settings) => {
             if (!cancelled) {
                 setState(settings);
                 setLoaded(true);
@@ -58,7 +61,7 @@ export const useSaviRoamingSettings = (cloudUrl: string): SaviRoamingSettingsHoo
     const update = useCallback(
         (key: keyof SaviRoamingSettings, value: string) => {
             setState((prev) => ({ ...prev, [key]: value }));
-            void putRoamingSetting(cloudUrl, key, value).catch((e) =>
+            void putRoamingSetting(resolveCloudBase(cloudUrl), key, value).catch((e) =>
                 // Signed out / offline: the local cache still has the value.
                 console.warn('savi: could not sync roaming setting to the account', e)
             );

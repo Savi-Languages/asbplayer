@@ -23,8 +23,11 @@ const DEV_CLOUD_URL: string | undefined = import.meta.env.DEV
     : undefined;
 
 /** The cloud base to hit: the dev override when a dev build baked one in, else
- *  the caller's configured `saviCloudUrl`. */
-const resolveCloudBase = (cloudUrl: string): string => normalizeBaseUrl(DEV_CLOUD_URL ?? cloudUrl);
+ *  the caller's configured `saviCloudUrl`. Exported so the roaming-settings
+ *  callers (which pass `saviCloudUrl` to cloud-settings) get the same dev
+ *  redirect — otherwise a dev build would gloss against localhost but still roam
+ *  the target language against prod, and the two never meet. */
+export const resolveCloudBase = (cloudUrl: string): string => normalizeBaseUrl(DEV_CLOUD_URL ?? cloudUrl);
 
 export interface TranslateResult {
     /** The translated text. */

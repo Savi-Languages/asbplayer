@@ -47,7 +47,7 @@ import {
     SaviTokenizeResponse,
 } from './messages';
 import { daemonToken } from './account';
-import { translate as cloudTranslate, wordBuckets as cloudWordBuckets } from './cloud-client';
+import { resolveCloudBase, translate as cloudTranslate, wordBuckets as cloudWordBuckets } from './cloud-client';
 import { clearRecordingIntent, hasRecordingIntent, setRecordingIntent } from './recording-intent';
 import {
     lookupDict,
@@ -234,7 +234,9 @@ export default class SaviCommandHandler implements CommandHandler {
     // offline, so this never blocks the auto-load on the network.
     private async _roamingSettings(): Promise<SaviRoamingSettingsResponse> {
         const { saviCloudUrl } = await this._settings.get(['saviCloudUrl']);
-        const { targetLanguage, openSubtitlesApiKey } = await loadRoamingSettings(saviCloudUrl);
+        // Dev builds roam against the local cloud too (resolveCloudBase), so the
+        // target language the desktop wrote to localhost actually reaches here.
+        const { targetLanguage, openSubtitlesApiKey } = await loadRoamingSettings(resolveCloudBase(saviCloudUrl));
         return { targetLanguage, openSubtitlesApiKey };
     }
 
