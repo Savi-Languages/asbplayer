@@ -43,7 +43,9 @@ export interface SaviCaptureHost {
     // the streaming site's video metadata API, so it's the most reliable
     // source of show/title — preferred over DOM/document.title scraping.
     subtitleFileName: () => string;
-    notify: (locKey: string, replacements?: { [key: string]: string }) => void;
+    // A finished, user-facing message — plain display text, NOT an i18n key.
+    // The host renders it verbatim (see SubtitleController.notificationText).
+    notify: (text: string) => void;
 }
 
 export class SaviCaptureController {
@@ -89,18 +91,16 @@ export class SaviCaptureController {
             }
 
             if (request.message.command === 'savi-request-start') {
-                // The record shortcut / toolbar / popup TOGGLES: pressing it again
-                // STOPS. Only the binding with loaded subtitles responds.
-                if (this._active) {
-                    this.stop(true); // deliberate stop → clears intent (no resume nag)
-                    sendResponse({ requested: true });
-                    return true;
-                }
-                if (!this._starting && this._subtitlesForCapture().length > 0) {
-                    this.start(true);
-                    sendResponse({ requested: true });
-                    return true;
-                }
+                // The record shortcut / toolbar / popup TOGGLES, exactly like the
+                // on-video Record button (see _toggleCapture): active → stop,
+                // idle → start. NOT gated on a loaded subtitle track — start(true)
+                // surfaces its own "no subtitle track loaded to capture" notice,
+                // so a keypress with nothing to capture explains itself instead of
+                // silently doing nothing (start()'s own _active/_starting guard
+                // makes a repeat press while starting a safe no-op).
+                this._toggleCapture();
+                sendResponse({ requested: true });
+                return true;
             } else if (request.message.command === 'savi-capture-ended') {
                 // Arrives for explicit stops too (the finish result travels
                 // out-of-band; see SaviStopCaptureResponse), so don't gate

@@ -730,7 +730,14 @@ export default class SubtitleController {
     }
 
     notification(locKey: string, replacements?: { [key: string]: string }) {
-        const text = i18n.t(locKey, replacements ?? {});
+        this.notificationText(i18n.t(locKey, replacements ?? {}));
+    }
+
+    // Show text that is ALREADY a finished display string (e.g. savi's own
+    // messages) rather than an i18n key. Skips the i18n.t() lookup so that a
+    // ':' or '.' in the text isn't parsed as an i18next namespace / key
+    // separator — that default parsing silently blanked savi's "Savi: …" toasts.
+    notificationText(text: string) {
         this.notificationElementOverlay.setHtml([{ html: () => this._buildTextHtml(text) }]);
 
         if (this.notificationElementOverlayHideTimeout) {

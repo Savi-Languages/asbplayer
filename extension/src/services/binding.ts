@@ -241,7 +241,10 @@ export default class Binding {
             currentSubtitles: () => this.subtitleController.subtitles,
             videoSrc: () => this._registeredVideoSrc,
             subtitleFileName: () => this.subtitleFileName(),
-            notify: (locKey, replacements) => this.subtitleController.notification(locKey, replacements),
+            // savi builds finished English strings, not i18n keys — render them
+            // verbatim (see SubtitleController.notificationText) so a "Savi: …"
+            // message isn't mangled by i18next's ':' namespace separator.
+            notify: (text) => this.subtitleController.notificationText(text),
         });
         this.saviHoverDictionary = new SaviHoverDictionary(
             () => this.video,
