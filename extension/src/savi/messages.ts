@@ -234,6 +234,21 @@ export interface SaviOpenSubtitlesFetchResponse {
     readonly errorMessage?: string;
 }
 
+// Fetch the freshest account-roaming settings (target language + OpenSubtitles
+// key) from the cloud, refreshing the local cache. The content script asks the
+// background because only it can reach the cloud (CORS / host permission). Used
+// at auto-load time so a target language changed on another device (e.g. the
+// desktop app) takes effect on the next video without reopening the extension.
+// Falls back to the cache when the cloud is unreachable / signed out.
+export interface SaviRoamingSettingsMessage {
+    readonly command: 'savi-roaming-settings';
+}
+
+export interface SaviRoamingSettingsResponse {
+    readonly targetLanguage: string;
+    readonly openSubtitlesApiKey: string;
+}
+
 // Capture a JPEG of the current video frame for a mined card. A content script
 // can't call tabs.captureVisibleTab (background-only), so it asks the
 // background for the full-tab data URL, then crops it locally to the video.

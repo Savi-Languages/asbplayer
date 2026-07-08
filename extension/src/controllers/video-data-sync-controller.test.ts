@@ -1,9 +1,11 @@
 // Integration test for the SV-8 savi auto-load glue inside VideoDataSyncController.
 // The controller is heavily coupled to Binding/UiFrame/page delegates, so we mock
-// those out and exercise the real `_trySaviAutoLoad` path end to end: it reads the
-// setting + roaming target language, selects the matching detected track (Path A),
-// fetches its subtitle bytes, and hands them to Binding.loadSubtitles — or, when no
-// track matches, asks the background to fetch from OpenSubtitles (Path B).
+// those out and exercise the real `_trySaviAutoLoad` path end to end: it fetches
+// the roaming target language (fresh from the background, cache as fallback),
+// selects the matching detected track (Path A), fetches its subtitle bytes, and
+// hands them to Binding.loadSubtitles — or, when no track matches, asks the
+// background to fetch from OpenSubtitles (Path B) — and records the language for
+// savi capture.
 
 const fakeFrame = { hidden: true, clientIfLoaded: undefined };
 
@@ -36,7 +38,7 @@ jest.mock('@/savi/cloud-settings', () => ({ getCachedRoamingSettings: jest.fn() 
 import VideoDataSyncController from './video-data-sync-controller';
 import { getCachedRoamingSettings } from '@/savi/cloud-settings';
 
-const roamingMock = getCachedRoamingSettings as jest.Mock;
+const roamingCacheMock = getCachedRoamingSettings as jest.Mock;
 
 const track = (id: string, language: string, label: string) => ({
     id,
@@ -50,21 +52,32 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
     let loadSubtitles: jest.Mock;
     let getSingle: jest.Mock;
     let settingsSet: jest.Mock;
-    let controller: any;
     let sendMessage: jest.Mock;
+    let controller: any;
+    // Replies the background gives for each command the controller sends.
+    let roamingResponse: any;
+    let openSubtitlesResponse: any;
 
-    const makeController = () => {
-        const context = { loadSubtitles, settings: { set: settingsSet } } as any;
-        const settings = { getSingle } as any;
-        return new VideoDataSyncController(context, settings);
-    };
+    const makeController = () =>
+        new VideoDataSyncController({ loadSubtitles, settings: { set: settingsSet } } as any, { getSingle } as any);
+
+    const opensubtitlesCall = () =>
+        sendMessage.mock.calls.find((c) => c[0]?.message?.command === 'savi-opensubtitles-fetch');
 
     beforeEach(() => {
         loadSubtitles = jest.fn();
         getSingle = jest.fn().mockResolvedValue(true); // saviAutoLoadSubtitles
         settingsSet = jest.fn().mockResolvedValue(undefined);
-        sendMessage = jest.fn();
-        roamingMock.mockReset();
+        roamingResponse = { targetLanguage: 'es', openSubtitlesApiKey: '' };
+        openSubtitlesResponse = { ok: false };
+        sendMessage = jest.fn(async (cmd: any) => {
+            const command = cmd?.message?.command;
+            if (command === 'savi-roaming-settings') return roamingResponse;
+            if (command === 'savi-opensubtitles-fetch') return openSubtitlesResponse;
+            return undefined;
+        });
+        roamingCacheMock.mockReset();
+        roamingCacheMock.mockResolvedValue({ targetLanguage: '', openSubtitlesApiKey: '' });
         (globalThis as any).browser = { runtime: { getURL: (p: string) => p, sendMessage } };
         (globalThis as any).fetch = jest.fn().mockResolvedValue({
             ok: true,
@@ -75,26 +88,21 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
     });
 
     it('Path A: loads the player track matching the target language', async () => {
-        roamingMock.mockResolvedValue({ targetLanguage: 'es', openSubtitlesApiKey: '' });
         controller._syncedData = {
             basename: 'Show',
             subtitles: [track('1', 'en', 'English'), track('2', 'es', 'Spanish'), track('3', 'es-CC', 'Spanish [CC]')],
         };
 
-        const loaded = await controller._trySaviAutoLoad();
-
-        expect(loaded).toBe(true);
+        expect(await controller._trySaviAutoLoad()).toBe(true);
         expect(loadSubtitles).toHaveBeenCalledTimes(1);
-        const [files] = loadSubtitles.mock.calls[0];
-        expect(files[0].name).toBe('Show - Spanish.nfimsc');
-        expect(sendMessage).not.toHaveBeenCalled();
+        expect(loadSubtitles.mock.calls[0][0][0].name).toBe('Show - Spanish.nfimsc');
+        expect(opensubtitlesCall()).toBeUndefined();
         // Records the language for savi capture (localhost is the jsdom host).
         expect(settingsSet).toHaveBeenCalledWith({ streamingLastLanguagesSynced: { localhost: ['es'] } });
     });
 
     it('does nothing when auto-load is disabled', async () => {
         getSingle.mockResolvedValue(false);
-        roamingMock.mockResolvedValue({ targetLanguage: 'es', openSubtitlesApiKey: '' });
         controller._syncedData = { basename: 'Show', subtitles: [track('2', 'es', 'Spanish')] };
 
         expect(await controller._trySaviAutoLoad()).toBe(false);
@@ -102,7 +110,7 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
     });
 
     it('does nothing when no target language is set', async () => {
-        roamingMock.mockResolvedValue({ targetLanguage: '', openSubtitlesApiKey: '' });
+        roamingResponse = { targetLanguage: '', openSubtitlesApiKey: '' };
         controller._syncedData = { basename: 'Show', subtitles: [track('2', 'es', 'Spanish')] };
 
         expect(await controller._trySaviAutoLoad()).toBe(false);
@@ -110,19 +118,13 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
     });
 
     it('Path B: falls back to OpenSubtitles when no track matches and a key is set', async () => {
-        roamingMock.mockResolvedValue({ targetLanguage: 'es', openSubtitlesApiKey: 'k-1' });
-        sendMessage.mockResolvedValue({
-            ok: true,
-            name: 'Show.es.srt',
-            content: '1\n00:00:01,000 --> 00:00:02,000\nHola\n',
-        });
+        roamingResponse = { targetLanguage: 'es', openSubtitlesApiKey: 'k-1' };
+        openSubtitlesResponse = { ok: true, name: 'Show.es.srt', content: '1\n00:00:01,000 --> 00:00:02,000\nHola\n' };
         controller._syncedData = { basename: 'Dark S01E03 Secrets', subtitles: [track('1', 'en', 'English')] };
 
-        const loaded = await controller._trySaviAutoLoad();
-
-        expect(loaded).toBe(true);
-        const [command] = sendMessage.mock.calls[0];
-        expect(command.message).toMatchObject({
+        expect(await controller._trySaviAutoLoad()).toBe(true);
+        const call = opensubtitlesCall();
+        expect(call?.[0].message).toMatchObject({
             command: 'savi-opensubtitles-fetch',
             query: 'Dark',
             languages: 'es',
@@ -135,20 +137,32 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
     });
 
     it('does not use OpenSubtitles when no key is configured', async () => {
-        roamingMock.mockResolvedValue({ targetLanguage: 'es', openSubtitlesApiKey: '' });
+        roamingResponse = { targetLanguage: 'es', openSubtitlesApiKey: '' };
         controller._syncedData = { basename: 'Show', subtitles: [track('1', 'en', 'English')] };
 
         expect(await controller._trySaviAutoLoad()).toBe(false);
-        expect(sendMessage).not.toHaveBeenCalled();
+        expect(opensubtitlesCall()).toBeUndefined();
         expect(loadSubtitles).not.toHaveBeenCalled();
     });
 
     it('Path B returns false when OpenSubtitles has no result', async () => {
-        roamingMock.mockResolvedValue({ targetLanguage: 'es', openSubtitlesApiKey: 'k-1' });
-        sendMessage.mockResolvedValue({ ok: false });
+        roamingResponse = { targetLanguage: 'es', openSubtitlesApiKey: 'k-1' };
+        openSubtitlesResponse = { ok: false };
         controller._syncedData = { basename: 'Show', subtitles: [track('1', 'en', 'English')] };
 
         expect(await controller._trySaviAutoLoad()).toBe(false);
         expect(loadSubtitles).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the cached roaming settings when the background is unreachable', async () => {
+        sendMessage.mockImplementation(async (cmd: any) => {
+            if (cmd?.message?.command === 'savi-roaming-settings') throw new Error('no background');
+            return undefined;
+        });
+        roamingCacheMock.mockResolvedValue({ targetLanguage: 'es', openSubtitlesApiKey: '' });
+        controller._syncedData = { basename: 'Show', subtitles: [track('2', 'es', 'Spanish')] };
+
+        expect(await controller._trySaviAutoLoad()).toBe(true);
+        expect(loadSubtitles).toHaveBeenCalledTimes(1);
     });
 });

@@ -26,6 +26,7 @@ import {
     SaviMineLineResponse,
     SaviOpenSubtitlesFetchMessage,
     SaviOpenSubtitlesFetchResponse,
+    SaviRoamingSettingsResponse,
     SaviRequestStartMessage,
     SaviGetIntentResponse,
     SaviSegmentLineMessage,
@@ -66,7 +67,7 @@ import {
 } from './persistent-cache';
 import { captureVisibleTab } from '@/services/capture-visible-tab';
 import { OpenSubtitlesClient } from '@/services/subtitle-sources';
-import { getCachedRoamingSettings } from './cloud-settings';
+import { getCachedRoamingSettings, loadRoamingSettings } from './cloud-settings';
 
 export default class SaviCommandHandler implements CommandHandler {
     private readonly _settings: SettingsProvider;
@@ -162,6 +163,11 @@ export default class SaviCommandHandler implements CommandHandler {
                         } as SaviOpenSubtitlesFetchResponse)
                     );
                 return true;
+            case 'savi-roaming-settings':
+                this._roamingSettings()
+                    .then(sendResponse)
+                    .catch(() => sendResponse(undefined));
+                return true;
             case 'savi-capture-ended':
                 this._forwardCaptureEnded(command.message as SaviCaptureEndedMessage);
                 break;
@@ -205,6 +211,16 @@ export default class SaviCommandHandler implements CommandHandler {
         }
 
         return { ok: true, name: subtitle.fileName, content: subtitle.content };
+    }
+
+    // Fresh roaming settings from the cloud (refreshing the local cache), so a
+    // target language changed on another device takes effect on the next video.
+    // loadRoamingSettings already falls back to the cache when signed out /
+    // offline, so this never blocks the auto-load on the network.
+    private async _roamingSettings(): Promise<SaviRoamingSettingsResponse> {
+        const { saviCloudUrl } = await this._settings.get(['saviCloudUrl']);
+        const { targetLanguage, openSubtitlesApiKey } = await loadRoamingSettings(saviCloudUrl);
+        return { targetLanguage, openSubtitlesApiKey };
     }
 
     private async _tokenize(message: SaviTokenizeMessage): Promise<SaviTokenizeResponse> {

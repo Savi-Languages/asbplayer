@@ -24,8 +24,14 @@ import { ExtensionGlobalStateProvider } from '@/services/extension-global-state-
 import { isOnTutorialPage } from '@/services/tutorial';
 import { extractExtension } from '@/pages/util';
 import { parseShowQuery, primarySubtag, selectTrackForLanguage } from '@/savi/track-select';
-import { getCachedRoamingSettings } from '@/savi/cloud-settings';
-import { SaviCommand, SaviOpenSubtitlesFetchMessage, SaviOpenSubtitlesFetchResponse } from '@/savi/messages';
+import { getCachedRoamingSettings, SaviRoamingSettings } from '@/savi/cloud-settings';
+import {
+    SaviCommand,
+    SaviOpenSubtitlesFetchMessage,
+    SaviOpenSubtitlesFetchResponse,
+    SaviRoamingSettingsMessage,
+    SaviRoamingSettingsResponse,
+} from '@/savi/messages';
 
 declare global {
     function cloneInto(obj: any, targetScope: any, options?: any): any;
@@ -368,6 +374,31 @@ export default class VideoDataSyncController {
     // true when a track was loaded. Path A = the streaming player's own track in
     // the target language; Path B = an OpenSubtitles search (fallback, only when
     // a key is configured). Any failure is swallowed so we fall back cleanly.
+    // The roaming target language / OpenSubtitles key, fetched FRESH from the
+    // cloud (via the background) on each video so a language set on another device
+    // — e.g. the desktop app — applies here without reopening the extension. The
+    // local cache is the fallback when the cloud is unreachable / signed out.
+    private async _saviRoamingSettings(): Promise<SaviRoamingSettings> {
+        try {
+            const command: SaviCommand<SaviRoamingSettingsMessage> = {
+                sender: 'savi-video',
+                message: { command: 'savi-roaming-settings' },
+            };
+            const response = (await browser.runtime.sendMessage(command)) as SaviRoamingSettingsResponse | undefined;
+
+            if (response && typeof response.targetLanguage === 'string') {
+                return {
+                    targetLanguage: response.targetLanguage,
+                    openSubtitlesApiKey: response.openSubtitlesApiKey ?? '',
+                };
+            }
+        } catch (e) {
+            // No background / offline — fall back to the cache.
+        }
+
+        return await getCachedRoamingSettings();
+    }
+
     private async _trySaviAutoLoad(): Promise<boolean> {
         try {
             if (!(await this._settings.getSingle('saviAutoLoadSubtitles'))) {
@@ -375,7 +406,7 @@ export default class VideoDataSyncController {
                 return false;
             }
 
-            const { targetLanguage, openSubtitlesApiKey } = await getCachedRoamingSettings();
+            const { targetLanguage, openSubtitlesApiKey } = await this._saviRoamingSettings();
             const detected = this._syncedData?.subtitles ?? [];
             const detectedLangs = detected.map((s) => s.language ?? '?');
 
