@@ -23,6 +23,9 @@ import i18n from 'i18next';
 import { ExtensionGlobalStateProvider } from '@/services/extension-global-state-provider';
 import { isOnTutorialPage } from '@/services/tutorial';
 import { extractExtension } from '@/pages/util';
+import { parseShowQuery, primarySubtag, selectTrackForLanguage } from '@/savi/track-select';
+import { getCachedRoamingSettings } from '@/savi/cloud-settings';
+import { SaviCommand, SaviOpenSubtitlesFetchMessage, SaviOpenSubtitlesFetchResponse } from '@/savi/messages';
 
 declare global {
     function cloneInto(obj: any, targetScope: any, options?: any): any;
@@ -82,6 +85,7 @@ export default class VideoDataSyncController {
     private _fullscreenElement?: Element;
     private _activeElement?: Element;
     private _autoSyncAttempted: boolean = false;
+    private _saviAutoLoadAttempted: boolean = false;
     private _dataReceivedListener?: (event: Event) => void;
     private _isTutorial: boolean;
 
@@ -174,6 +178,7 @@ export default class VideoDataSyncController {
 
         this._syncedData = undefined;
         this._autoSyncAttempted = false;
+        this._saviAutoLoadAttempted = false;
 
         if (!this._dataReceivedListener) {
             this._dataReceivedListener = (event: Event) => {
@@ -322,6 +327,19 @@ export default class VideoDataSyncController {
         const wasLoading = this._syncedData?.subtitles === undefined;
         this._syncedData = data;
 
+        // Savi (SV-8): before the upstream remembered-language auto-sync, try to
+        // auto-load the streaming player's own track in the learner's target
+        // language (or an OpenSubtitles fallback). Runs once per request cycle and
+        // only with the picker closed; on success we're done. On failure we fall
+        // through to the unchanged upstream behavior below.
+        if (this._syncedData?.subtitles !== undefined && !this.pickerVisible && !this._saviAutoLoadAttempted) {
+            this._saviAutoLoadAttempted = true;
+
+            if (await this._trySaviAutoLoad()) {
+                return;
+            }
+        }
+
         if (this._syncedData?.subtitles !== undefined && (await this._canAutoSync())) {
             if (!this._autoSyncAttempted) {
                 this._autoSyncAttempted = true;
@@ -344,6 +362,71 @@ export default class VideoDataSyncController {
         } else if (!this.pickerVisible || wasLoading) {
             this._frame.clientIfLoaded?.updateState(await this._buildModel({}));
         }
+    }
+
+    // SV-8: auto-load the target-language subtitle without the picker. Returns
+    // true when a track was loaded. Path A = the streaming player's own track in
+    // the target language; Path B = an OpenSubtitles search (fallback, only when
+    // a key is configured). Any failure is swallowed so we fall back cleanly.
+    private async _trySaviAutoLoad(): Promise<boolean> {
+        try {
+            if (!(await this._settings.getSingle('saviAutoLoadSubtitles'))) {
+                return false;
+            }
+
+            const { targetLanguage, openSubtitlesApiKey } = await getCachedRoamingSettings();
+
+            if (targetLanguage.trim().length === 0) {
+                return false;
+            }
+
+            // Path A: the streaming player's own track in the target language.
+            const track = selectTrackForLanguage(this._syncedData?.subtitles, targetLanguage);
+
+            if (track !== undefined) {
+                await this._syncData([track]);
+                return true;
+            }
+
+            // Path B: OpenSubtitles fallback — only when the user configured a key.
+            if (openSubtitlesApiKey.trim().length > 0) {
+                return await this._trySaviOpenSubtitlesFallback(targetLanguage);
+            }
+
+            return false;
+        } catch (e) {
+            console.error('savi: subtitle auto-load failed', e);
+            return false;
+        }
+    }
+
+    private async _trySaviOpenSubtitlesFallback(targetLanguage: string): Promise<boolean> {
+        const { query, seasonNumber, episodeNumber } = parseShowQuery(this._syncedData?.basename ?? document.title);
+
+        if (query.trim().length === 0) {
+            return false;
+        }
+
+        const command: SaviCommand<SaviOpenSubtitlesFetchMessage> = {
+            sender: 'savi-video',
+            message: {
+                command: 'savi-opensubtitles-fetch',
+                query,
+                languages: primarySubtag(targetLanguage),
+                seasonNumber,
+                episodeNumber,
+            },
+        };
+
+        const response = (await browser.runtime.sendMessage(command)) as SaviOpenSubtitlesFetchResponse | undefined;
+
+        if (!response?.ok || !response.content) {
+            return false;
+        }
+
+        const name = /\.(srt|ass|ssa|vtt)$/i.test(response.name ?? '') ? response.name! : `${query}.srt`;
+        this._context.loadSubtitles([new File([response.content], name)], false);
+        return true;
     }
 
     private async _canAutoSync(): Promise<boolean> {

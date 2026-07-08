@@ -24,6 +24,8 @@ import {
     SaviEpisodeTranscriptResponse,
     SaviMineLineMessage,
     SaviMineLineResponse,
+    SaviOpenSubtitlesFetchMessage,
+    SaviOpenSubtitlesFetchResponse,
     SaviRequestStartMessage,
     SaviGetIntentResponse,
     SaviSegmentLineMessage,
@@ -63,6 +65,8 @@ import {
     putCachedTokens,
 } from './persistent-cache';
 import { captureVisibleTab } from '@/services/capture-visible-tab';
+import { OpenSubtitlesClient } from '@/services/subtitle-sources';
+import { getCachedRoamingSettings } from './cloud-settings';
 
 export default class SaviCommandHandler implements CommandHandler {
     private readonly _settings: SettingsProvider;
@@ -131,8 +135,7 @@ export default class SaviCommandHandler implements CommandHandler {
                     .catch(() => sendResponse({ entries: [], kanji: [] }));
                 return true;
             case 'savi-episode-transcript':
-                this._storeEpisodeTranscript(command.message as SaviEpisodeTranscriptMessage)
-                    .then(sendResponse);
+                this._storeEpisodeTranscript(command.message as SaviEpisodeTranscriptMessage).then(sendResponse);
                 return true;
             case 'savi-mine-line':
                 this._mineLine(command.message as SaviMineLineMessage)
@@ -148,6 +151,16 @@ export default class SaviCommandHandler implements CommandHandler {
                 this._captureFrame(sender)
                     .then(sendResponse)
                     .catch(() => sendResponse({} as SaviCaptureFrameResponse));
+                return true;
+            case 'savi-opensubtitles-fetch':
+                this._fetchOpenSubtitles(command.message as SaviOpenSubtitlesFetchMessage)
+                    .then(sendResponse)
+                    .catch((e) =>
+                        sendResponse({
+                            ok: false,
+                            errorMessage: e instanceof Error ? e.message : String(e),
+                        } as SaviOpenSubtitlesFetchResponse)
+                    );
                 return true;
             case 'savi-capture-ended':
                 this._forwardCaptureEnded(command.message as SaviCaptureEndedMessage);
@@ -167,6 +180,31 @@ export default class SaviCommandHandler implements CommandHandler {
             return null;
         }
         return { baseUrl: normalizedBaseUrl(saviDaemonUrl), token };
+    }
+
+    // SV-8 fallback: search OpenSubtitles for the target-language subtitle when
+    // the streaming player exposed none. The consumer API key comes from the
+    // roaming account settings; an absent key or no result is a soft ok:false.
+    private async _fetchOpenSubtitles(message: SaviOpenSubtitlesFetchMessage): Promise<SaviOpenSubtitlesFetchResponse> {
+        const { openSubtitlesApiKey } = await getCachedRoamingSettings();
+
+        if (openSubtitlesApiKey.trim().length === 0) {
+            return { ok: false };
+        }
+
+        const client = new OpenSubtitlesClient({ apiKey: openSubtitlesApiKey });
+        const subtitle = await client.fetchBestSubtitle({
+            query: message.query,
+            languages: message.languages,
+            seasonNumber: message.seasonNumber,
+            episodeNumber: message.episodeNumber,
+        });
+
+        if (subtitle === undefined) {
+            return { ok: false };
+        }
+
+        return { ok: true, name: subtitle.fileName, content: subtitle.content };
     }
 
     private async _tokenize(message: SaviTokenizeMessage): Promise<SaviTokenizeResponse> {

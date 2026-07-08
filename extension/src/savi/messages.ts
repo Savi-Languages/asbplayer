@@ -211,6 +211,29 @@ export interface SaviEpisodeTranscriptResponse {
     readonly ok: boolean;
 }
 
+// Search OpenSubtitles.com for a subtitle in the target language and return its
+// text (SV-8 fallback, used only when the streaming player has no target-language
+// track). Runs in the background because MV3 blocks cross-origin fetches from
+// content scripts; the API key is read from the roaming account settings
+// (extension/src/savi/cloud-settings.ts), never carried in the message.
+export interface SaviOpenSubtitlesFetchMessage {
+    readonly command: 'savi-opensubtitles-fetch';
+    readonly query: string;
+    /** Comma-separated ISO 639-1 codes, e.g. `es`. */
+    readonly languages: string;
+    readonly seasonNumber?: number;
+    readonly episodeNumber?: number;
+}
+
+export interface SaviOpenSubtitlesFetchResponse {
+    // ok:false covers "no key configured", "no result", and errors alike — the
+    // fallback is best-effort, so the caller just moves on.
+    readonly ok: boolean;
+    readonly name?: string;
+    readonly content?: string;
+    readonly errorMessage?: string;
+}
+
 // Capture a JPEG of the current video frame for a mined card. A content script
 // can't call tabs.captureVisibleTab (background-only), so it asks the
 // background for the full-tab data URL, then crops it locally to the video.

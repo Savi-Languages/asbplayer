@@ -806,6 +806,13 @@ export interface SaviSettings {
     // AI context-aware word segmentation in the hover dictionary (resolves
     // でも-conjunction vs で+も, は-topic vs 葉, …). Opt-in; needs an LLM key on the daemon.
     readonly saviAiSegmentation: boolean;
+    // Auto-load the streaming player's own subtitle track in the learner's target
+    // language (SV-8), and fall back to an OpenSubtitles search when it has none.
+    // The target language + OpenSubtitles key are account-roaming (see
+    // extension/src/savi/cloud-settings.ts), not stored here.
+    readonly saviAutoLoadSubtitles: boolean;
+    // Base URL of the savi cloud the extension reads roaming settings from.
+    readonly saviCloudUrl: string;
 }
 
 export type ChromeBoundKeyBindName =

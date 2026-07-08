@@ -227,3 +227,169 @@ export class JimakuClient {
         }
     }
 }
+
+// ── OpenSubtitles.com (SV-8 fallback) ─────────────────────────────────────
+// Fallback subtitle source when the streaming player exposes no track in the
+// learner's language. Uses the opensubtitles.com REST API v1 with the user's
+// own consumer API key (https://www.opensubtitles.com/vi/consumers). Docs:
+// https://opensubtitles.stoplight.io/. Run from the background service worker
+// (host permission for *.opensubtitles.com bypasses CORS). NOTE: browsers forbid
+// overriding User-Agent via fetch, so in the extension the request carries the
+// browser's own UA; if OpenSubtitles ever rejects that, add a
+// declarativeNetRequest header rule for api.opensubtitles.com.
+
+export interface OpenSubtitlesFile {
+    fileId: number;
+    fileName: string;
+    language?: string;
+    downloadCount?: number;
+}
+
+export interface OpenSubtitlesDownload {
+    link: string;
+    fileName: string;
+}
+
+export interface OpenSubtitlesSubtitle {
+    fileName: string;
+    content: string;
+}
+
+export interface OpenSubtitlesSearchQuery {
+    query: string;
+    /** Comma-separated ISO 639-1 codes, e.g. `es` or `es,en`. */
+    languages: string;
+    seasonNumber?: number;
+    episodeNumber?: number;
+}
+
+const defaultOpenSubtitlesBaseUrl = 'https://api.opensubtitles.com/api/v1';
+const defaultOpenSubtitlesUserAgent = 'savi-asbplayer v1.0';
+
+export interface OpenSubtitlesClientOptions {
+    apiKey: string;
+    baseUrl?: string;
+    userAgent?: string;
+}
+
+export class OpenSubtitlesClient {
+    private readonly _apiKey: string;
+    private readonly _baseUrl: string;
+    private readonly _userAgent: string;
+
+    constructor({
+        apiKey,
+        baseUrl = defaultOpenSubtitlesBaseUrl,
+        userAgent = defaultOpenSubtitlesUserAgent,
+    }: OpenSubtitlesClientOptions) {
+        const trimmedApiKey = apiKey.trim();
+
+        if (trimmedApiKey.length === 0) {
+            throw new Error('OpenSubtitles API key cannot be empty or whitespace-only');
+        }
+
+        this._apiKey = trimmedApiKey;
+        this._baseUrl = baseUrl.replace(/\/+$/, '');
+        this._userAgent = userAgent;
+    }
+
+    private get _headers(): Record<string, string> {
+        return { 'Api-Key': this._apiKey, 'User-Agent': this._userAgent, Accept: 'application/json' };
+    }
+
+    /** Search subtitles, flattening the results' `files[]` into a ranked list
+     *  (the API returns most-relevant first). */
+    async search({
+        query,
+        languages,
+        seasonNumber,
+        episodeNumber,
+    }: OpenSubtitlesSearchQuery): Promise<OpenSubtitlesFile[]> {
+        const params = new URLSearchParams();
+        params.set('query', query);
+
+        const trimmedLanguages = languages.trim().toLowerCase();
+        if (trimmedLanguages.length > 0) {
+            params.set('languages', trimmedLanguages);
+        }
+        if (seasonNumber !== undefined) {
+            params.set('season_number', `${seasonNumber}`);
+        }
+        if (episodeNumber !== undefined) {
+            params.set('episode_number', `${episodeNumber}`);
+        }
+
+        const response = await fetch(`${this._baseUrl}/subtitles?${params.toString()}`, { headers: this._headers });
+        const body = await this._json(response);
+        const data: any[] = Array.isArray(body?.data) ? body.data : [];
+        const files: OpenSubtitlesFile[] = [];
+
+        for (const item of data) {
+            const attributes = item?.attributes ?? {};
+            for (const file of attributes.files ?? []) {
+                if (typeof file?.file_id === 'number') {
+                    files.push({
+                        fileId: file.file_id,
+                        fileName: typeof file.file_name === 'string' ? file.file_name : `${file.file_id}.srt`,
+                        language: attributes.language,
+                        downloadCount: attributes.download_count,
+                    });
+                }
+            }
+        }
+
+        return files;
+    }
+
+    /** Exchange a `file_id` for a temporary download link. */
+    async requestDownload(fileId: number): Promise<OpenSubtitlesDownload> {
+        const response = await fetch(`${this._baseUrl}/download`, {
+            method: 'POST',
+            headers: { ...this._headers, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ file_id: fileId }),
+        });
+        const body = await this._json(response);
+
+        if (typeof body?.link !== 'string') {
+            throw new Error('OpenSubtitles download response is missing a link');
+        }
+
+        return { link: body.link, fileName: typeof body.file_name === 'string' ? body.file_name : `${fileId}.srt` };
+    }
+
+    /** Search → download link → fetch the subtitle text of the best match.
+     *  `undefined` when the search returns no files; throws on a request error. */
+    async fetchBestSubtitle(searchQuery: OpenSubtitlesSearchQuery): Promise<OpenSubtitlesSubtitle | undefined> {
+        const files = await this.search(searchQuery);
+
+        if (files.length === 0) {
+            return undefined;
+        }
+
+        const best = files[0];
+        const download = await this.requestDownload(best.fileId);
+        const response = await fetch(download.link);
+
+        if (!response.ok) {
+            throw new Error(`OpenSubtitles download failed with status ${response.status}`);
+        }
+
+        const content = await response.text();
+        return { fileName: download.fileName || best.fileName, content };
+    }
+
+    private async _json(response: Response): Promise<any> {
+        const text = await response.text();
+        const parsed = parseJsonSafely(text) as any;
+
+        if (!response.ok) {
+            const message =
+                parsed?.message ??
+                (Array.isArray(parsed?.errors) ? parsed.errors.join(', ') : undefined) ??
+                `OpenSubtitles request failed with status ${response.status}`;
+            throw new Error(message);
+        }
+
+        return parsed;
+    }
+}

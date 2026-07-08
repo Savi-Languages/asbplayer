@@ -226,6 +226,14 @@ export default defineConfig({
                     // not grant the activeTab permission an icon/command would.
                     'https://*.netflix.com/*',
                     'https://*.youtube.com/*',
+                    // Savi cloud: the extension reads/writes account-roaming
+                    // settings (target language, OpenSubtitles key) directly with
+                    // the account JWT (SV-8). Local dev clouds are covered above.
+                    'https://savi.tianxiaocao.com/*',
+                    // OpenSubtitles.com: SV-8 fallback subtitle search + the
+                    // download CDN (dl.opensubtitles.com), fetched from the
+                    // background so the host permission bypasses CORS.
+                    'https://*.opensubtitles.com/*',
                 ],
             };
         }

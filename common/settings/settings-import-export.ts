@@ -673,6 +673,12 @@ const settingsSchema = {
         saviAiSegmentation: {
             type: 'boolean',
         },
+        saviAutoLoadSubtitles: {
+            type: 'boolean',
+        },
+        saviCloudUrl: {
+            type: 'string',
+        },
         pauseOnHoverMode: {
             type: 'number',
         },
