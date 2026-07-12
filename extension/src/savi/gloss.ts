@@ -282,8 +282,14 @@ export class SaviGlossController implements GlossProvider {
             this._glossable = false;
         }
         if (this._glossable) {
-            await this._loadKnown();
+            // Start looking ahead IMMEDIATELY and load the known-word set in
+            // parallel. Glossing works with an empty known set (it globs every
+            // content word until the buckets arrive, then narrows), so a slow
+            // /v2/words/{lang}/buckets fetch — which projects over the whole
+            // account history and can take seconds on a large one — must NOT
+            // delay the first labels.
             this._prefetchTimer = setInterval(() => this._prefetchTick(), PREFETCH_TICK_MS);
+            void this._loadKnown();
         }
     }
 
