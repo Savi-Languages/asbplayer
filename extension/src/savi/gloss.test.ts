@@ -1,4 +1,11 @@
-import { buildGlossHtml, glossableLemmas, isContentWord, isGlossableLanguage, segmentLine } from './gloss';
+import {
+    buildGlossHtml,
+    glossableLemmas,
+    isContentWord,
+    isGlossableLanguage,
+    isReasonableGloss,
+    segmentLine,
+} from './gloss';
 
 describe('isGlossableLanguage', () => {
     it('accepts space-delimited (Latin-script) languages by primary subtag', () => {
@@ -56,11 +63,52 @@ describe('segmentLine', () => {
     });
 });
 
+describe('segmentLine — proper nouns', () => {
+    it('does not gloss a capitalized word mid-sentence (a name)', () => {
+        const segments = segmentLine('Llegué a pensar que Elena bromeaba.');
+        const elena = segments.find((s) => s.text === 'Elena');
+        expect(elena?.properNoun).toBe(true);
+        expect(elena?.content).toBe(false);
+        expect(glossableLemmas(segments, new Set())).not.toContain('elena');
+        // ...but ordinary content words are still glossed.
+        expect(glossableLemmas(segments, new Set())).toEqual(['llegué', 'pensar', 'bromeaba']);
+    });
+
+    it('keeps a sentence-initial capital as an ordinary word', () => {
+        const segments = segmentLine('Quiero comer.');
+        const quiero = segments.find((s) => s.text === 'Quiero');
+        expect(quiero?.properNoun).toBe(false);
+        expect(glossableLemmas(segments, new Set())).toContain('quiero');
+    });
+
+    it('treats a capital after a sentence boundary as a new sentence start', () => {
+        // 'Vino' starts the second sentence → ordinary; 'Madrid' mid-sentence → name.
+        const segments = segmentLine('Comí. Vino desde Madrid.');
+        expect(segments.find((s) => s.text === 'Vino')?.properNoun).toBe(false);
+        expect(segments.find((s) => s.text === 'Madrid')?.properNoun).toBe(true);
+    });
+});
+
 describe('glossableLemmas', () => {
     it('returns distinct content lemmas, skipping known ones', () => {
         const segments = segmentLine('el gato y el perro y el gato');
         expect(glossableLemmas(segments, new Set())).toEqual(['gato', 'perro']); // deduped, el/y dropped
         expect(glossableLemmas(segments, new Set(['gato']))).toEqual(['perro']); // gato is known
+    });
+});
+
+describe('isReasonableGloss', () => {
+    it('accepts a word or short phrase', () => {
+        expect(isReasonableGloss('bank')).toBe(true);
+        expect(isReasonableGloss('after-dinner conversation')).toBe(true);
+    });
+
+    it('rejects an empty gloss and an LLM ramble (too long / too many words)', () => {
+        expect(isReasonableGloss('')).toBe(false);
+        expect(isReasonableGloss('   ')).toBe(false);
+        const ramble =
+            'term of endearment or a colloquialism, however in this case it is likely being used affectionately';
+        expect(isReasonableGloss(ramble)).toBe(false);
     });
 });
 

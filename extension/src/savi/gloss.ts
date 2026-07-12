@@ -67,8 +67,10 @@ export interface GlossSegment {
     readonly word: boolean;
     /** Lowercased surface — the lemma key today (the `es` analyzer lowercases). */
     readonly lemma?: string;
-    /** A glossable content word: not a stopword and ≥ 2 letters. */
+    /** A glossable content word: not a stopword, ≥ 2 letters, not a proper noun. */
     readonly content?: boolean;
+    /** A likely proper noun (capitalized, not at a sentence start) — never glossed. */
+    readonly properNoun?: boolean;
 }
 
 /** Whether `lang` is glossed client-side (space-delimited; not a CJK/Thai-style
@@ -84,21 +86,41 @@ export function isContentWord(lemma: string): boolean {
     return lemma.length >= 2 && !SPANISH_STOPWORDS.has(lemma);
 }
 
+// After one of these, the next capitalized word starts a new sentence (so it is
+// an ordinary word, not a proper noun). Includes Spanish inverted marks.
+const SENTENCE_BOUNDARY = /[.!?…:;¿¡\n]/;
+
+/** True if `surface` begins with an uppercase letter (accent-aware). */
+export function startsUppercase(surface: string): boolean {
+    return /^\p{Lu}/u.test(surface);
+}
+
 /** Split a line into word/gap segments (offset-preserving; concatenation
  *  reproduces the line). Words are runs of Unicode letters — covers á é í ó ú ü ñ
- *  and any Latin-script language — matching the `es` analyzer's tokenization. */
+ *  and any Latin-script language — matching the `es` analyzer's tokenization.
+ *  A capitalized word that is NOT at a sentence start is flagged a proper noun
+ *  (Spanish/Romance capitalize proper nouns, not common nouns) so names like
+ *  "Elena" or "Madrid" aren't glossed; sentence-initial capitals stay ordinary. */
 export function segmentLine(text: string): GlossSegment[] {
     const segments: GlossSegment[] = [];
     const re = /\p{L}+/gu;
     let last = 0;
+    let atSentenceStart = true; // the first word of the line is sentence-initial
     for (const match of text.matchAll(re)) {
         const index = match.index ?? 0;
         if (index > last) {
-            segments.push({ text: text.slice(last, index), word: false });
+            const gap = text.slice(last, index);
+            segments.push({ text: gap, word: false });
+            if (SENTENCE_BOUNDARY.test(gap)) {
+                atSentenceStart = true;
+            }
         }
         const surface = match[0];
         const lemma = surface.toLowerCase();
-        segments.push({ text: surface, word: true, lemma, content: isContentWord(lemma) });
+        const properNoun = !atSentenceStart && startsUppercase(surface);
+        const content = isContentWord(lemma) && !properNoun;
+        segments.push({ text: surface, word: true, lemma, content, properNoun });
+        atSentenceStart = false;
         last = index + surface.length;
     }
     if (last < text.length) {
@@ -148,6 +170,22 @@ export function buildGlossHtml(
     return glossed ? html : '';
 }
 
+// A gloss LABEL must be short — a word or a short phrase. A long, sentence-like
+// response is a misbehaving LLM fallback (rambling about senses/alternatives),
+// not a usable label; the caller drops it rather than render a paragraph.
+const MAX_GLOSS_CHARS = 60;
+const MAX_GLOSS_WORDS = 8;
+
+/** Whether `gloss` is short enough to be a usable label (vs. an LLM ramble). */
+export function isReasonableGloss(gloss: string): boolean {
+    const trimmed = gloss.trim();
+    return (
+        trimmed.length > 0 &&
+        trimmed.length <= MAX_GLOSS_CHARS &&
+        trimmed.split(/\s+/).filter(Boolean).length <= MAX_GLOSS_WORDS
+    );
+}
+
 // ── The controller ────────────────────────────────────────────────────────
 
 const sendToBackground = <R>(message: SaviGlossTranslateMessage | SaviWordBucketsMessage): Promise<R> => {
@@ -171,13 +209,17 @@ export interface CueLike {
 
 /** Timing/limits for prefetch + retry. Prefetch translates cues starting within
  *  the lookahead window so a label is ready before its cue shows; the concurrency
- *  cap keeps that from becoming a rate-limit storm (which itself caused missing
- *  glosses). A fully-failed line is retried a bounded number of times. */
-const PREFETCH_LOOKAHEAD_MS = 12000;
-const PREFETCH_MAX_CUES = 8;
+ *  cap AND the min dispatch interval keep that from becoming a rate-limit storm
+ *  (which caused DeepL to fall through to the LLM chain and 429). A fully-failed
+ *  line is retried a bounded number of times. */
+const PREFETCH_LOOKAHEAD_MS = 10000;
+const PREFETCH_MAX_CUES = 6;
 const PREFETCH_TICK_MS = 500;
 const MAX_LINE_ATTEMPTS = 3;
-const MAX_CONCURRENT_TRANSLATIONS = 6;
+const MAX_CONCURRENT_TRANSLATIONS = 4;
+// Space successive translate dispatches so bursts stay under provider rate limits
+// (~500 requests/min at 120ms). Cache hits and already-settled lines don't dispatch.
+const MIN_DISPATCH_INTERVAL_MS = 120;
 
 export interface GlossSources {
     /** The playing media element, for prefetch timing. */
@@ -213,6 +255,8 @@ export class SaviGlossController implements GlossProvider {
     // Simple concurrency gate over the per-word translate calls.
     private _active = 0;
     private _waiters: Array<{ run: () => void; priority: boolean }> = [];
+    // Rate gate: the earliest time the next dispatch may start (min-interval spacing).
+    private _nextDispatchMs = 0;
 
     constructor(
         settings: Pick<SettingsProvider, 'get'>,
@@ -381,6 +425,7 @@ export class SaviGlossController implements GlossProvider {
         if (cached !== undefined) {
             return cached; // a previously-resolved word never re-hits the network
         }
+        await this._rateGate();
         await this._acquire(priority);
         try {
             const response = await sendToBackground<SaviGlossTranslateResponse>({
@@ -391,7 +436,9 @@ export class SaviGlossController implements GlossProvider {
                 context,
             });
             const gloss = response?.text?.trim();
-            if (gloss && gloss.length > 0) {
+            // Keep it only if it's a plausible LABEL — drop an LLM ramble (a
+            // paragraph of senses/alternatives) rather than render it over a word.
+            if (gloss && isReasonableGloss(gloss)) {
                 this._wordGloss.set(key, gloss);
                 return gloss;
             }
@@ -401,6 +448,15 @@ export class SaviGlossController implements GlossProvider {
         } finally {
             this._release();
         }
+    }
+
+    // Space successive dispatches so bursts stay under provider rate limits.
+    private _rateGate(): Promise<void> {
+        const now = Date.now();
+        const at = Math.max(now, this._nextDispatchMs);
+        this._nextDispatchMs = at + MIN_DISPATCH_INTERVAL_MS;
+        const wait = at - now;
+        return wait > 0 ? new Promise((resolve) => setTimeout(resolve, wait)) : Promise.resolve();
     }
 
     // Bound the number of concurrent translate calls so prefetch doesn't storm the
