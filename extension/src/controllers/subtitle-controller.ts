@@ -671,12 +671,27 @@ export default class SubtitleController {
     }
 
     /** savi glossing: a line's gloss labels resolved asynchronously — drop the
-     *  cached HTML for the showing lines and force a re-render so they appear. */
-    notifyGlossReady() {
+     *  cached HTML for that line (by text) plus the showing lines, and force a
+     *  re-render so the labels appear. The by-text invalidation is essential for
+     *  PREFETCHED lines: a cue's HTML is cached when it enters the render window as
+     *  `nextToShow`, before it's on screen, so a gloss that settles during that
+     *  window would otherwise leave the stale plain HTML to render when it shows. */
+    notifyGlossReady(text?: string) {
+        const keys = new Set<string>();
+        for (const subtitle of this.showingSubtitles ?? []) {
+            keys.add(String(subtitle.index));
+        }
+        if (text !== undefined) {
+            for (const subtitle of this._windowSubtitles()) {
+                if (subtitle.text === text) {
+                    keys.add(String(subtitle.index));
+                }
+            }
+        }
         for (const overlay of [this.bottomSubtitlesElementOverlay, this.topSubtitlesElementOverlay]) {
             if (overlay instanceof CachingElementOverlay) {
-                for (const subtitle of this.showingSubtitles ?? []) {
-                    overlay.removeCachedHtml(String(subtitle.index));
+                for (const key of keys) {
+                    overlay.removeCachedHtml(key);
                 }
             }
         }

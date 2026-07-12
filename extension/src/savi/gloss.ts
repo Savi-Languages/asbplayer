@@ -188,7 +188,7 @@ export interface GlossSources {
 
 export class SaviGlossController implements GlossProvider {
     private readonly _settings: Pick<SettingsProvider, 'get'>;
-    private readonly _onGlossReady: () => void;
+    private readonly _onGlossReady: (text: string) => void;
     private readonly _sources: GlossSources;
 
     private _enabled = false;
@@ -214,7 +214,11 @@ export class SaviGlossController implements GlossProvider {
     private _active = 0;
     private _waiters: Array<{ run: () => void; priority: boolean }> = [];
 
-    constructor(settings: Pick<SettingsProvider, 'get'>, onGlossReady: () => void, sources: GlossSources = {}) {
+    constructor(
+        settings: Pick<SettingsProvider, 'get'>,
+        onGlossReady: (text: string) => void,
+        sources: GlossSources = {}
+    ) {
         this._settings = settings;
         this._onGlossReady = onGlossReady;
         this._sources = sources;
@@ -360,10 +364,11 @@ export class SaviGlossController implements GlossProvider {
             const html = buildGlossHtml(segments, (lemma) => glosses.get(lemma));
             this._lineHtml.set(text, html);
             // Re-render whenever a gloss resolves — not just for the on-screen line:
-            // a prefetch that lands just after its cue shows must still surface its
-            // labels (the re-render is cheap; it reads settled results from cache).
+            // a prefetch that lands while its cue is only upcoming must still
+            // invalidate that cue's (plain) cached HTML so its labels show when it
+            // appears. notifyGlossReady invalidates by this exact text.
             if (html.length > 0) {
-                this._onGlossReady();
+                this._onGlossReady(text);
             }
         } finally {
             this._inFlight.delete(text);

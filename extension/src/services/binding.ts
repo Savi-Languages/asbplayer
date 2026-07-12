@@ -256,7 +256,7 @@ export default class Binding {
         // video + subtitle list let it prefetch translations ahead of the playhead.
         this.saviGlossController = new SaviGlossController(
             this.settings,
-            () => this.subtitleController.notifyGlossReady(),
+            (text) => this.subtitleController.notifyGlossReady(text),
             {
                 video: () => this.video,
                 subtitles: () => this.subtitleController.subtitles,
