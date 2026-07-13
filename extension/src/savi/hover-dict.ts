@@ -128,8 +128,9 @@ const sendToBackground = <R>(message: SaviVideoMessage): Promise<R> => {
 
 /** The single subtitle line under the event target — the inner text span when
  *  present (Yomitan rich-text path), else the per-track line span — NOT the
- *  container that stacks the line above its translation. Null off a subtitle. */
-function lineElement(target: EventTarget | null): HTMLElement | null {
+ *  container that stacks the line above its translation. Null off a subtitle.
+ *  Exported so the Spanish gloss-hover module can reuse the same line detection. */
+export function lineElement(target: EventTarget | null): HTMLElement | null {
     if (!(target instanceof Element)) {
         return null;
     }
@@ -160,7 +161,7 @@ function caretOffsetWithin(el: HTMLElement, x: number, y: number): number | null
     return measure.toString().length;
 }
 
-function caretRangeFromPoint(x: number, y: number): Range | null {
+export function caretRangeFromPoint(x: number, y: number): Range | null {
     const doc = document as unknown as {
         caretRangeFromPoint?: (x: number, y: number) => Range | null;
         caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;

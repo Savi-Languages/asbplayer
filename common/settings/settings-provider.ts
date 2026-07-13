@@ -284,6 +284,7 @@ export const defaultSettings: AsbplayerSettings = {
     saviAiSegmentation: true,
     saviAutoLoadSubtitles: true,
     saviGlossing: true,
+    saviHoverGloss: true,
     saviCloudUrl: 'https://savi.tianxiaocao.com',
     // PauseOnHoverMode.inAndOut: hovering a subtitle word pauses the video and
     // moving away resumes it (Language Reactor behavior). 0 = disabled.

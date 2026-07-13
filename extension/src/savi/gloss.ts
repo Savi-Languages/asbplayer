@@ -326,6 +326,27 @@ export class SaviGlossController implements GlossProvider {
         return undefined;
     }
 
+    /** Whether glossing is active for the current language (enabled + a
+     *  space-delimited target language). On-demand hover glossing gates on this. */
+    get glossable(): boolean {
+        return this._glossable;
+    }
+
+    /** The target (learning) language, for the hover module's context. */
+    get targetLang(): string {
+        return this._targetLang;
+    }
+
+    /** Translate ONE word (including one the learner already knows) for on-demand
+     *  hover glossing — reuses the always-on per-word cache + rate gate, so a word
+     *  already translated for a line resolves instantly. */
+    async glossForHover(word: string, lineText: string): Promise<string | undefined> {
+        if (!this._glossable) {
+            return undefined;
+        }
+        return this._translate(word.toLowerCase(), lineText, true);
+    }
+
     // SV-13: the Known-inclusive buckets for the target language; a lemma marked
     // `known` is skipped. Best-effort — a failure just leaves _known empty.
     private async _loadKnown(): Promise<void> {

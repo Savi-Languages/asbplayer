@@ -679,6 +679,9 @@ const settingsSchema = {
         saviGlossing: {
             type: 'boolean',
         },
+        saviHoverGloss: {
+            type: 'boolean',
+        },
         saviCloudUrl: {
             type: 'string',
         },

@@ -816,6 +816,11 @@ export interface SaviSettings {
     // word in the subtitles (SV-12/13). Context-aware DeepL via savi's cloud, so
     // it needs you signed in. Space-delimited languages only (e.g. Spanish).
     readonly saviGlossing: boolean;
+    // On-demand hover glossing: hover a subtitle word to reveal its translation
+    // above it (any word, incl. known ones), and hold the line (pause) at its end
+    // while the cursor is on the subtitle, resuming on mouse-out. Glossable
+    // (non-Japanese) languages only; requires sign-in like the rest of glossing.
+    readonly saviHoverGloss: boolean;
     // Base URL of the savi cloud the extension reads roaming settings from.
     readonly saviCloudUrl: string;
 }

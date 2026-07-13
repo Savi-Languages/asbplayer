@@ -150,6 +150,10 @@ export default class SubtitleController {
     // savi glossing (SV-12/13): supplies per-line gloss-ruby HTML for the primary
     // (target-language) track. Set by the binding; absent → no glossing.
     saviGloss?: GlossProvider;
+    // savi on-demand hover glossing: fired when a line is about to stop showing,
+    // so the hover feature can hold the line if the cursor is on it. Separate from
+    // autoPauseContext (which the playback modes own).
+    onSaviWillStopShowing?: (subtitle: SubtitleModel) => void;
 
     constructor(context: Binding, dictionary: DictionaryProvider, settings: SettingsProvider) {
         this.context = context;
@@ -503,6 +507,7 @@ export default class SubtitleController {
 
             if (slice.willStopShowing && this._trackEnabled(slice.willStopShowing)) {
                 this.autoPauseContext.willStopShowing(slice.willStopShowing);
+                this.onSaviWillStopShowing?.(slice.willStopShowing);
             }
 
             if (slice.startedShowing && this._trackEnabled(slice.startedShowing)) {

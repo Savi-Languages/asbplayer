@@ -76,6 +76,7 @@ const SaviSettingsTab: React.FC<Props> = ({
         saviRecordingGuard,
         saviAiSegmentation,
         saviGlossing,
+        saviHoverGloss,
     } = settings;
 
     const [saviEmail, setSaviEmail] = useState('');
@@ -186,6 +187,16 @@ const SaviSettingsTab: React.FC<Props> = ({
                     />
                 }
                 label={'Show translations above words you haven’t learned yet (requires sign-in)'}
+                labelPlacement="start"
+            />
+            <SwitchLabelWithHoverEffect
+                control={
+                    <Switch
+                        checked={saviHoverGloss}
+                        onChange={(e) => onSettingChanged('saviHoverGloss', e.target.checked)}
+                    />
+                }
+                label={'Hover a word for its translation, and hold the line at its end while hovering'}
                 labelPlacement="start"
             />
             {roamingSupported && (
