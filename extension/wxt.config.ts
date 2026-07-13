@@ -77,7 +77,9 @@ export default defineConfig({
         },
     },
     manifest: ({ browser, mode }) => {
-        const version = '1.19.0';
+        // Savi's own extension version (independent of the upstream asbplayer
+        // version this fork was based on, and of the savi monorepo semver).
+        const version = '1.0.0';
         const isDev = mode === 'development';
         const devLabel = isDev ? ' (Dev)' : '';
         const title = `${extName}${devLabel}`;
