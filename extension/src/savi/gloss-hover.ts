@@ -131,7 +131,7 @@ export interface GlossHoverSources {
 export class SaviGlossHover {
     private readonly _sources: GlossHoverSources;
 
-    private _active = false; // saviHoverGloss on AND a glossable language
+    private _settingEnabled = false; // the saviHoverGloss setting (glossable is read live)
     private _bound = false;
     private _label: HTMLDivElement | null = null;
     private _mouseOnSubtitle = false;
@@ -143,19 +143,22 @@ export class SaviGlossHover {
         this._sources = sources;
     }
 
-    /** Read the setting, and (if enabled + glossable) bind the mouse listener.
-     *  Called from the binding's bind(); safe to call again. */
+    /** Read the setting and (if on) bind the mouse listener. Called from the
+     *  binding's bind(); safe to call again. Deliberately does NOT snapshot the
+     *  gloss controller's `glossable` — that resolves asynchronously in its own
+     *  start() (settings + roaming reads), so a snapshot here races it and the
+     *  feature would wrongly deactivate. `isActive()` reads it live instead. */
     async start(): Promise<void> {
         this._clearHover();
         this._mouseOnSubtitle = false;
         this._deferredPaused = false;
         try {
             const { saviHoverGloss } = await this._sources.settings.get(['saviHoverGloss']);
-            this._active = saviHoverGloss && this._sources.gloss.glossable;
+            this._settingEnabled = saviHoverGloss;
         } catch {
-            this._active = false;
+            this._settingEnabled = false;
         }
-        if (this._active && !this._bound) {
+        if (this._settingEnabled && !this._bound) {
             this._bound = true;
             document.addEventListener('mousemove', this._onMouseMove, true);
         }
@@ -169,19 +172,20 @@ export class SaviGlossHover {
         this._clearHover();
         this._mouseOnSubtitle = false;
         this._deferredPaused = false;
-        this._active = false;
+        this._settingEnabled = false;
     }
 
-    /** True when the feature is active. The binding reads it to suppress
-     *  asbplayer's IMMEDIATE pause-on-hover, so the two don't both fire. */
+    /** True when the feature is active: setting on AND glossing is live for the
+     *  current language (computed LIVE — see start()). The binding reads it to
+     *  suppress asbplayer's IMMEDIATE pause-on-hover, so the two don't both fire. */
     isActive(): boolean {
-        return this._active;
+        return this._settingEnabled && this._sources.gloss.glossable;
     }
 
     /** The subtitle controller signals the current line is about to stop showing.
      *  If the cursor is on the subtitle, hold the line (pause) instead. */
     onWillStopShowing(): void {
-        if (!this._active || !this._mouseOnSubtitle || this._deferredPaused) {
+        if (!this.isActive() || !this._mouseOnSubtitle || this._deferredPaused) {
             return;
         }
         const video = this._sources.video();
@@ -192,7 +196,7 @@ export class SaviGlossHover {
     }
 
     private _onMouseMove = (event: MouseEvent) => {
-        if (!this._active) {
+        if (!this.isActive()) {
             return;
         }
         const line = lineElement(event.target);
