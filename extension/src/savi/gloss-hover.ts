@@ -138,9 +138,20 @@ export class SaviGlossHover {
     private _deferredPaused = false; // WE held the line at its end; WE resume on mouse-out
     private _hoveredKey = ''; // line + span, so a word is translated/positioned once
     private _generation = 0; // cancels stale async translations
+    private _lastLog = ''; // dedup for the hover diagnostics (mousemove fires constantly)
 
     constructor(sources: GlossHoverSources) {
         this._sources = sources;
+    }
+
+    // Diagnostic trail on the streaming tab's console (same spirit as
+    // `[savi auto-load]`). Deduped so a mousemove storm logs each state once.
+    private _log(message: string): void {
+        if (message === this._lastLog) {
+            return;
+        }
+        this._lastLog = message;
+        console.info('[savi hover-gloss] %s', message);
     }
 
     /** Read the setting and (if on) bind the mouse listener. Called from the
@@ -162,6 +173,9 @@ export class SaviGlossHover {
             this._bound = true;
             document.addEventListener('mousemove', this._onMouseMove, true);
         }
+        this._log(
+            `start: setting=${this._settingEnabled}, glossable=${this._sources.gloss.glossable} (glossable may flip true shortly after), listener=${this._bound}`
+        );
     }
 
     stop(): void {
@@ -190,6 +204,7 @@ export class SaviGlossHover {
         }
         const video = this._sources.video();
         if (video && !video.paused) {
+            this._log('line ended while hovering — holding (pause)');
             this._sources.pause();
             this._deferredPaused = true;
         }
@@ -197,6 +212,7 @@ export class SaviGlossHover {
 
     private _onMouseMove = (event: MouseEvent) => {
         if (!this.isActive()) {
+            this._log(`inactive: setting=${this._settingEnabled}, glossable=${this._sources.gloss.glossable}`);
             return;
         }
         const line = lineElement(event.target);
@@ -218,17 +234,20 @@ export class SaviGlossHover {
     private async _hoverWord(line: HTMLElement, x: number, y: number): Promise<void> {
         const offset = baseCaretOffset(line, x, y);
         if (offset === null) {
+            this._log('no caret offset (between lines / over a gloss label / off text)');
             this._clearHover(); // between words / over an existing gloss label / off text
             return;
         }
         const baseText = baseTextOf(line);
         const span = wordAtOffset(segmentLine(baseText), offset);
         if (!span) {
+            this._log(`offset ${offset} is a gap/punctuation in "${baseText}"`);
             this._clearHover();
             return;
         }
         const range = baseRangeForSpan(line, span.start, span.end);
         if (!range) {
+            this._log(`no DOM range for "${span.seg.text}" [${span.start},${span.end})`);
             this._clearHover();
             return;
         }
@@ -236,6 +255,7 @@ export class SaviGlossHover {
         // ruby) — the gloss is already on screen, no need to duplicate it.
         const anchor = range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement;
         if (anchor?.closest('ruby.asb-gloss')) {
+            this._log(`"${span.seg.text}" already has an always-on label — skipping`);
             this._clearHover();
             return;
         }
@@ -249,19 +269,23 @@ export class SaviGlossHover {
 
         const rect = range.getBoundingClientRect();
         if (rect.width < 1 && rect.height < 1) {
+            this._log(`empty rect for "${span.seg.text}"`);
             this._clearHover();
             return;
         }
         // Placeholder immediately (cached words fill instantly; a first-time known
         // word takes a beat), then the gloss.
+        this._log(`translating "${span.seg.text}"…`);
         this._showLabel(rect, '…');
         const gloss = await this._sources.gloss.glossForHover(span.seg.text, baseText);
         if (generation !== this._generation) {
             return; // moved to another word / cleared before it resolved
         }
         if (gloss) {
+            this._log(`"${span.seg.text}" → "${gloss}"`);
             this._showLabel(rect, gloss);
         } else if (this._label) {
+            this._log(`no usable gloss for "${span.seg.text}" (translate failed / not label-length)`);
             // No usable gloss — hide the placeholder but KEEP the key so we don't
             // re-translate the same word on every mouse move.
             this._label.style.display = 'none';
