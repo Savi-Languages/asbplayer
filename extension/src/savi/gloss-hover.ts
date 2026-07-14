@@ -237,6 +237,16 @@ export class SaviGlossHover {
     };
 
     private async _hoverWord(line: HTMLElement, x: number, y: number): Promise<void> {
+        // Only the primary (target-language) track is glossed — hovering a
+        // translation track would "translate" the user's own language. The
+        // deferred pause still applies to any track (_mouseOnSubtitle is set
+        // before this runs).
+        const track = line.closest('[data-track]')?.getAttribute('data-track') ?? '0';
+        if (track !== '0') {
+            this._log(`track ${track} line — not the target-language track, no hover gloss`);
+            this._clearHover();
+            return;
+        }
         const offset = baseCaretOffset(line, x, y);
         if (offset === null) {
             this._log('no caret offset (between lines / over a gloss label / off text)');
@@ -289,7 +299,7 @@ export class SaviGlossHover {
             this._log(`"${span.seg.text}" → "${gloss}"`);
             this._showLabel(rect, gloss);
         } else if (this._label) {
-            this._log(`no usable gloss for "${span.seg.text}" (translate failed / not label-length)`);
+            this._log(`no usable gloss for "${span.seg.text}" (translate failed / timed out / not label-length)`);
             // No usable gloss — hide the placeholder but KEEP the key so we don't
             // re-translate the same word on every mouse move.
             this._label.style.display = 'none';
