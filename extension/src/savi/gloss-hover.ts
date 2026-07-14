@@ -302,24 +302,32 @@ export class SaviGlossHover {
      *  loaded cue count. */
     private _subtitleLineAt(event: MouseEvent): HTMLElement | null {
         const direct = lineElement(event.target);
-        if (direct !== null && this._isSubtitleLine(direct)) {
+        if (direct !== null && this._isSubtitleLine(direct, 'target')) {
             return direct;
         }
-        if (direct !== null) {
-            this._log(`ignoring non-subtitle overlay text "${baseTextOf(direct).trim().slice(0, 40)}"`);
-        }
+        let sawCandidate = direct !== null;
         for (const el of document.elementsFromPoint(event.clientX, event.clientY)) {
             const candidate = lineElement(el);
-            if (candidate !== null && candidate !== direct && this._isSubtitleLine(candidate)) {
+            if (candidate === null || candidate === direct) {
+                continue;
+            }
+            sawCandidate = true;
+            if (this._isSubtitleLine(candidate, 'stack')) {
                 this._log(`subtitle covered by <${describeElement(event.target)}> — geometric hover engaged`);
                 return candidate;
             }
         }
+        if (!sawCandidate) {
+            // Nothing subtitle-shaped under the cursor at all — leave a breadcrumb
+            // of what IS there, so "hover does nothing" is never silent.
+            this._log(`no subtitle line at cursor (top: <${describeElement(event.target)}>)`);
+        }
         return null;
     }
 
-    /** Whether this line's text is one of the loaded cues (see _subtitleLineAt). */
-    private _isSubtitleLine(line: HTMLElement): boolean {
+    /** Whether this line's text is one of the loaded cues (see _subtitleLineAt).
+     *  Rejections log LOUDLY — a silent false here once masked the whole feature. */
+    private _isSubtitleLine(line: HTMLElement, via: 'target' | 'stack'): boolean {
         const text = baseTextOf(line).trim();
         if (text.length === 0) {
             return false;
@@ -329,7 +337,11 @@ export class SaviGlossHover {
             this._cueTextsBuiltAtMs = now;
             this._cueTexts = new Set(this._sources.subtitles().map((s) => s.text.trim()));
         }
-        return this._cueTexts.has(text);
+        const ok = this._cueTexts.has(text);
+        if (!ok) {
+            this._log(`${via} line rejected — not among ${this._cueTexts.size} cues: "${text.slice(0, 40)}"`);
+        }
+        return ok;
     }
 
     private async _hoverWord(line: HTMLElement, x: number, y: number): Promise<void> {

@@ -551,7 +551,10 @@ export default class SubtitleController {
                 }
 
                 if (showOffset) {
-                    this._appendSubtitlesHtml(this._buildTextHtml(this._formatOffset(offset)));
+                    // glossable=false: the "+500 ms" offset flash is not subtitle text.
+                    this._appendSubtitlesHtml(
+                        this._buildTextHtml(this._formatOffset(offset), undefined, undefined, undefined, false)
+                    );
                     this.showingOffset = offset;
                 } else {
                     this.showingOffset = undefined;
@@ -887,7 +890,9 @@ export default class SubtitleController {
         this._setSubtitlesHtml(overlay, [
             {
                 html: () => {
-                    return this._buildTextHtml(loadedMessage);
+                    // glossable=false: this is the loaded-FILE-NAME flash rendered
+                    // into the subtitle overlay — not subtitle text; never gloss it.
+                    return this._buildTextHtml(loadedMessage, undefined, undefined, undefined, false);
                 },
             },
         ]);
