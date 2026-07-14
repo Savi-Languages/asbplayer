@@ -100,6 +100,7 @@ import { SaviCaptureController } from '../savi/capture-controller';
 import { SaviHoverDictionary } from '../savi/hover-dict';
 import { SaviGlossController } from '../savi/gloss';
 import { SaviGlossHover } from '../savi/gloss-hover';
+import { SaviControlsClearance } from '../savi/controls-clearance';
 
 let netflix = false;
 document.addEventListener('asbplayer-netflix-enabled', (e) => {
@@ -180,6 +181,7 @@ export default class Binding {
     readonly saviHoverDictionary: SaviHoverDictionary;
     readonly saviGlossController: SaviGlossController;
     readonly saviGlossHover: SaviGlossHover;
+    readonly saviControlsClearance: SaviControlsClearance;
 
     private copyToClipboardOnMine: boolean;
     private clickToMineDefaultAction: PostMineAction;
@@ -276,6 +278,16 @@ export default class Binding {
             play: () => void this.play(),
         });
         this.subtitleController.onSaviWillStopShowing = () => this.saviGlossHover.onWillStopShowing();
+        // Lift the subtitles above the streaming player's control bar while it is
+        // visible (they share the same bottom strip and fight over the mouse),
+        // restoring the user's configured offset when it hides. Runtime-only.
+        this.saviControlsClearance = new SaviControlsClearance({
+            video: () => this.video,
+            applyOffset: (px) => {
+                this.subtitleController.bottomSubtitlePositionOffset = px;
+                this.subtitleController.refresh();
+            },
+        });
         this.hoveredToken = new HoveredToken();
         this.recordMedia = true;
         this.takeScreenshot = true;
@@ -574,6 +586,7 @@ export default class Binding {
         this.saviHoverDictionary.start();
         void this.saviGlossController.start();
         void this.saviGlossHover.start();
+        this.saviControlsClearance.start();
 
         const seek = (forward: boolean) => {
             const subtitle = adjacentSubtitle(
@@ -1186,6 +1199,9 @@ export default class Binding {
 
         this.subtitleController.displaySubtitles = currentSettings.streamingDisplaySubtitles;
         this.subtitleController.bottomSubtitlePositionOffset = currentSettings.subtitlePositionOffset;
+        // The controls-clearance watcher lifts the runtime offset above the
+        // player's control bar; the SETTING stays its resting baseline.
+        this.saviControlsClearance.baseOffsetPx = currentSettings.subtitlePositionOffset;
         this.subtitleController.topSubtitlePositionOffset = currentSettings.topSubtitlePositionOffset;
         this.subtitleController.subtitlesWidth = currentSettings.subtitlesWidth;
         this.subtitleController.surroundingSubtitlesCountRadius = currentSettings.surroundingSubtitlesCountRadius;
@@ -1299,6 +1315,7 @@ export default class Binding {
         this.saviHoverDictionary.stop();
         this.saviGlossController.stop();
         this.saviGlossHover.stop();
+        this.saviControlsClearance.stop();
         this.unsubscribeStatisticsSeek?.();
         this.unsubscribeStatisticsSeek = undefined;
         this.unsubscribeStatisticsSubtitleMine?.();
