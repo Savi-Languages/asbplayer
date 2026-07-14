@@ -658,12 +658,14 @@ export default class SubtitleController {
         });
     }
 
-    private _buildTextHtml(text: string, track?: number, richText?: string, richTextOnHover?: string) {
+    private _buildTextHtml(text: string, track?: number, richText?: string, richTextOnHover?: string, glossable = true) {
         // savi glossing (SV-12/13): the gloss-ruby HTML for this line takes the
         // richText slot (Spanish tracks have no Yomitan richText anyway). Undefined
         // until the async translations land — then a re-render picks it up. Kicks
-        // off the translate work as a side effect of the lookup.
-        const glossHtml = this.saviGloss?.glossHtmlFor(text, track);
+        // off the translate work as a side effect of the lookup. `glossable=false`
+        // for NON-subtitle text rendered with this builder (the notification
+        // banner) — file names must not be sent to the translator.
+        const glossHtml = glossable ? this.saviGloss?.glossHtmlFor(text, track) : undefined;
         const effectiveRichText = glossHtml ?? richText;
         // Keep savi's per-text subtitle style; adopt upstream's annotation HTML (which
         // supersedes savi's manual hover-rich spans and adds richTextOnHover).
@@ -839,7 +841,11 @@ export default class SubtitleController {
 
     notification(locKey: string, replacements?: { [key: string]: string }) {
         const text = i18n.t(locKey, replacements ?? {});
-        this.notificationElementOverlay.setHtml([{ html: () => this._buildTextHtml(text) }]);
+        // glossable=false: notifications (e.g. the loaded-subtitle file name) are
+        // not subtitle text — never send them to the gloss translator.
+        this.notificationElementOverlay.setHtml([
+            { html: () => this._buildTextHtml(text, undefined, undefined, undefined, false) },
+        ]);
 
         if (this.notificationElementOverlayHideTimeout) {
             clearTimeout(this.notificationElementOverlayHideTimeout);

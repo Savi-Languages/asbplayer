@@ -175,6 +175,11 @@ export interface GlossHoverSources {
     /** The binding's pause/play (Netflix-aware — a raw video.pause() is overridden). */
     readonly pause: () => void;
     readonly play: () => void;
+    /** The loaded cues — a hovered line must be one of THESE. asbplayer's
+     *  notification banner (e.g. the loaded-subtitle file name) is built with
+     *  the exact same DOM shape as a subtitle line and sits above it, so DOM
+     *  structure alone cannot tell them apart; the cue text can. */
+    readonly subtitles: () => ReadonlyArray<{ readonly text: string }>;
 }
 
 export class SaviGlossHover {
@@ -189,6 +194,10 @@ export class SaviGlossHover {
     private _generation = 0; // cancels stale async translations
     private _lastLog = ''; // dedup for the hover diagnostics (mousemove fires constantly)
     private _lastLogAtMs = 0;
+    // Trimmed cue texts, for telling real subtitle lines from look-alike overlays
+    // (rebuilt at most every couple of seconds — track loads are rare).
+    private _cueTexts: Set<string> = new Set();
+    private _cueTextsBuiltAtMs = 0;
 
     constructor(sources: GlossHoverSources) {
         this._sources = sources;
@@ -269,20 +278,7 @@ export class SaviGlossHover {
             this._log(`inactive: setting=${this._settingEnabled}, glossable=${this._sources.gloss.glossable}`);
             return;
         }
-        let line = lineElement(event.target);
-        if (line === null) {
-            // An overlay above the subtitle (a player scrim / control layer)
-            // steals hit-testing: event.target is the interceptor, not the line.
-            // The subtitle is still in the stack at this point — find it there.
-            for (const el of document.elementsFromPoint(event.clientX, event.clientY)) {
-                const candidate = lineElement(el);
-                if (candidate !== null) {
-                    line = candidate;
-                    this._log(`subtitle covered by <${describeElement(event.target)}> — geometric hover engaged`);
-                    break;
-                }
-            }
-        }
+        const line = this._subtitleLineAt(event);
         this._mouseOnSubtitle = line !== null;
 
         // Resume the line we held once the cursor leaves the subtitle.
@@ -297,6 +293,44 @@ export class SaviGlossHover {
         }
         void this._hoverWord(line, event.clientX, event.clientY);
     };
+
+    /** The REAL subtitle line under the cursor, or null. Two traps this handles:
+     *  (a) an overlay above the subtitle steals hit-testing, so event.target is
+     *  the interceptor — the subtitle is still in the elementsFromPoint stack;
+     *  (b) asbplayer's notification banner (loaded-file name etc.) has the exact
+     *  same DOM shape as a subtitle line — only lines whose text is an actual
+     *  loaded cue count. */
+    private _subtitleLineAt(event: MouseEvent): HTMLElement | null {
+        const direct = lineElement(event.target);
+        if (direct !== null && this._isSubtitleLine(direct)) {
+            return direct;
+        }
+        if (direct !== null) {
+            this._log(`ignoring non-subtitle overlay text "${baseTextOf(direct).trim().slice(0, 40)}"`);
+        }
+        for (const el of document.elementsFromPoint(event.clientX, event.clientY)) {
+            const candidate = lineElement(el);
+            if (candidate !== null && candidate !== direct && this._isSubtitleLine(candidate)) {
+                this._log(`subtitle covered by <${describeElement(event.target)}> — geometric hover engaged`);
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    /** Whether this line's text is one of the loaded cues (see _subtitleLineAt). */
+    private _isSubtitleLine(line: HTMLElement): boolean {
+        const text = baseTextOf(line).trim();
+        if (text.length === 0) {
+            return false;
+        }
+        const now = Date.now();
+        if (now - this._cueTextsBuiltAtMs > 2000) {
+            this._cueTextsBuiltAtMs = now;
+            this._cueTexts = new Set(this._sources.subtitles().map((s) => s.text.trim()));
+        }
+        return this._cueTexts.has(text);
+    }
 
     private async _hoverWord(line: HTMLElement, x: number, y: number): Promise<void> {
         // Only the primary (target-language) track is glossed — hovering a
