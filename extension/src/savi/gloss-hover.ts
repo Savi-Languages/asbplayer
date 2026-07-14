@@ -116,6 +116,55 @@ export function wordAtOffset(
     return null;
 }
 
+/** The word under the POINT (x, y), located geometrically: each word segment's
+ *  laid-out rects are tested against the cursor. Unlike caret hit-testing
+ *  (caretRangeFromPoint), this cannot be fooled by an invisible overlay sitting
+ *  above the subtitle — the word's own geometry is the only input. */
+export function wordAtPoint(
+    line: HTMLElement,
+    segments: GlossSegment[],
+    x: number,
+    y: number,
+    padPx = 2
+): { seg: GlossSegment; start: number; end: number } | null {
+    let start = 0;
+    for (const seg of segments) {
+        const end = start + seg.text.length;
+        if (seg.word) {
+            const range = baseRangeForSpan(line, start, end);
+            if (range) {
+                let rects: DOMRect[] = [];
+                try {
+                    rects = Array.from(range.getClientRects());
+                } catch {
+                    // No layout engine (tests) — treat as no rects.
+                }
+                for (const rect of rects) {
+                    if (
+                        x >= rect.left - padPx &&
+                        x <= rect.right + padPx &&
+                        y >= rect.top - padPx &&
+                        y <= rect.bottom + padPx
+                    ) {
+                        return { seg, start, end };
+                    }
+                }
+            }
+        }
+        start = end;
+    }
+    return null;
+}
+
+/** A short human-readable identity for a DOM event target (diagnostics). */
+const describeElement = (target: EventTarget | null): string => {
+    if (!(target instanceof Element)) {
+        return String(target);
+    }
+    const cls = (target.getAttribute('class') ?? '').split(/\s+/).filter(Boolean)[0];
+    return cls ? `${target.tagName.toLowerCase()}.${cls}` : target.tagName.toLowerCase();
+};
+
 // ── The controller ────────────────────────────────────────────────────────
 
 export interface GlossHoverSources {
@@ -220,7 +269,20 @@ export class SaviGlossHover {
             this._log(`inactive: setting=${this._settingEnabled}, glossable=${this._sources.gloss.glossable}`);
             return;
         }
-        const line = lineElement(event.target);
+        let line = lineElement(event.target);
+        if (line === null) {
+            // An overlay above the subtitle (a player scrim / control layer)
+            // steals hit-testing: event.target is the interceptor, not the line.
+            // The subtitle is still in the stack at this point — find it there.
+            for (const el of document.elementsFromPoint(event.clientX, event.clientY)) {
+                const candidate = lineElement(el);
+                if (candidate !== null) {
+                    line = candidate;
+                    this._log(`subtitle covered by <${describeElement(event.target)}> — geometric hover engaged`);
+                    break;
+                }
+            }
+        }
         this._mouseOnSubtitle = line !== null;
 
         // Resume the line we held once the cursor leaves the subtitle.
@@ -247,16 +309,11 @@ export class SaviGlossHover {
             this._clearHover();
             return;
         }
-        const offset = baseCaretOffset(line, x, y);
-        if (offset === null) {
-            this._log('no caret offset (between lines / over a gloss label / off text)');
-            this._clearHover(); // between words / over an existing gloss label / off text
-            return;
-        }
         const baseText = baseTextOf(line);
-        const span = wordAtOffset(segmentLine(baseText), offset);
+        // Geometric word lookup — immune to overlays that fool caret hit-testing.
+        const span = wordAtPoint(line, segmentLine(baseText), x, y);
         if (!span) {
-            this._log(`offset ${offset} is a gap/punctuation in "${baseText}"`);
+            this._log(`no word under the cursor (gap/punctuation) in "${baseText}"`);
             this._clearHover();
             return;
         }
