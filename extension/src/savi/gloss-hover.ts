@@ -139,18 +139,23 @@ export class SaviGlossHover {
     private _hoveredKey = ''; // line + span, so a word is translated/positioned once
     private _generation = 0; // cancels stale async translations
     private _lastLog = ''; // dedup for the hover diagnostics (mousemove fires constantly)
+    private _lastLogAtMs = 0;
 
     constructor(sources: GlossHoverSources) {
         this._sources = sources;
     }
 
     // Diagnostic trail on the streaming tab's console (same spirit as
-    // `[savi auto-load]`). Deduped so a mousemove storm logs each state once.
+    // `[savi auto-load]`). Deduped within a short window so a mousemove storm
+    // logs each state ~once — but a PERSISTENT state keeps reporting instead of
+    // going silent forever (an all-suppressing dedup once masked a stuck state).
     private _log(message: string): void {
-        if (message === this._lastLog) {
+        const now = Date.now();
+        if (message === this._lastLog && now - this._lastLogAtMs < 1500) {
             return;
         }
         this._lastLog = message;
+        this._lastLogAtMs = now;
         console.info('[savi hover-gloss] %s', message);
     }
 
@@ -251,14 +256,13 @@ export class SaviGlossHover {
             this._clearHover();
             return;
         }
-        // Skip a word the always-on pass already labels (it's inside an asb-gloss
-        // ruby) — the gloss is already on screen, no need to duplicate it.
+        // Hover labels EVERY word — including ones the always-on pass already
+        // labels. (We used to skip labeled words as redundant, but post-wipe the
+        // always-on pass labels every content word, and the silent skip read as
+        // "hover broke".) For a labeled word, anchor the hover label above the
+        // whole <ruby> so it clears the existing <rt> instead of overlapping it.
         const anchor = range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement;
-        if (anchor?.closest('ruby.asb-gloss')) {
-            this._log(`"${span.seg.text}" already has an always-on label — skipping`);
-            this._clearHover();
-            return;
-        }
+        const rubyAnchor = anchor?.closest('ruby.asb-gloss') ?? null;
 
         const key = `${baseText} ${span.start} ${span.end}`;
         if (key === this._hoveredKey) {
@@ -267,7 +271,7 @@ export class SaviGlossHover {
         this._hoveredKey = key;
         const generation = ++this._generation;
 
-        const rect = range.getBoundingClientRect();
+        const rect = rubyAnchor?.getBoundingClientRect() ?? range.getBoundingClientRect();
         if (rect.width < 1 && rect.height < 1) {
             this._log(`empty rect for "${span.seg.text}"`);
             this._clearHover();
@@ -310,6 +314,10 @@ export class SaviGlossHover {
 
     private _ensureLabel(): HTMLDivElement {
         if (this._label) {
+            // An SPA navigation can wipe body children — re-attach a detached label.
+            if (!this._label.isConnected) {
+                document.body.appendChild(this._label);
+            }
             return this._label;
         }
         const el = document.createElement('div');
