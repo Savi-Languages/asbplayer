@@ -804,8 +804,25 @@ export interface SaviSettings {
     // is OFF — e.g. a reload silently dropped it. See extension/src/savi/recording-guard.
     readonly saviRecordingGuard: boolean;
     // AI context-aware word segmentation in the hover dictionary (resolves
-    // でも-conjunction vs で+も, は-topic vs 葉, …). Opt-in; needs an LLM key on the daemon.
+    // でも-conjunction vs で+も, は-topic vs 葉, …). Opt-in; runs on savi's cloud
+    // AI (SV-16), so it needs you signed in — no local key.
     readonly saviAiSegmentation: boolean;
+    // Auto-load the streaming player's own subtitle track in the learner's target
+    // language (SV-8), and fall back to an OpenSubtitles search when it has none.
+    // The target language + OpenSubtitles key are account-roaming (see
+    // extension/src/savi/cloud-settings.ts), not stored here.
+    readonly saviAutoLoadSubtitles: boolean;
+    // Show a small translation label above each not-yet-known target-language
+    // word in the subtitles (SV-12/13). Context-aware DeepL via savi's cloud, so
+    // it needs you signed in. Space-delimited languages only (e.g. Spanish).
+    readonly saviGlossing: boolean;
+    // On-demand hover glossing: hover a subtitle word to reveal its translation
+    // above it (any word, incl. known ones), and hold the line (pause) at its end
+    // while the cursor is on the subtitle, resuming on mouse-out. Glossable
+    // (non-Japanese) languages only; requires sign-in like the rest of glossing.
+    readonly saviHoverGloss: boolean;
+    // Base URL of the savi cloud the extension reads roaming settings from.
+    readonly saviCloudUrl: string;
 }
 
 export type ChromeBoundKeyBindName =

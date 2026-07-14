@@ -205,3 +205,54 @@ yarn workspace @project/extension run wxt zip -b firefox
 # Builds Firefox for Android extension to extension/.output/asbplayer-<version>-firefox-android.zip
 yarn workspace @project/extension run wxt zip -b firefox-android --mv2
 ```
+
+## Savi fork — extension development
+
+> This fork adds Savi's glossing + capture layer on top of asbplayer. The
+> commands below live in the repo-root `package.json` (run them from the repo
+> root); they wrap the `@project/extension` workspace.
+
+### Commands
+
+| Command | What it does |
+| --- | --- |
+| `yarn dev:extension` | WXT dev server with hot-reload. Launches a dedicated Chrome (see profiles below). Output: `extension/.output/chrome-mv3`. |
+| `yarn build:extension` | **Production** Chrome build → `extension/.output/chrome-mv3`. Talks to the **deployed** cloud. |
+| `yarn build:extension:dev` | **Development** Chrome build → `extension/.output/chrome-mv3-dev`. Talks to a **local** cloud (baked in, see below). Load it unpacked in your own Chrome. |
+| `yarn build:extension:firefox` | Production Firefox build. |
+| `yarn test:extension` | Jest unit tests. |
+
+(Each forwards to `yarn workspace @project/extension run <dev\|build\|build:dev\|build:firefox\|test>`.)
+
+### Which cloud a build talks to
+
+The Savi cloud calls (glossing's `/v2/ai/translate` + `/v2/words/{lang}/buckets`,
+and the account-roaming target language) resolve their base URL by build mode:
+
+- **Production build** (`build:extension`, store builds): the **`saviCloudUrl`**
+  setting — default `https://savi.tianxiaocao.com`.
+- **Development build** (`dev:extension` and `build:extension:dev`, both Vite
+  `development` mode): **`http://localhost:8080` is baked in**, so you never touch
+  the "Savi cloud URL" setting. Override the host/port at build time with
+  `WXT_SAVI_CLOUD_URL`, e.g.
+  `WXT_SAVI_CLOUD_URL=http://localhost:9000 yarn build:extension:dev`.
+
+Run the matching local cloud from the [`savi`](https://github.com/Savi-Languages/savi)
+repo — `pnpm dev:local:desktop` (add `--db` to use real Postgres). Use a cloud
+built from the `gloss` branch: it has `/v2/words/{lang}/buckets` and the
+context-aware `/v2/ai/translate`.
+
+### Two dev workflows
+
+- **`yarn dev:extension`** — fast hot-reload for iterating on gloss logic, panels,
+  and settings. It launches a **dedicated, persistent Chrome profile** at
+  `extension/.wxt/chrome-dev-profile` (gitignored) so a Netflix sign-in survives
+  across runs; it never touches your real Chrome profile — sign in once.
+  **Caveat:** it's an automation-launched Chrome, so macOS native fullscreen (and
+  therefore the streaming site's fullscreen button) is disabled — not suitable for
+  actually *watching* something.
+- **`yarn build:extension:dev` + Load unpacked** — for real playback / fullscreen
+  testing. Build it, then in your **normal** Chrome (your real, signed-in profile)
+  go to `chrome://extensions` → **Load unpacked** →
+  `extension/.output/chrome-mv3-dev`. Fullscreen works; re-run the build and reload
+  the extension after changes.

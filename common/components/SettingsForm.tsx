@@ -21,6 +21,7 @@ import SubtitleAppearanceSettingsTab from './SubtitleAppearanceSettingsTab';
 import KeyboardShortcutsSettingsTab from './KeyboardShortcutsSettingsTab';
 import StreamingVideoSettingsTab from './StreamingVideoSettingsTab';
 import MiscSettingsTab from './MiscSettingsTab';
+import SaviSettingsTab from './SaviSettingsTab';
 import { DictionaryProvider } from '../dictionary-db';
 import TutorialBubble, { type TutorialBubbleProps } from './TutorialBubble';
 
@@ -157,7 +158,8 @@ type TabName =
     | 'subtitle-appearance'
     | 'keyboard-shortcuts'
     | 'streaming-video'
-    | 'misc-settings';
+    | 'misc-settings'
+    | 'savi-settings';
 
 interface SettingsFormPageConfig extends PageConfig {
     faviconUrl: string;
@@ -215,6 +217,11 @@ interface Props {
     saviAccountEmail?: string;
     onSaviSignIn?: (email: string, password: string) => Promise<{ ok: boolean; errorMessage?: string }>;
     onSaviSignOut?: () => Promise<void>;
+    // Account-roaming savi settings (extension hosts only — cloud-backed).
+    saviTargetLanguage?: string;
+    onSaviTargetLanguageChange?: (value: string) => void;
+    saviOpenSubtitlesApiKey?: string;
+    onSaviOpenSubtitlesApiKeyChange?: (value: string) => void;
 }
 
 // Filter out keys that look like '0', '1', ... as those are invalid
@@ -267,6 +274,10 @@ export default function SettingsForm({
     saviAccountEmail,
     onSaviSignIn,
     onSaviSignOut,
+    saviTargetLanguage,
+    onSaviTargetLanguageChange,
+    saviOpenSubtitlesApiKey,
+    onSaviOpenSubtitlesApiKeyChange,
 }: Props) {
     const supportsDictionary = !extensionInstalled || extensionSupportsDictionary;
     const supportsDictionaryBrowser = !extensionInstalled || extensionSupportsDictionaryBrowser;
@@ -315,6 +326,7 @@ export default function SettingsForm({
             'annotation',
             'streaming-video',
             'misc-settings',
+            'savi-settings',
             'about',
         ];
 
@@ -471,6 +483,11 @@ export default function SettingsForm({
                     />
                     <Tab
                         tabIndex={5 + Number(supportsDictionary) + Number(extensionSupportsAppIntegration)}
+                        label={'Savi'}
+                        id="savi-settings"
+                    />
+                    <Tab
+                        tabIndex={6 + Number(supportsDictionary) + Number(extensionSupportsAppIntegration)}
                         label={t('about.title')}
                         id="about"
                     />
@@ -583,9 +600,19 @@ export default function SettingsForm({
                         extensionSupportsPauseOnHover={extensionSupportsPauseOnHover}
                         extensionSupportsSeekableTrackSetting={extensionSupportsSeekableTrackSetting}
                         extensionSupportsAutoCopyableTrackSetting={extensionSupportsAutoCopyableTrackSetting}
+                    />
+                </TabPanel>
+                <TabPanel value={tabIndex} index={tabIndicesById['savi-settings']} tabsOrientation={tabsOrientation}>
+                    <SaviSettingsTab
+                        settings={settings}
+                        onSettingChanged={handleSettingChanged}
                         saviAccountEmail={saviAccountEmail}
                         onSaviSignIn={onSaviSignIn}
                         onSaviSignOut={onSaviSignOut}
+                        saviTargetLanguage={saviTargetLanguage}
+                        onSaviTargetLanguageChange={onSaviTargetLanguageChange}
+                        saviOpenSubtitlesApiKey={saviOpenSubtitlesApiKey}
+                        onSaviOpenSubtitlesApiKeyChange={onSaviOpenSubtitlesApiKeyChange}
                     />
                 </TabPanel>
                 <TabPanel value={tabIndex} index={tabIndicesById['about']} tabsOrientation={tabsOrientation}>

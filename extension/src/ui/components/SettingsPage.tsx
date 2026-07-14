@@ -20,6 +20,7 @@ import { settingsPageConfigs } from '@/services/pages';
 import { DictionaryProvider } from '@project/common/dictionary-db';
 import { useLocationHash } from '@project/common/hooks/use-location-hash';
 import { useSaviAccount } from '../hooks/use-savi-account';
+import { useSaviRoamingSettings } from '../hooks/use-savi-roaming-settings';
 
 const useStyles = makeStyles<Theme>((theme) => ({
     root: {
@@ -88,6 +89,7 @@ const SettingsPage = ({
 
     const commands = useCommandKeyBinds();
     const saviAccount = useSaviAccount();
+    const saviRoaming = useSaviRoamingSettings(settings?.saviCloudUrl ?? '');
 
     const handleOpenExtensionShortcuts = useCallback(() => {
         browser.tabs.create({ active: true, url: 'chrome://extensions/shortcuts' });
@@ -150,6 +152,10 @@ const SettingsPage = ({
                         saviAccountEmail={saviAccount.email}
                         onSaviSignIn={saviAccount.signIn}
                         onSaviSignOut={saviAccount.signOut}
+                        saviTargetLanguage={saviRoaming.targetLanguage}
+                        onSaviTargetLanguageChange={saviRoaming.setTargetLanguage}
+                        saviOpenSubtitlesApiKey={saviRoaming.openSubtitlesApiKey}
+                        onSaviOpenSubtitlesApiKeyChange={saviRoaming.setOpenSubtitlesApiKey}
                     />
                 </DialogContent>
                 <Box style={{ marginBottom: theme.spacing(2) }} className={classes.profilesContainer}>

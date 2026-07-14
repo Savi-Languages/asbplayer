@@ -673,6 +673,18 @@ const settingsSchema = {
         saviAiSegmentation: {
             type: 'boolean',
         },
+        saviAutoLoadSubtitles: {
+            type: 'boolean',
+        },
+        saviGlossing: {
+            type: 'boolean',
+        },
+        saviHoverGloss: {
+            type: 'boolean',
+        },
+        saviCloudUrl: {
+            type: 'string',
+        },
         pauseOnHoverMode: {
             type: 'number',
         },

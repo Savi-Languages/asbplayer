@@ -15,6 +15,10 @@ import {
     SaviCaptureFrameResponse,
     SaviCaptureState,
     SaviCommand,
+    SaviGlossTranslateMessage,
+    SaviGlossTranslateResponse,
+    SaviWordBucketsMessage,
+    SaviWordBucketsResponse,
     SaviOffscreenStartMessage,
     SaviOffscreenStateMessage,
     SaviOffscreenStopMessage,
@@ -24,6 +28,9 @@ import {
     SaviEpisodeTranscriptResponse,
     SaviMineLineMessage,
     SaviMineLineResponse,
+    SaviOpenSubtitlesFetchMessage,
+    SaviOpenSubtitlesFetchResponse,
+    SaviRoamingSettingsResponse,
     SaviRequestStartMessage,
     SaviGetIntentResponse,
     SaviSegmentLineMessage,
@@ -40,6 +47,7 @@ import {
     SaviTokenizeResponse,
 } from './messages';
 import { daemonToken } from './account';
+import { resolveCloudBase, translate as cloudTranslate, wordBuckets as cloudWordBuckets } from './cloud-client';
 import { clearRecordingIntent, hasRecordingIntent, setRecordingIntent } from './recording-intent';
 import {
     lookupDict,
@@ -63,6 +71,8 @@ import {
     putCachedTokens,
 } from './persistent-cache';
 import { captureVisibleTab } from '@/services/capture-visible-tab';
+import { OpenSubtitlesClient } from '@/services/subtitle-sources';
+import { getCachedRoamingSettings, loadRoamingSettings } from './cloud-settings';
 
 export default class SaviCommandHandler implements CommandHandler {
     private readonly _settings: SettingsProvider;
@@ -131,8 +141,7 @@ export default class SaviCommandHandler implements CommandHandler {
                     .catch(() => sendResponse({ entries: [], kanji: [] }));
                 return true;
             case 'savi-episode-transcript':
-                this._storeEpisodeTranscript(command.message as SaviEpisodeTranscriptMessage)
-                    .then(sendResponse);
+                this._storeEpisodeTranscript(command.message as SaviEpisodeTranscriptMessage).then(sendResponse);
                 return true;
             case 'savi-mine-line':
                 this._mineLine(command.message as SaviMineLineMessage)
@@ -148,6 +157,31 @@ export default class SaviCommandHandler implements CommandHandler {
                 this._captureFrame(sender)
                     .then(sendResponse)
                     .catch(() => sendResponse({} as SaviCaptureFrameResponse));
+                return true;
+            case 'savi-opensubtitles-fetch':
+                this._fetchOpenSubtitles(command.message as SaviOpenSubtitlesFetchMessage)
+                    .then(sendResponse)
+                    .catch((e) =>
+                        sendResponse({
+                            ok: false,
+                            errorMessage: e instanceof Error ? e.message : String(e),
+                        } as SaviOpenSubtitlesFetchResponse)
+                    );
+                return true;
+            case 'savi-roaming-settings':
+                this._roamingSettings()
+                    .then(sendResponse)
+                    .catch(() => sendResponse(undefined));
+                return true;
+            case 'savi-gloss-translate':
+                this._glossTranslate(command.message as SaviGlossTranslateMessage)
+                    .then(sendResponse)
+                    .catch(() => sendResponse({} as SaviGlossTranslateResponse));
+                return true;
+            case 'savi-word-buckets':
+                this._wordBuckets(command.message as SaviWordBucketsMessage)
+                    .then(sendResponse)
+                    .catch(() => sendResponse({ buckets: {} } as SaviWordBucketsResponse));
                 return true;
             case 'savi-capture-ended':
                 this._forwardCaptureEnded(command.message as SaviCaptureEndedMessage);
@@ -167,6 +201,77 @@ export default class SaviCommandHandler implements CommandHandler {
             return null;
         }
         return { baseUrl: normalizedBaseUrl(saviDaemonUrl), token };
+    }
+
+    // SV-8 fallback: search OpenSubtitles for the target-language subtitle when
+    // the streaming player exposed none. The consumer API key comes from the
+    // roaming account settings; an absent key or no result is a soft ok:false.
+    private async _fetchOpenSubtitles(message: SaviOpenSubtitlesFetchMessage): Promise<SaviOpenSubtitlesFetchResponse> {
+        const { openSubtitlesApiKey } = await getCachedRoamingSettings();
+
+        if (openSubtitlesApiKey.trim().length === 0) {
+            return { ok: false };
+        }
+
+        const client = new OpenSubtitlesClient({ apiKey: openSubtitlesApiKey });
+        const subtitle = await client.fetchBestSubtitle({
+            query: message.query,
+            languages: message.languages,
+            seasonNumber: message.seasonNumber,
+            episodeNumber: message.episodeNumber,
+        });
+
+        if (subtitle === undefined) {
+            return { ok: false };
+        }
+
+        return { ok: true, name: subtitle.fileName, content: subtitle.content };
+    }
+
+    // Fresh roaming settings from the cloud (refreshing the local cache), so a
+    // target language changed on another device takes effect on the next video.
+    // loadRoamingSettings already falls back to the cache when signed out /
+    // offline, so this never blocks the auto-load on the network.
+    private async _roamingSettings(): Promise<SaviRoamingSettingsResponse> {
+        const { saviCloudUrl } = await this._settings.get(['saviCloudUrl']);
+        // Dev builds roam against the local cloud too (resolveCloudBase), so the
+        // target language the desktop wrote to localhost actually reaches here.
+        const { targetLanguage, openSubtitlesApiKey } = await loadRoamingSettings(resolveCloudBase(saviCloudUrl));
+        return { targetLanguage, openSubtitlesApiKey };
+    }
+
+    // Glossing (SV-12): translate ONE word into the user's known language, with
+    // the whole line as DeepL context. Straight to the cloud with the account
+    // JWT (added in cloud-client) — CORS blocks this from the content script.
+    // Empty response = signed out / all providers failed → the label is skipped.
+    private async _glossTranslate(message: SaviGlossTranslateMessage): Promise<SaviGlossTranslateResponse> {
+        try {
+            const { saviCloudUrl } = await this._settings.get(['saviCloudUrl']);
+            // cloud-client.translate(cloudUrl, text, targetLang=INTO, sourceLang=FROM, context):
+            // the word is FROM the learning language, translated INTO the gloss language.
+            const result = await cloudTranslate(
+                saviCloudUrl,
+                message.word,
+                message.glossLang,
+                message.targetLang,
+                message.context
+            );
+            return { text: result.text, provider: result.provider };
+        } catch (e) {
+            return {};
+        }
+    }
+
+    // Glossing (SV-13): the Known-inclusive per-lemma buckets for the target
+    // language, so the content script glosses a word iff its lemma is not yet
+    // Known. Empty map = signed out / unreachable → gloss all content words.
+    private async _wordBuckets(message: SaviWordBucketsMessage): Promise<SaviWordBucketsResponse> {
+        try {
+            const { saviCloudUrl } = await this._settings.get(['saviCloudUrl']);
+            return { buckets: await cloudWordBuckets(saviCloudUrl, message.lang) };
+        } catch (e) {
+            return { buckets: {} };
+        }
     }
 
     private async _tokenize(message: SaviTokenizeMessage): Promise<SaviTokenizeResponse> {

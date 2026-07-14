@@ -27,10 +27,26 @@ const addToPublicPathsType = (srcPath: string, destPath: string, paths: string[]
 
 const extName = 'asbplayer';
 
+// A persistent, dev-only Chrome profile (under the gitignored .wxt/) so a Netflix
+// sign-in survives across `yarn dev:extension` runs instead of a throwaway guest
+// profile. Pre-created because chrome-launcher opens its chrome-out.log INSIDE
+// this dir and won't mkdir it itself (ENOENT otherwise). Never touches your real
+// Chrome profile.
+const devChromeProfile = path.resolve(__dirname, '.wxt', 'chrome-dev-profile');
+fs.mkdirSync(devChromeProfile, { recursive: true });
+
 // See https://wxt.dev/api/config.html
 export default defineConfig({
     modules: ['@wxt-dev/module-react'],
     srcDir: 'src',
+    // Dev browser runner (`wxt` / `yarn dev:extension`): reuse the persistent
+    // profile above so a Netflix sign-in sticks across runs. Chromium
+    // keepProfileChanges is experimental in web-ext but works for this dedicated,
+    // pre-created profile.
+    webExt: {
+        chromiumProfile: devChromeProfile,
+        keepProfileChanges: true,
+    },
     vite: () => ({
         plugins: [
             {
@@ -61,7 +77,9 @@ export default defineConfig({
         },
     },
     manifest: ({ browser, mode }) => {
-        const version = '1.19.0';
+        // Savi's own extension version (independent of the upstream asbplayer
+        // version this fork was based on, and of the savi monorepo semver).
+        const version = '1.0.0';
         const isDev = mode === 'development';
         const devLabel = isDev ? ' (Dev)' : '';
         const title = `${extName}${devLabel}`;
@@ -226,6 +244,14 @@ export default defineConfig({
                     // not grant the activeTab permission an icon/command would.
                     'https://*.netflix.com/*',
                     'https://*.youtube.com/*',
+                    // Savi cloud: the extension reads/writes account-roaming
+                    // settings (target language, OpenSubtitles key) directly with
+                    // the account JWT (SV-8). Local dev clouds are covered above.
+                    'https://savi.tianxiaocao.com/*',
+                    // OpenSubtitles.com: SV-8 fallback subtitle search + the
+                    // download CDN (dl.opensubtitles.com), fetched from the
+                    // background so the host permission bypasses CORS.
+                    'https://*.opensubtitles.com/*',
                 ],
             };
         }

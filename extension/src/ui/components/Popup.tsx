@@ -32,6 +32,7 @@ import { useAnnotationTutorial } from '@project/common/hooks/use-annotation-tuto
 import { ExtensionGlobalStateProvider } from '@/services/extension-global-state-provider';
 import { uiTabRegistry, useMediaId } from '../hooks/use-media-id';
 import { useSaviAccount } from '../hooks/use-savi-account';
+import { useSaviRoamingSettings } from '../hooks/use-savi-roaming-settings';
 import Statistics from '@project/common/components/Statistics';
 import Box from '@mui/material/Box';
 import { createStatisticsPopup } from '@/services/statistics-util';
@@ -120,6 +121,7 @@ const Popup = ({
     const { supportedLanguages } = useSupportedLanguages();
     const { localFontsAvailable, localFontsPermission, localFontFamilies } = useLocalFontFamilies();
     const saviAccount = useSaviAccount();
+    const saviRoaming = useSaviRoamingSettings(settings.saviCloudUrl ?? '');
     const theme = useTheme();
     const { handleAnnotationTutorialSeen, inAnnotationTutorial } = useAnnotationTutorial({ globalStateProvider });
     const [scrollToId, setScrollToId] = useState<string>();
@@ -262,6 +264,10 @@ const Popup = ({
                             saviAccountEmail={saviAccount.email}
                             onSaviSignIn={saviAccount.signIn}
                             onSaviSignOut={saviAccount.signOut}
+                            saviTargetLanguage={saviRoaming.targetLanguage}
+                            onSaviTargetLanguageChange={saviRoaming.setTargetLanguage}
+                            saviOpenSubtitlesApiKey={saviRoaming.openSubtitlesApiKey}
+                            onSaviOpenSubtitlesApiKeyChange={saviRoaming.setOpenSubtitlesApiKey}
                         />
                     )}
                     {statisticsOpen && (
