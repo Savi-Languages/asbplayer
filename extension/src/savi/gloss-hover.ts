@@ -418,18 +418,22 @@ export class SaviGlossHover {
     }
 
     private _ensureLabel(): HTMLDivElement {
-        if (this._label) {
-            // An SPA navigation can wipe body children — re-attach a detached label.
-            if (!this._label.isConnected) {
-                document.body.appendChild(this._label);
-            }
-            return this._label;
+        if (!this._label) {
+            const el = document.createElement('div');
+            el.className = 'savi-gloss-hover';
+            Object.assign(el.style, LABEL_STYLE);
+            this._label = el;
         }
-        const el = document.createElement('div');
-        el.className = 'savi-gloss-hover';
-        Object.assign(el.style, LABEL_STYLE);
-        document.body.appendChild(el);
-        this._label = el;
-        return el;
+        // Fullscreen renders ONLY the fullscreened element's subtree — a
+        // body-level label exists and gets positioned but is never painted. Keep
+        // the label parented inside the current fullscreen element, and back on
+        // <body> when windowed (also re-attaches after an SPA wipe). Coordinates
+        // stay viewport-relative (position: fixed) either way.
+        const fullscreen = document.fullscreenElement;
+        const parent = fullscreen instanceof HTMLElement ? fullscreen : document.body;
+        if (this._label.parentElement !== parent || !this._label.isConnected) {
+            parent.appendChild(this._label);
+        }
+        return this._label;
     }
 }
