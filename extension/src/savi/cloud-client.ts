@@ -29,6 +29,21 @@ const DEV_CLOUD_URL: string | undefined = import.meta.env.DEV
  *  the target language against prod, and the two never meet. */
 export const resolveCloudBase = (cloudUrl: string): string => normalizeBaseUrl(DEV_CLOUD_URL ?? cloudUrl);
 
+// Abort a cloud call that stalls: these run in the background on behalf of a
+// content-script message, and the message MUST get an answer — a fetch that
+// never settles would leave the caller (and its concurrency slot) hanging.
+const FETCH_TIMEOUT_MS = 8000;
+
+const fetchWithTimeout = async (input: string, init: RequestInit): Promise<Response> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+        return await fetch(input, { ...init, signal: controller.signal });
+    } finally {
+        clearTimeout(timer);
+    }
+};
+
 export interface TranslateResult {
     /** The translated text. */
     text: string;
@@ -56,7 +71,7 @@ export const translate = async (
     if (!token) {
         throw new Error('sign in to use AI translation');
     }
-    const response = await fetch(`${resolveCloudBase(cloudUrl)}/v2/ai/translate`, {
+    const response = await fetchWithTimeout(`${resolveCloudBase(cloudUrl)}/v2/ai/translate`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -84,7 +99,7 @@ export const wordBuckets = async (cloudUrl: string, lang: string): Promise<Recor
     if (!token) {
         return {};
     }
-    const response = await fetch(`${resolveCloudBase(cloudUrl)}/v2/words/${encodeURIComponent(lang)}/buckets`, {
+    const response = await fetchWithTimeout(`${resolveCloudBase(cloudUrl)}/v2/words/${encodeURIComponent(lang)}/buckets`, {
         headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
     });
     if (!response.ok) {

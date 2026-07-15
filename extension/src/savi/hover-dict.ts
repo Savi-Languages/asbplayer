@@ -38,8 +38,11 @@ import { cropAndResize } from '@project/common/src/image-transformer';
 // The overlay that stacks subtitle lines (the target language AND its
 // translation). We never tokenize this whole thing — we resolve the single
 // line under the cursor below — but we use it to confirm a [data-track] span is
-// actually a subtitle line.
-const SUBTITLE_CONTAINER = '.asbplayer-subtitles';
+// actually a subtitle line. The overlay uses a DIFFERENT content class in
+// fullscreen ('asbplayer-fullscreen-subtitles', see subtitle-controller's
+// _elementOverlayParams) — both must match, or hover dies the moment the
+// player goes fullscreen (it did).
+const SUBTITLE_CONTAINER = '.asbplayer-subtitles, .asbplayer-fullscreen-subtitles';
 // The embedded dictionary is Japanese; lines without any Japanese (e.g. the
 // English translation track) are skipped so we never box or tokenize them.
 const LANG = 'ja';

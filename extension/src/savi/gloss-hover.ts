@@ -116,6 +116,55 @@ export function wordAtOffset(
     return null;
 }
 
+/** The word under the POINT (x, y), located geometrically: each word segment's
+ *  laid-out rects are tested against the cursor. Unlike caret hit-testing
+ *  (caretRangeFromPoint), this cannot be fooled by an invisible overlay sitting
+ *  above the subtitle — the word's own geometry is the only input. */
+export function wordAtPoint(
+    line: HTMLElement,
+    segments: GlossSegment[],
+    x: number,
+    y: number,
+    padPx = 2
+): { seg: GlossSegment; start: number; end: number } | null {
+    let start = 0;
+    for (const seg of segments) {
+        const end = start + seg.text.length;
+        if (seg.word) {
+            const range = baseRangeForSpan(line, start, end);
+            if (range) {
+                let rects: DOMRect[] = [];
+                try {
+                    rects = Array.from(range.getClientRects());
+                } catch {
+                    // No layout engine (tests) — treat as no rects.
+                }
+                for (const rect of rects) {
+                    if (
+                        x >= rect.left - padPx &&
+                        x <= rect.right + padPx &&
+                        y >= rect.top - padPx &&
+                        y <= rect.bottom + padPx
+                    ) {
+                        return { seg, start, end };
+                    }
+                }
+            }
+        }
+        start = end;
+    }
+    return null;
+}
+
+/** A short human-readable identity for a DOM event target (diagnostics). */
+const describeElement = (target: EventTarget | null): string => {
+    if (!(target instanceof Element)) {
+        return String(target);
+    }
+    const cls = (target.getAttribute('class') ?? '').split(/\s+/).filter(Boolean)[0];
+    return cls ? `${target.tagName.toLowerCase()}.${cls}` : target.tagName.toLowerCase();
+};
+
 // ── The controller ────────────────────────────────────────────────────────
 
 export interface GlossHoverSources {
@@ -126,6 +175,11 @@ export interface GlossHoverSources {
     /** The binding's pause/play (Netflix-aware — a raw video.pause() is overridden). */
     readonly pause: () => void;
     readonly play: () => void;
+    /** The loaded cues — a hovered line must be one of THESE. asbplayer's
+     *  notification banner (e.g. the loaded-subtitle file name) is built with
+     *  the exact same DOM shape as a subtitle line and sits above it, so DOM
+     *  structure alone cannot tell them apart; the cue text can. */
+    readonly subtitles: () => ReadonlyArray<{ readonly text: string }>;
 }
 
 export class SaviGlossHover {
@@ -140,6 +194,10 @@ export class SaviGlossHover {
     private _generation = 0; // cancels stale async translations
     private _lastLog = ''; // dedup for the hover diagnostics (mousemove fires constantly)
     private _lastLogAtMs = 0;
+    // Trimmed cue texts, for telling real subtitle lines from look-alike overlays
+    // (rebuilt at most every couple of seconds — track loads are rare).
+    private _cueTexts: Set<string> = new Set();
+    private _cueTextsBuiltAtMs = 0;
 
     constructor(sources: GlossHoverSources) {
         this._sources = sources;
@@ -217,10 +275,11 @@ export class SaviGlossHover {
 
     private _onMouseMove = (event: MouseEvent) => {
         if (!this.isActive()) {
-            this._log(`inactive: setting=${this._settingEnabled}, glossable=${this._sources.gloss.glossable}`);
+            // Silent: normal state for non-glossable languages / feature off. The
+            // start: line already reports both flags once per bind.
             return;
         }
-        const line = lineElement(event.target);
+        const line = this._subtitleLineAt(event);
         this._mouseOnSubtitle = line !== null;
 
         // Resume the line we held once the cursor leaves the subtitle.
@@ -236,18 +295,65 @@ export class SaviGlossHover {
         void this._hoverWord(line, event.clientX, event.clientY);
     };
 
+    /** The REAL subtitle line under the cursor, or null. Two traps this handles:
+     *  (a) an overlay above the subtitle steals hit-testing, so event.target is
+     *  the interceptor — the subtitle is still in the elementsFromPoint stack;
+     *  (b) asbplayer's notification banner (loaded-file name etc.) has the exact
+     *  same DOM shape as a subtitle line — only lines whose text is an actual
+     *  loaded cue count. */
+    private _subtitleLineAt(event: MouseEvent): HTMLElement | null {
+        const direct = lineElement(event.target);
+        if (direct !== null && this._isSubtitleLine(direct, 'target')) {
+            return direct;
+        }
+        for (const el of document.elementsFromPoint(event.clientX, event.clientY)) {
+            const candidate = lineElement(el);
+            if (candidate === null || candidate === direct) {
+                continue;
+            }
+            if (this._isSubtitleLine(candidate, 'stack')) {
+                this._log(`subtitle covered by <${describeElement(event.target)}> — geometric hover engaged`);
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    /** Whether this line's text is one of the loaded cues (see _subtitleLineAt).
+     *  Rejections log LOUDLY — a silent false here once masked the whole feature. */
+    private _isSubtitleLine(line: HTMLElement, via: 'target' | 'stack'): boolean {
+        const text = baseTextOf(line).trim();
+        if (text.length === 0) {
+            return false;
+        }
+        const now = Date.now();
+        if (now - this._cueTextsBuiltAtMs > 2000) {
+            this._cueTextsBuiltAtMs = now;
+            this._cueTexts = new Set(this._sources.subtitles().map((s) => s.text.trim()));
+        }
+        const ok = this._cueTexts.has(text);
+        if (!ok) {
+            this._log(`${via} line rejected — not among ${this._cueTexts.size} cues: "${text.slice(0, 40)}"`);
+        }
+        return ok;
+    }
+
     private async _hoverWord(line: HTMLElement, x: number, y: number): Promise<void> {
-        const offset = baseCaretOffset(line, x, y);
-        if (offset === null) {
-            this._log('no caret offset (between lines / over a gloss label / off text)');
-            this._clearHover(); // between words / over an existing gloss label / off text
+        // Only the primary (target-language) track is glossed — hovering a
+        // translation track would "translate" the user's own language. The
+        // deferred pause still applies to any track (_mouseOnSubtitle is set
+        // before this runs).
+        const track = line.closest('[data-track]')?.getAttribute('data-track') ?? '0';
+        if (track !== '0') {
+            this._log(`track ${track} line — not the target-language track, no hover gloss`);
+            this._clearHover();
             return;
         }
         const baseText = baseTextOf(line);
-        const span = wordAtOffset(segmentLine(baseText), offset);
+        // Geometric word lookup — immune to overlays that fool caret hit-testing.
+        const span = wordAtPoint(line, segmentLine(baseText), x, y);
         if (!span) {
-            this._log(`offset ${offset} is a gap/punctuation in "${baseText}"`);
-            this._clearHover();
+            this._clearHover(); // between words / punctuation — the normal roaming state
             return;
         }
         const range = baseRangeForSpan(line, span.start, span.end);
@@ -279,7 +385,6 @@ export class SaviGlossHover {
         }
         // Placeholder immediately (cached words fill instantly; a first-time known
         // word takes a beat), then the gloss.
-        this._log(`translating "${span.seg.text}"…`);
         this._showLabel(rect, '…');
         const gloss = await this._sources.gloss.glossForHover(span.seg.text, baseText);
         if (generation !== this._generation) {
@@ -289,7 +394,7 @@ export class SaviGlossHover {
             this._log(`"${span.seg.text}" → "${gloss}"`);
             this._showLabel(rect, gloss);
         } else if (this._label) {
-            this._log(`no usable gloss for "${span.seg.text}" (translate failed / not label-length)`);
+            this._log(`no usable gloss for "${span.seg.text}" (translate failed / timed out / not label-length)`);
             // No usable gloss — hide the placeholder but KEEP the key so we don't
             // re-translate the same word on every mouse move.
             this._label.style.display = 'none';
@@ -313,18 +418,22 @@ export class SaviGlossHover {
     }
 
     private _ensureLabel(): HTMLDivElement {
-        if (this._label) {
-            // An SPA navigation can wipe body children — re-attach a detached label.
-            if (!this._label.isConnected) {
-                document.body.appendChild(this._label);
-            }
-            return this._label;
+        if (!this._label) {
+            const el = document.createElement('div');
+            el.className = 'savi-gloss-hover';
+            Object.assign(el.style, LABEL_STYLE);
+            this._label = el;
         }
-        const el = document.createElement('div');
-        el.className = 'savi-gloss-hover';
-        Object.assign(el.style, LABEL_STYLE);
-        document.body.appendChild(el);
-        this._label = el;
-        return el;
+        // Fullscreen renders ONLY the fullscreened element's subtree — a
+        // body-level label exists and gets positioned but is never painted. Keep
+        // the label parented inside the current fullscreen element, and back on
+        // <body> when windowed (also re-attaches after an SPA wipe). Coordinates
+        // stay viewport-relative (position: fixed) either way.
+        const fullscreen = document.fullscreenElement;
+        const parent = fullscreen instanceof HTMLElement ? fullscreen : document.body;
+        if (this._label.parentElement !== parent || !this._label.isConnected) {
+            parent.appendChild(this._label);
+        }
+        return this._label;
     }
 }

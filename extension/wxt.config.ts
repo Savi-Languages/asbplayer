@@ -77,9 +77,10 @@ export default defineConfig({
         },
     },
     manifest: ({ browser, mode }) => {
-        // Savi's own extension version (independent of the upstream asbplayer
-        // version this fork was based on, and of the savi monorepo semver).
-        const version = '1.0.0';
+        // Tracks the savi monorepo's GLOBAL semver (root package.json there) —
+        // bump this manually alongside `pnpm version:set` in the savi repo.
+        // (Independent of the upstream asbplayer version this fork came from.)
+        const version = '0.6.2';
         const isDev = mode === 'development';
         const devLabel = isDev ? ' (Dev)' : '';
         const title = `${extName}${devLabel}`;

@@ -219,7 +219,22 @@ const MAX_LINE_ATTEMPTS = 3;
 const MAX_CONCURRENT_TRANSLATIONS = 4;
 // Space successive translate dispatches so bursts stay under provider rate limits
 // (~500 requests/min at 120ms). Cache hits and already-settled lines don't dispatch.
+// PRIORITY calls (the on-screen line, hover) skip this gate — it exists to tame
+// prefetch bursts, and a cumulative FIFO gate would make user-facing calls wait
+// behind the whole prefetch backlog.
 const MIN_DISPATCH_INTERVAL_MS = 120;
+// Hard ceiling on one translate round-trip. Without it, a hung background request
+// (an MV3 worker restart, a fetch that never settles) leaks a concurrency slot
+// FOREVER — four leaks and all glossing starves for the rest of the page session.
+const TRANSLATE_TIMEOUT_MS = 10000;
+
+/** `promise`, or a rejection after `ms` — so a hung await can't hold resources
+ *  forever. The underlying work may still settle later; its result is discarded. */
+const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> =>
+    Promise.race([
+        promise,
+        new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms)),
+    ]);
 
 export interface GlossSources {
     /** The playing media element, for prefetch timing. */
@@ -452,16 +467,21 @@ export class SaviGlossController implements GlossProvider {
         if (cached !== undefined) {
             return cached; // a previously-resolved word never re-hits the network
         }
-        await this._rateGate();
+        if (!priority) {
+            await this._rateGate(); // prefetch only — user-facing calls must not queue behind it
+        }
         await this._acquire(priority);
         try {
-            const response = await sendToBackground<SaviGlossTranslateResponse>({
-                command: 'savi-gloss-translate',
-                word,
-                targetLang: this._targetLang,
-                glossLang: GLOSS_LANGUAGE,
-                context,
-            });
+            const response = await withTimeout(
+                sendToBackground<SaviGlossTranslateResponse>({
+                    command: 'savi-gloss-translate',
+                    word,
+                    targetLang: this._targetLang,
+                    glossLang: GLOSS_LANGUAGE,
+                    context,
+                }),
+                TRANSLATE_TIMEOUT_MS
+            );
             const gloss = response?.text?.trim();
             // Keep it only if it's a plausible LABEL — drop an LLM ramble (a
             // paragraph of senses/alternatives) rather than render it over a word.

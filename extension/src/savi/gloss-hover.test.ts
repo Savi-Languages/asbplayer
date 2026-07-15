@@ -1,4 +1,4 @@
-import { baseRangeForSpan, baseTextOf, wordAtOffset } from './gloss-hover';
+import { baseRangeForSpan, baseTextOf, wordAtOffset, wordAtPoint } from './gloss-hover';
 import { segmentLine } from './gloss';
 
 const lineEl = (html: string): HTMLElement => {
@@ -32,6 +32,15 @@ describe('baseTextOf — rt-aware', () => {
 
     it('is the plain text when there are no ruby glosses', () => {
         expect(baseTextOf(lineEl('quiero un gato'))).toBe('quiero un gato');
+    });
+});
+
+describe('wordAtPoint', () => {
+    it('returns null when the word has no laid-out rects (jsdom has no layout)', () => {
+        // The geometric lookup depends on real layout; without it (tests) it
+        // degrades to null rather than throwing. Live behavior is verified in-browser.
+        const el = lineEl('el gato');
+        expect(wordAtPoint(el, segmentLine('el gato'), 10, 10)).toBeNull();
     });
 });
 

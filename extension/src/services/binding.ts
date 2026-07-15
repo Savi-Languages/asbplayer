@@ -276,6 +276,9 @@ export default class Binding {
             video: () => this.video,
             pause: () => this.pause(),
             play: () => void this.play(),
+            // For telling real subtitle lines from look-alike overlays (the
+            // notification banner shares the subtitle DOM shape).
+            subtitles: () => this.subtitleController.subtitles,
         });
         this.subtitleController.onSaviWillStopShowing = () => this.saviGlossHover.onWillStopShowing();
         // Lift the subtitles above the streaming player's control bar while it is
