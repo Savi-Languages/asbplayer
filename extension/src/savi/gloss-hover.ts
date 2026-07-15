@@ -275,7 +275,8 @@ export class SaviGlossHover {
 
     private _onMouseMove = (event: MouseEvent) => {
         if (!this.isActive()) {
-            this._log(`inactive: setting=${this._settingEnabled}, glossable=${this._sources.gloss.glossable}`);
+            // Silent: normal state for non-glossable languages / feature off. The
+            // start: line already reports both flags once per bind.
             return;
         }
         const line = this._subtitleLineAt(event);
@@ -305,22 +306,15 @@ export class SaviGlossHover {
         if (direct !== null && this._isSubtitleLine(direct, 'target')) {
             return direct;
         }
-        let sawCandidate = direct !== null;
         for (const el of document.elementsFromPoint(event.clientX, event.clientY)) {
             const candidate = lineElement(el);
             if (candidate === null || candidate === direct) {
                 continue;
             }
-            sawCandidate = true;
             if (this._isSubtitleLine(candidate, 'stack')) {
                 this._log(`subtitle covered by <${describeElement(event.target)}> — geometric hover engaged`);
                 return candidate;
             }
-        }
-        if (!sawCandidate) {
-            // Nothing subtitle-shaped under the cursor at all — leave a breadcrumb
-            // of what IS there, so "hover does nothing" is never silent.
-            this._log(`no subtitle line at cursor (top: <${describeElement(event.target)}>)`);
         }
         return null;
     }
@@ -359,8 +353,7 @@ export class SaviGlossHover {
         // Geometric word lookup — immune to overlays that fool caret hit-testing.
         const span = wordAtPoint(line, segmentLine(baseText), x, y);
         if (!span) {
-            this._log(`no word under the cursor (gap/punctuation) in "${baseText}"`);
-            this._clearHover();
+            this._clearHover(); // between words / punctuation — the normal roaming state
             return;
         }
         const range = baseRangeForSpan(line, span.start, span.end);
@@ -392,7 +385,6 @@ export class SaviGlossHover {
         }
         // Placeholder immediately (cached words fill instantly; a first-time known
         // word takes a beat), then the gloss.
-        this._log(`translating "${span.seg.text}"…`);
         this._showLabel(rect, '…');
         const gloss = await this._sources.gloss.glossForHover(span.seg.text, baseText);
         if (generation !== this._generation) {
