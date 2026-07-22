@@ -3,9 +3,10 @@
 // Owns the segment-cutting state machine and feeds it the video
 // element's events (this is the only context that can sample
 // video.currentTime / playbackRate at the moment an event fires).
-// Segment boundaries are forwarded straight to the offscreen document;
-// capture start/stop go through the background service worker, which
-// owns tabCapture stream-id minting and the daemon start/finish calls.
+// SV-18: audio is recorded by the DAEMON's own system tap, so segment
+// boundaries travel content → background → daemon as playback-state ops;
+// no tab capture, no user-gesture requirement, and auto-start actually
+// records — fullscreen included.
 //
 // Bound by asbplayer's Binding with four one-line hooks: construct,
 // subtitles-loaded, subtitles-reset, unbind. Everything else (video
@@ -24,8 +25,7 @@ import { SaviSpeedControl } from './speed-control';
 import { SaviRecordingGuard } from './recording-guard';
 import {
     SaviCommand,
-    SaviGetIntentResponse,
-    SaviSegmentMessage,
+    SaviPlaybackStateMessage,
     SaviSegmentOp,
     SaviStartCaptureMessage,
     SaviStartCaptureResponse,
@@ -62,6 +62,10 @@ export class SaviCaptureController {
     // episodeIds for which the calmer "never started" guard already showed this
     // session — so casual watching isn't nagged more than once per episode.
     private readonly _guardShownEpisodes = new Set<string>();
+    // episodeIds the user DELIBERATELY stopped this page session — auto-start
+    // must not re-arm them. (Replaces the old per-tab recording-intent marker,
+    // whose reason to exist — the tabCapture gesture lost on reload — is gone.)
+    private readonly _deliberatelyStopped = new Set<string>();
 
     private _videoListeners: [string, EventListener][] = [];
     private _messageListener?: (
@@ -161,10 +165,11 @@ export class SaviCaptureController {
 
                 if (saviCaptureEnabled) {
                     // Surface the Record control whenever capture is on offer,
-                    // and auto-start (silently — see start()'s no-active-tab
-                    // branch) for the no-friction case.
+                    // and auto-start for the no-friction case — unless the user
+                    // deliberately stopped this episode earlier in the session.
                     this._recordButton.show();
-                    if (!this._active && !this._starting) {
+                    const { episodeId } = this._pageMetadata();
+                    if (!this._active && !this._starting && !this._deliberatelyStopped.has(episodeId)) {
                         this.start(false);
                     }
                 } else {
@@ -279,7 +284,7 @@ export class SaviCaptureController {
             const response = (await browser.runtime.sendMessage(command)) as SaviStartCaptureResponse;
 
             if (response?.started) {
-                // The recorder is live now — only now does segmenting begin,
+                // The session is live now — only now does segmenting begin,
                 // so the first segment's media-time stamp is sampled fresh
                 // rather than aging across the start round trip.
                 const segmenter = new Segmenter();
@@ -290,29 +295,35 @@ export class SaviCaptureController {
                 this._sendSegmentOps(
                     this._opsFromOutputs(segmenter.begin(video.currentTime * 1000, video.playbackRate, video.paused))
                 );
-                this._host.notify('Savi: capturing episode');
-                this._recordButton.setState('recording');
-                this._guard.clear(); // recording now — drop any "not recording" guard
-            } else if (response?.errorCode === 'no-active-tab') {
-                // Browsers only grant tab-audio capture after a user gesture on
-                // the extension (a button click in the page doesn't count), so
-                // the auto-start on every reload can't grab audio. Stay silent
-                // there; only guide the user when they explicitly asked to
-                // record — and point them at the one-press path. One grant arms
-                // the whole tab session (the permission lasts until reload).
-                if (manuallyRequested) {
+                this._guard.clear(); // capturing now — drop any "not recording" guard
+
+                // SV-18: the daemon reports whether ITS tap is recording audio.
+                const audioState = response.audio?.state ?? 'legacy';
+                if (audioState === 'recording' || audioState === 'legacy') {
+                    this._host.notify('Savi: capturing episode');
+                    this._recordButton.setState('recording');
+                } else {
+                    // disabled / unavailable — the session still captures
+                    // subtitles (transcript-only finish + word encounters).
                     this._host.notify(
-                        'Savi: press Ctrl+Shift+S (or click the savi toolbar icon) to enable audio recording for this tab.'
+                        audioState === 'disabled'
+                            ? 'Savi: capturing episode (subtitles only — audio recording is off)'
+                            : `Savi: capturing episode WITHOUT audio — ${response.audio?.reason ?? 'audio unavailable'}`
                     );
-                    this._recordButton.flashHint('Press Ctrl+Shift+S to enable');
-                }
-                // The start silently failed for lack of permission — raise the
-                // recording guard so the user notices instead of watching unrecorded.
-                if (saviRecordingGuard) {
-                    await this._raiseGuard(episodeId);
+                    this._recordButton.setState('recording');
+                    if (audioState === 'unavailable') {
+                        this._recordButton.flashHint('No audio — check the savi desktop app');
+                    }
                 }
             } else {
-                this._host.notify(`Savi: capture failed — ${response?.errorMessage ?? 'unknown error'}`);
+                if (manuallyRequested) {
+                    this._host.notify(`Savi: capture failed — ${response?.errorMessage ?? 'unknown error'}`);
+                } else if (saviRecordingGuard && !this._guardShownEpisodes.has(episodeId)) {
+                    // A silently-failing auto-start (daemon down, signed out):
+                    // nudge once per episode instead of toasting every reload.
+                    this._guardShownEpisodes.add(episodeId);
+                    this._guard.activate('never-started');
+                }
             }
         } catch (e) {
             console.error('savi: failed to start capture', e);
@@ -414,38 +425,16 @@ export class SaviCaptureController {
         }
     }
 
-    // Decide which guard to show after a permission-less start: if this tab had
-    // been recording (intent persisted across the reload) it's a reload-drop;
-    // otherwise a never-started episode — shown at most once per episode session.
-    private async _raiseGuard(episodeId: string) {
-        const intentSet = await this._queryIntent();
-        if (intentSet) {
-            this._guard.activate('reload-drop');
-        } else if (!this._guardShownEpisodes.has(episodeId)) {
-            this._guardShownEpisodes.add(episodeId);
-            this._guard.activate('never-started');
-        }
-    }
-
-    private async _queryIntent(): Promise<boolean> {
-        try {
-            const command: SaviCommand<{ command: 'savi-get-intent' }> = {
-                sender: 'savi-video',
-                message: { command: 'savi-get-intent' },
-            };
-            const response = (await browser.runtime.sendMessage(command)) as SaviGetIntentResponse | undefined;
-            return response?.intentSet === true;
-        } catch (e) {
-            return false;
-        }
-    }
-
-    // `deliberate` = a manual toggle-off / popup stop (the user is done). It tells
-    // the background to clear this tab's recording intent so a later reload won't
-    // nag. Reset / unbind / video-end stops pass false, keeping intent.
+    // `deliberate` = a manual toggle-off / popup stop (the user is done with
+    // this episode) — auto-start won't re-arm it this page session. Reset /
+    // unbind / video-end stops pass false.
     async stop(deliberate = false) {
         if (!this._active) {
             return;
+        }
+
+        if (deliberate) {
+            this._deliberatelyStopped.add(this._pageMetadata().episodeId);
         }
 
         const segmenter = this._segmenter;
@@ -459,7 +448,7 @@ export class SaviCaptureController {
         try {
             const command: SaviCommand<SaviStopCaptureMessage> = {
                 sender: 'savi-video',
-                message: { command: 'savi-stop-capture', clearIntent: deliberate },
+                message: { command: 'savi-stop-capture' },
             };
             const response = (await browser.runtime.sendMessage(command)) as SaviStopCaptureResponse;
 
@@ -486,8 +475,13 @@ export class SaviCaptureController {
     private _notifyFinished(result: { ok: boolean; info?: any; errorMessage?: string; failedSegments?: number }) {
         if (result.ok && result.info !== undefined) {
             const lines = String(result.info.totalLines);
-            const minutes = (result.info.keptDurationMs / 60000).toFixed(1);
-            this._host.notify(`Savi: episode saved — ${lines} lines, ${minutes} min of dialogue`);
+
+            if (result.info.transcriptOnly === true) {
+                this._host.notify(`Savi: episode saved (subtitles only) — ${lines} lines`);
+            } else {
+                const minutes = (result.info.keptDurationMs / 60000).toFixed(1);
+                this._host.notify(`Savi: episode saved — ${lines} lines, ${minutes} min of dialogue`);
+            }
 
             if (result.failedSegments !== undefined && result.failedSegments > 0) {
                 console.warn(`savi: ${result.failedSegments} segment(s) failed to upload and were dropped`);
@@ -557,15 +551,18 @@ export class SaviCaptureController {
             return;
         }
 
-        const command: SaviCommand<SaviSegmentMessage> = {
-            sender: 'savi-video-to-offscreen',
+        // Fire-and-forget to the background, which attaches captureId + seq
+        // and relays to the daemon (content scripts can't reach it — CORS).
+        // Ops are low-frequency; waking a sleeping service worker is fine.
+        const command: SaviCommand<SaviPlaybackStateMessage> = {
+            sender: 'savi-video',
             message: {
-                command: 'savi-segment',
+                command: 'savi-playback-state',
                 ops,
             },
         };
         browser.runtime.sendMessage(command).catch(() => {
-            // The offscreen document may already be gone; harmless.
+            // Background unreachable; the daemon's stitcher self-heals.
         });
     }
 }

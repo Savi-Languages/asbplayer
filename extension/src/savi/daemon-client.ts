@@ -3,14 +3,18 @@
 // gone).
 //
 // Contract (savi crates/savi-daemon/src/capture.rs, docs/daemon-api/):
-//   POST {base}/v2/capture/start     {episodeId, show?, title?, lang?} → {captureId}
+//   POST {base}/v2/capture/start     {episodeId, show?, title?, lang?, audio?, browser?}
+//        → {captureId, audio: {state, reason?, sourceApp?}}
 //        episodeId is platform-stable, so captureId is deterministic
 //        (safe(episodeId)) and an existing episode resumes. show/title are
-//        best-effort page metadata for the per-show library.
-//   POST {base}/v2/capture/chunk?captureId=&segmentId=&mediaTimeMs=&rate=
-//        raw audio bytes; mediaTimeMs/rate read from a segment's FIRST chunk
+//        best-effort page metadata. SV-18: audio:true asks the DAEMON to
+//        record via its own browser tap; the response reports its state.
+//   POST {base}/v2/capture/playback-state {captureId, seq, ops}
+//        segment-start/segment-end cuts with media time + rate; seq is a
+//        strictly-increasing per-capture batch counter (replays dropped).
 //   POST {base}/v2/capture/subtitles {captureId, content, format}
-//   POST {base}/v2/capture/finish    {captureId} → episode summary
+//   POST {base}/v2/capture/finish    {captureId} → episode summary, or
+//        {transcriptOnly, totalLines} when the session had no audio.
 //
 // All requests carry `Authorization: Bearer <token>`. The extension
 // declares host permissions for localhost/127.0.0.1/*.local, which is
@@ -30,10 +34,14 @@ export interface SaviDaemonConfig {
 }
 
 export interface CaptureFinishInfo {
-    readonly episodeId: string;
-    readonly segmentsStitched: number;
     readonly totalLines: number;
-    readonly keptDurationMs: number;
+    // Present on a normal (audio) finish.
+    readonly episodeId?: string;
+    readonly segmentsStitched?: number;
+    readonly keptDurationMs?: number;
+    // SV-18: true when the session had no audio (recording off/unavailable) —
+    // the subtitle track was stored, no audio episode was created.
+    readonly transcriptOnly?: boolean;
 }
 
 export const normalizedBaseUrl = (baseUrl: string) => baseUrl.trim().replace(/\/+$/, '');
@@ -151,12 +159,54 @@ const jsonInit = (body: any): RequestInit => ({
     body: JSON.stringify(body),
 });
 
+export interface CaptureStartResult {
+    readonly captureId: string;
+    /** Absent on pre-SV-18 daemons → treat as `legacy`. */
+    readonly audio?: { state: string; reason?: string; sourceApp?: string };
+}
+
 export const startCapture = async (
     config: SaviDaemonConfig,
-    { episodeId, show, title, lang }: { episodeId: string; show?: string; title?: string; lang?: string }
-): Promise<string> => {
-    const body = await request(config, '/v2/capture/start', jsonInit({ episodeId, show, title, lang }));
-    return body.captureId;
+    {
+        episodeId,
+        show,
+        title,
+        lang,
+        audio,
+        browser,
+    }: { episodeId: string; show?: string; title?: string; lang?: string; audio: boolean; browser?: string }
+): Promise<CaptureStartResult> => {
+    const body = await request(
+        config,
+        '/v2/capture/start',
+        jsonInit({ episodeId, show, title, lang, audio, browser })
+    );
+    return { captureId: body.captureId, audio: body.audio };
+};
+
+/** Only DISTINGUISHABLE browsers produce a hint. Chromium forks (Brave, Arc)
+ *  masquerade as Chrome in the UA, and a wrong narrow hint would make the
+ *  daemon's tap miss their audio entirely — absent hint = daemon taps every
+ *  known browser family, which degrades gracefully. */
+export const browserHintFromUserAgent = (ua: string): string | undefined => {
+    if (/\bEdg\//.test(ua)) {
+        return 'edge';
+    }
+    if (/\bVivaldi\//.test(ua)) {
+        return 'vivaldi';
+    }
+    if (/\bFirefox\//.test(ua)) {
+        return 'firefox';
+    }
+    return undefined;
+};
+
+export const postPlaybackState = async (
+    config: SaviDaemonConfig,
+    { captureId, seq, ops }: { captureId: string; seq: number; ops: unknown[] }
+): Promise<{ ok: boolean; audio?: string }> => {
+    const body = await request(config, '/v2/capture/playback-state', jsonInit({ captureId, seq, ops }));
+    return { ok: body.ok === true, audio: typeof body.audio === 'string' ? body.audio : undefined };
 };
 
 export const postSubtitles = async (
@@ -183,29 +233,6 @@ export const postWatchedLine = async (
     { lang, text, source, occurredAtMs }: { lang: string; text: string; source?: string; occurredAtMs?: number }
 ): Promise<void> => {
     await request(config, '/v2/events/watched', jsonInit({ lang, text, source, occurredAtMs }));
-};
-
-export const postChunk = async (
-    config: SaviDaemonConfig,
-    {
-        captureId,
-        segmentId,
-        mediaTimeMs,
-        rate,
-        data,
-    }: { captureId: string; segmentId: string; mediaTimeMs: number; rate: number; data: Blob }
-): Promise<void> => {
-    const query = new URLSearchParams({
-        captureId,
-        segmentId,
-        mediaTimeMs: String(mediaTimeMs),
-        rate: String(rate),
-    });
-    await request(config, `/v2/capture/chunk?${query.toString()}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'audio/webm' },
-        body: data,
-    });
 };
 
 // ── Hover dictionary ────────────────────────────────────────────────────

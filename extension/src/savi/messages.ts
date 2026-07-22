@@ -2,22 +2,17 @@
 // asbplayer's senders so upstream message handling is untouched.
 //
 // Senders:
-//   'savi-video'                content script → background (start/stop)
+//   'savi-video'                content script → background (start/stop,
+//                               playback-state segment cuts, dict, gloss, …)
 //   'savi-popup'                popup → background (state/start/stop)
-//   'savi-video-to-offscreen'   content script → offscreen document
-//                               (segment cuts; skips the service worker so
-//                               cuts keep flowing even if it is asleep)
-//   'savi-extension-to-offscreen' background → offscreen document
-//   'savi-offscreen'            offscreen document → background
 //   'savi-extension-to-video'   background → content script
+//
+// (SV-18 removed the offscreen-document senders: audio is recorded by the
+// daemon's own system tap now, so no tab-capture recorder exists.)
 
 import { SegmentMeta } from './segmenter';
 import { CaptureFinishInfo, SaviDictEntry, SaviKanjiFull, SaviKanjiInfo, SaviToken } from './daemon-client';
-
-export interface SaviRequester {
-    readonly tabId: number;
-    readonly src: string;
-}
+import { SaviCaptureAudio } from './capture-session';
 
 // ── content script → background ─────────────────────────────────────────
 
@@ -46,17 +41,15 @@ export interface SaviStartCaptureMessage {
 
 export interface SaviStopCaptureMessage {
     readonly command: 'savi-stop-capture';
-    // True only on a DELIBERATE user stop (manual toggle / popup). The background
-    // clears the tab's recording-intent marker only then — so a reload, SPA
-    // next-episode, or video-end (which also stop capture) KEEP intent, letting
-    // the recording guard prompt to resume.
-    readonly clearIntent: boolean;
 }
 
 export interface SaviStartCaptureResponse {
     readonly started: boolean;
     readonly captureId?: string;
-    readonly errorCode?: 'not-configured' | 'already-capturing' | 'daemon-unreachable' | 'no-active-tab' | 'other';
+    /** The daemon's audio report (SV-18): whether ITS tap is recording for
+     *  this session. `legacy` means an old daemon that ignored the field. */
+    readonly audio?: SaviCaptureAudio;
+    readonly errorCode?: 'not-configured' | 'already-capturing' | 'daemon-unreachable' | 'other';
     readonly errorMessage?: string;
 }
 
@@ -69,16 +62,21 @@ export interface SaviStopCaptureResponse {
     readonly errorMessage?: string;
 }
 
-// Ask whether THIS tab had a recording before the current page load (intent
-// persisted in storage.session across the reload). The recording guard uses it
-// to tell a reload-drop (intent set → prompt to resume) from a never-started
-// episode (intent unset → a calmer, gated nudge).
-export interface SaviGetIntentMessage {
-    readonly command: 'savi-get-intent';
+// Playback-state segment cuts (SV-18): the content script samples the video's
+// media time/rate at each play/pause/seek/rate event and forwards the ops; the
+// background attaches the session's captureId + a persisted monotonic seq and
+// relays to the daemon, which slices its own tap recording accordingly. Ops
+// are low-frequency, so waking a sleeping service worker per batch is fine.
+export interface SaviPlaybackStateMessage {
+    readonly command: 'savi-playback-state';
+    readonly ops: SaviSegmentOp[];
 }
 
-export interface SaviGetIntentResponse {
-    readonly intentSet: boolean;
+export interface SaviPlaybackStateResponse {
+    readonly ok: boolean;
+    /** The daemon's current audio state for the session ('recording' | 'idle'
+     *  | 'off'), when known. */
+    readonly audio?: string;
 }
 
 // ── popup → background ──────────────────────────────────────────────────
@@ -314,56 +312,11 @@ export interface SaviCaptureFrameResponse {
     readonly dataUrl?: string;
 }
 
-// ── content script → offscreen document ─────────────────────────────────
-
+// The segment-cut wire ops, shared with the daemon's playback-state endpoint
+// (crates/savi-daemon capture_audio::WireSegmentOp mirrors this exactly).
 export type SaviSegmentOp =
     | { readonly op: 'segment-start'; readonly segment: SegmentMeta }
     | { readonly op: 'segment-end' };
-
-export interface SaviSegmentMessage {
-    readonly command: 'savi-segment';
-    readonly ops: SaviSegmentOp[];
-}
-
-// ── background → offscreen document ─────────────────────────────────────
-
-export interface SaviOffscreenStartMessage {
-    readonly command: 'savi-offscreen-start';
-    readonly streamId: string;
-    readonly captureId: string;
-    readonly episodeId: string;
-    readonly show?: string;
-    readonly title: string;
-    readonly baseUrl: string;
-    /** The legacy LAN token, as a FALLBACK only (may be ''). The offscreen
-     *  document resolves the signed-in account's token per chunk — a capture
-     *  outlives the ~1h JWT, so a token snapshotted at start would go stale
-     *  mid-episode. */
-    readonly lanToken: string;
-    readonly requester: SaviRequester;
-}
-
-export interface SaviOffscreenStopMessage {
-    readonly command: 'savi-offscreen-stop';
-}
-
-export interface SaviOffscreenStateMessage {
-    readonly command: 'savi-offscreen-state';
-}
-
-// ── offscreen document → background ─────────────────────────────────────
-
-// Sent whenever a capture finishes — explicit stop, video ended, or the
-// captured tab going away — carrying the daemon's episode summary (or the
-// failure). Forwarded to the capture's tab as a toast.
-export interface SaviCaptureEndedMessage {
-    readonly command: 'savi-capture-ended';
-    readonly requester: SaviRequester;
-    readonly ok: boolean;
-    readonly info?: CaptureFinishInfo;
-    readonly failedSegments?: number;
-    readonly errorMessage?: string;
-}
 
 // ── background → content script ─────────────────────────────────────────
 
@@ -381,12 +334,6 @@ export interface SaviRequestStartToVideoMessage {
 }
 
 export interface SaviCommand<M> {
-    readonly sender:
-        | 'savi-video'
-        | 'savi-popup'
-        | 'savi-video-to-offscreen'
-        | 'savi-extension-to-offscreen'
-        | 'savi-offscreen'
-        | 'savi-extension-to-video';
+    readonly sender: 'savi-video' | 'savi-popup' | 'savi-extension-to-video';
     readonly message: M;
 }
