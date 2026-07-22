@@ -45,6 +45,8 @@ import {
     SaviStopCaptureResponse,
     SaviTokenizeMessage,
     SaviTokenizeResponse,
+    SaviWatchedLineMessage,
+    SaviWatchedLineResponse,
 } from './messages';
 import { daemonToken } from './account';
 import { resolveCloudBase, translate as cloudTranslate, wordBuckets as cloudWordBuckets } from './cloud-client';
@@ -55,6 +57,7 @@ import {
     normalizedBaseUrl,
     postEpisodeTranscript,
     postSubtitles,
+    postWatchedLine,
     SaviDaemonConfig,
     segmentLine,
     explainWord,
@@ -142,6 +145,9 @@ export default class SaviCommandHandler implements CommandHandler {
                 return true;
             case 'savi-episode-transcript':
                 this._storeEpisodeTranscript(command.message as SaviEpisodeTranscriptMessage).then(sendResponse);
+                return true;
+            case 'savi-watched-line':
+                this._watchedLine(command.message as SaviWatchedLineMessage).then(sendResponse);
                 return true;
             case 'savi-mine-line':
                 this._mineLine(command.message as SaviMineLineMessage)
@@ -395,6 +401,25 @@ export default class SaviCommandHandler implements CommandHandler {
             return { ok: true };
         } catch (e) {
             // Best-effort — without it the card just falls back to the scene window.
+            return { ok: false };
+        }
+    }
+
+    private async _watchedLine(message: SaviWatchedLineMessage): Promise<SaviWatchedLineResponse> {
+        const config = await this._daemonConfig();
+        if (!config) {
+            return { ok: false };
+        }
+        try {
+            await postWatchedLine(config, {
+                lang: message.lang,
+                text: message.text,
+                source: `watch:${message.episodeId}:${message.lineStartMs}`,
+                occurredAtMs: message.occurredAtMs,
+            });
+            return { ok: true };
+        } catch (e) {
+            // Fire-and-forget contract: a dropped line loses one line's exposure.
             return { ok: false };
         }
     }

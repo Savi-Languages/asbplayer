@@ -211,6 +211,24 @@ export interface SaviEpisodeTranscriptResponse {
     readonly ok: boolean;
 }
 
+// One displayed subtitle line → one watch-time exposure event (SV-18). Fired by
+// the encounter reporter as each primary-track line starts showing; the
+// background relays it to the daemon's POST /v2/events/watched, which tokenizes
+// the raw text into Level-1 TokenEncounters. Fire-and-forget: a lost line loses
+// only that line's exposure.
+export interface SaviWatchedLineMessage {
+    readonly command: 'savi-watched-line';
+    readonly lang: string;
+    readonly text: string;
+    readonly episodeId: string;
+    readonly lineStartMs: number;
+    readonly occurredAtMs: number;
+}
+
+export interface SaviWatchedLineResponse {
+    readonly ok: boolean;
+}
+
 // Search OpenSubtitles.com for a subtitle in the target language and return its
 // text (SV-8 fallback, used only when the streaming player has no target-language
 // track). Runs in the background because MV3 blocks cross-origin fetches from

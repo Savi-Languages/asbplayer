@@ -176,6 +176,15 @@ export const postEpisodeTranscript = async (
     await request(config, '/v2/episode/transcript', jsonInit({ episodeId, content, format }));
 };
 
+// POST {base}/v2/events/watched {lang, text, source?, occurredAtMs?} — one
+// displayed subtitle line → Level-1 TokenEncounters, tokenized daemon-side.
+export const postWatchedLine = async (
+    config: SaviDaemonConfig,
+    { lang, text, source, occurredAtMs }: { lang: string; text: string; source?: string; occurredAtMs?: number }
+): Promise<void> => {
+    await request(config, '/v2/events/watched', jsonInit({ lang, text, source, occurredAtMs }));
+};
+
 export const postChunk = async (
     config: SaviDaemonConfig,
     {
