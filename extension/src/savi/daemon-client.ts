@@ -226,13 +226,20 @@ export const postEpisodeTranscript = async (
     await request(config, '/v2/episode/transcript', jsonInit({ episodeId, content, format }));
 };
 
-// POST {base}/v2/events/watched {lang, text, source?, occurredAtMs?} — one
-// displayed subtitle line → Level-1 TokenEncounters, tokenized daemon-side.
+// POST {base}/v2/events/watched {lang, text, source?, occurredAtMs?,
+// glossedWords?} — one displayed subtitle line → Level-1 TokenEncounters,
+// tokenized daemon-side; tokens matching glossedWords store as aided exposure.
 export const postWatchedLine = async (
     config: SaviDaemonConfig,
-    { lang, text, source, occurredAtMs }: { lang: string; text: string; source?: string; occurredAtMs?: number }
+    {
+        lang,
+        text,
+        source,
+        occurredAtMs,
+        glossedWords,
+    }: { lang: string; text: string; source?: string; occurredAtMs?: number; glossedWords?: string[] }
 ): Promise<void> => {
-    await request(config, '/v2/events/watched', jsonInit({ lang, text, source, occurredAtMs }));
+    await request(config, '/v2/events/watched', jsonInit({ lang, text, source, occurredAtMs, glossedWords }));
 };
 
 // ── Hover dictionary ────────────────────────────────────────────────────

@@ -292,6 +292,9 @@ export default class Binding {
             enabled: async () => (await this.settings.get(['saviEncounterRecording'])).saviEncounterRecording,
             targetLanguage: async () => (await getCachedRoamingSettings()).targetLanguage,
             episodeId: () => deriveEpisodeId(window.location.href, document.title),
+            // Which words of the line are showing WITH a gloss label — stored
+            // as aided exposure (glossed) on the encounters.
+            glossedLemmas: (text, track) => this.saviGlossController.glossedLemmasFor(text, track),
             send: (message) => browser.runtime.sendMessage({ sender: 'savi-video', message }),
         });
         this.subtitleController.onSaviStartedShowing = (subtitle) => this.saviEncounterReporter.report(subtitle);

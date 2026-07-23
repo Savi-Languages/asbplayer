@@ -221,6 +221,10 @@ export interface SaviWatchedLineMessage {
     readonly episodeId: string;
     readonly lineStartMs: number;
     readonly occurredAtMs: number;
+    /** Lowercased words displayed WITH an inline gloss label when the line
+     *  showed (SV-12/13) — the daemon stores matching tokens as `glossed`
+     *  (aided exposure). Empty for CJK lines / glossing off / not settled. */
+    readonly glossedWords: string[];
 }
 
 export interface SaviWatchedLineResponse {

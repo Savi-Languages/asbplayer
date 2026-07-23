@@ -6,6 +6,7 @@ const deps = (overrides: Partial<EncounterReporterDeps> = {}) => {
         enabled: async () => true,
         targetLanguage: async () => 'es',
         episodeId: () => 'netflix:81234567',
+        glossedLemmas: () => [],
         send: async (message) => {
             sent.push(message);
         },
@@ -33,8 +34,21 @@ describe('SaviEncounterReporter', () => {
                 episodeId: 'netflix:81234567',
                 lineStartMs: 84210,
                 occurredAtMs: 1753189200000,
+                glossedWords: [],
             },
         ]);
+    });
+
+    it('carries the glossed words the line displayed', async () => {
+        const { d, sent } = deps({
+            glossedLemmas: (text, track) => (text.includes('quería') && track === 0 ? ['quería', 'hablar'] : []),
+        });
+        const reporter = new SaviEncounterReporter(d);
+        await reporter.start();
+
+        reporter.report(line('No quería hablar de eso'));
+
+        expect(sent[0].glossedWords).toEqual(['quería', 'hablar']);
     });
 
     it('does not arm when the setting is off', async () => {

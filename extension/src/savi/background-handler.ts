@@ -423,6 +423,7 @@ export default class SaviCommandHandler implements CommandHandler {
                 text: message.text,
                 source: `watch:${message.episodeId}:${message.lineStartMs}`,
                 occurredAtMs: message.occurredAtMs,
+                glossedWords: message.glossedWords,
             });
             return { ok: true };
         } catch (e) {

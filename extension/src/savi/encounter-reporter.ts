@@ -24,6 +24,9 @@ export interface EncounterReporterDeps {
     targetLanguage: () => Promise<string>;
     /** Platform-stable episode id for the current page. */
     episodeId: () => string;
+    /** Lowercased words of the line currently displayed WITH a gloss label
+     *  (the gloss controller's settled render truth) — aided exposure. */
+    glossedLemmas: (text: string, track?: number) => string[];
     /** Deliver the message to the background (browser.runtime.sendMessage). */
     send: (message: SaviWatchedLineMessage) => Promise<unknown>;
     now?: () => number;
@@ -73,6 +76,7 @@ export class SaviEncounterReporter {
                 episodeId: this._deps.episodeId(),
                 lineStartMs: Math.round(subtitle.start),
                 occurredAtMs: (this._deps.now ?? Date.now)(),
+                glossedWords: this._deps.glossedLemmas(subtitle.text, subtitle.track),
             })
             .catch((e) => console.debug('savi: watched-line dropped', e));
     }
