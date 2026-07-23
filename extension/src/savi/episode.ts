@@ -197,23 +197,34 @@ export const deriveShowAndTitle = (
 // pure/total: it coerces non-strings to '' and never throws.
 
 // A trailing subtitle-container extension the basename may pick up once it has
-// flowed through subtitle bookkeeping (".srt"/".vtt"/".ass").
-const subtitleExtensionSuffix = /\.(?:srt|vtt|ass)$/i;
+// flowed through subtitle bookkeeping. Includes Netflix's IMSC (".nfimsc")
+// and the TTML family alongside the classic text formats.
+const subtitleExtensionSuffix = /\.(?:srt|vtt|ass|ssa|sub|ttml|dfxp|nfimsc)$/i;
 
 // A trailing language tag that subtitle filenames sometimes carry. Kept
 // deliberately narrow so a real (non-Latin) episode title is never mistaken
 // for a language suffix:
-//   - " (English)" / " (English [CC])" — parenthesized language label, OR
+//   - " (English)" / " (English [CC])" / " (Latin America) [CC]" —
+//     parenthesized label, optionally followed by a bare [CC], OR
 //   - " .en" / " .en-US" / " .jpn" — a dotted 2–3 letter ISO-ish code,
 // each anchored to the end. A bare " English" (no parens, no dot) is NOT
 // stripped, because that is indistinguishable from a real title word.
-const languageTagSuffix = /(?:\s*\([A-Za-z][A-Za-z ]*(?:\[CC\])?\)|\s+\.[A-Za-z]{2,3}(?:-[A-Za-z]{2,4})?)$/;
+const languageTagSuffix =
+    /(?:\s*\([A-Za-z][A-Za-z ]*(?:\[CC\])?\)\s*(?:\[CC\])?|\s+\.[A-Za-z]{2,3}(?:-[A-Za-z]{2,4})?)$/;
+
+// Netflix-style full track label tail: " - es - Spanish (Latin America) [CC]".
+// Anchored on the " - xx - " language-code segment (2–3 letters between
+// dashes), so a real title's dashes ("Spider-Man - Into the Spider-Verse")
+// are never eaten.
+const trackLabelSuffix = /\s+-\s+[A-Za-z]{2,3}(?:-[A-Za-z]{2,4})?\s+-\s+[^-]*$/;
 
 const stripSubtitleFileSuffix = (value: string): string => {
-    // Strip at most one extension, then at most one language tag. Order
-    // matters: "Foo .en.srt" → drop ".srt" → "Foo .en" → drop " .en".
+    // Strip at most one of each, outermost first. Order matters:
+    // "Foo - es - Spanish (Latin America) [CC].nfimsc" → drop ".nfimsc" →
+    // drop the " - es - …" track label; "Foo .en.srt" → ".srt" → " .en".
     const withoutExtension = value.replace(subtitleExtensionSuffix, '');
-    return withoutExtension.replace(languageTagSuffix, '').trim();
+    const withoutTrackLabel = withoutExtension.replace(trackLabelSuffix, '');
+    return withoutTrackLabel.replace(languageTagSuffix, '').trim();
 };
 
 // Series form: "<Show> S<NN>E<NN> <rest>". Show is everything before the
