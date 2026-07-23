@@ -283,6 +283,9 @@ export default class Binding {
             // For telling real subtitle lines from look-alike overlays (the
             // notification banner shares the subtitle DOM shape).
             subtitles: () => this.subtitleController.subtitles,
+            // A revealed hover gloss is an active lookup — recorded on the
+            // line's watched encounter as hover_glossed context.
+            onReveal: (lineText, word) => this.saviEncounterReporter.noteHoverReveal(lineText, word),
         });
         this.subtitleController.onSaviWillStopShowing = () => this.saviGlossHover.onWillStopShowing();
         // Encounter recording (SV-18): every primary-track line that starts

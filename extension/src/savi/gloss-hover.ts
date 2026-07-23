@@ -180,6 +180,9 @@ export interface GlossHoverSources {
      *  the exact same DOM shape as a subtitle line and sits above it, so DOM
      *  structure alone cannot tell them apart; the cue text can. */
     readonly subtitles: () => ReadonlyArray<{ readonly text: string }>;
+    /** A gloss was actually REVEALED for `word` (lowercased) on `lineText` —
+     *  the encounter reporter records it as an active lookup (hover_glossed). */
+    readonly onReveal?: (lineText: string, word: string) => void;
 }
 
 export class SaviGlossHover {
@@ -393,6 +396,7 @@ export class SaviGlossHover {
         if (gloss) {
             this._log(`"${span.seg.text}" → "${gloss}"`);
             this._showLabel(rect, gloss);
+            this._sources.onReveal?.(baseText, span.seg.text.toLowerCase());
         } else if (this._label) {
             this._log(`no usable gloss for "${span.seg.text}" (translate failed / timed out / not label-length)`);
             // No usable gloss — hide the placeholder but KEEP the key so we don't

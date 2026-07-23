@@ -221,10 +221,14 @@ export interface SaviWatchedLineMessage {
     readonly episodeId: string;
     readonly lineStartMs: number;
     readonly occurredAtMs: number;
-    /** Lowercased words displayed WITH an inline gloss label when the line
-     *  showed (SV-12/13) — the daemon stores matching tokens as `glossed`
-     *  (aided exposure). Empty for CJK lines / glossing off / not settled. */
+    /** Lowercased words displayed WITH an inline gloss label while the line
+     *  showed (SV-12/13) — stored as `glossed` (passive aided exposure).
+     *  Empty for CJK lines / glossing off / not settled. */
     readonly glossedWords: string[];
+    /** Lowercased words whose gloss the user revealed on demand (hover) while
+     *  the line showed — stored as `hover_glossed` (active lookup). The
+     *  inline label wins when a word appears in both lists. */
+    readonly hoverGlossedWords: string[];
 }
 
 export interface SaviWatchedLineResponse {
