@@ -258,6 +258,31 @@ describe('deriveShowAndTitleFromBasename', () => {
         expect(deriveShowAndTitleFromBasename('Some Movie.ass')).toEqual({ show: undefined, title: 'Some Movie' });
     });
 
+    it('strips the Netflix track-label tail + IMSC extension', () => {
+        expect(
+            deriveShowAndTitleFromBasename(
+                'Go! Live Your Way S01E15 Episode 15 - es - Spanish (Latin America) [CC].nfimsc'
+            )
+        ).toEqual({
+            show: 'Go! Live Your Way',
+            title: 'S01E15 Episode 15',
+        });
+    });
+
+    it('strips a parenthesized language label followed by a bare [CC]', () => {
+        expect(deriveShowAndTitleFromBasename('Dark S02E03 The Heist (English) [CC]')).toEqual({
+            show: 'Dark',
+            title: 'S02E03 The Heist',
+        });
+    });
+
+    it('never eats real dashed titles as track labels', () => {
+        expect(deriveShowAndTitleFromBasename('Spider-Man - Into the Spider-Verse')).toEqual({
+            show: undefined,
+            title: 'Spider-Man - Into the Spider-Verse',
+        });
+    });
+
     it('handles a single-digit season/episode form', () => {
         expect(deriveShowAndTitleFromBasename('Show S1E9 Foo')).toEqual({ show: 'Show', title: 'S1E9 Foo' });
     });

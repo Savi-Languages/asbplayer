@@ -14,7 +14,6 @@ import AudioRecorder, { TimedRecordingInProgressError, NoRecordingInProgressErro
 import { Mp3Encoder } from '@project/common/audio-clip';
 import { base64ToBlob, bufferToBase64 } from '@project/common/base64';
 import { mp3WorkerFactory } from '@/services/mp3-worker-factory';
-import { bindSaviOffscreenRecorder, saviSharedStreamClone } from '@/savi/offscreen-recorder';
 
 const audioRecorder = new AudioRecorder();
 
@@ -38,28 +37,15 @@ const _sendAudioBase64 = async (base64: string, requestId: string, encodeAsMp3: 
 };
 
 const _stream: (streamId: string) => Promise<MediaStream> = async (streamId: string) => {
-    try {
-        return await navigator.mediaDevices.getUserMedia({
-            audio: {
-                // @ts-ignore
-                mandatory: {
-                    chromeMediaSource: 'tab',
-                    chromeMediaSourceId: streamId,
-                },
+    return await navigator.mediaDevices.getUserMedia({
+        audio: {
+            // @ts-ignore
+            mandatory: {
+                chromeMediaSource: 'tab',
+                chromeMediaSourceId: streamId,
             },
-        });
-    } catch (e) {
-        // Chrome allows only one tabCapture per tab: while a savi episode
-        // capture holds the tab's stream, clip recordings borrow a clone
-        // of it instead of failing.
-        const saviClone = saviSharedStreamClone();
-
-        if (saviClone !== undefined) {
-            return saviClone;
-        }
-
-        throw e;
-    }
+        },
+    });
 };
 
 let currentRequestId: string | undefined;
@@ -80,8 +66,6 @@ const errorResponseForError = (e: any) => {
 };
 
 window.onload = async () => {
-    bindSaviOffscreenRecorder();
-
     const listener = (request: any, sender: Browser.runtime.MessageSender, sendResponse: (response?: any) => void) => {
         if (request.sender === 'asbplayer-extension-to-offscreen-document') {
             switch (request.message.command) {

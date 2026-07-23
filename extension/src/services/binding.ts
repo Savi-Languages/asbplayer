@@ -101,6 +101,9 @@ import { SaviHoverDictionary } from '../savi/hover-dict';
 import { SaviGlossController } from '../savi/gloss';
 import { SaviGlossHover } from '../savi/gloss-hover';
 import { SaviControlsClearance } from '../savi/controls-clearance';
+import { SaviEncounterReporter } from '../savi/encounter-reporter';
+import { getCachedRoamingSettings } from '../savi/cloud-settings';
+import { deriveEpisodeId } from '../savi/episode';
 
 let netflix = false;
 document.addEventListener('asbplayer-netflix-enabled', (e) => {
@@ -180,6 +183,7 @@ export default class Binding {
     readonly saviCaptureController: SaviCaptureController;
     readonly saviHoverDictionary: SaviHoverDictionary;
     readonly saviGlossController: SaviGlossController;
+    readonly saviEncounterReporter: SaviEncounterReporter;
     readonly saviGlossHover: SaviGlossHover;
     readonly saviControlsClearance: SaviControlsClearance;
 
@@ -279,8 +283,24 @@ export default class Binding {
             // For telling real subtitle lines from look-alike overlays (the
             // notification banner shares the subtitle DOM shape).
             subtitles: () => this.subtitleController.subtitles,
+            // A revealed hover gloss is an active lookup — recorded on the
+            // line's watched encounter as hover_glossed context.
+            onReveal: (lineText, word) => this.saviEncounterReporter.noteHoverReveal(lineText, word),
         });
         this.subtitleController.onSaviWillStopShowing = () => this.saviGlossHover.onWillStopShowing();
+        // Encounter recording (SV-18): every primary-track line that starts
+        // showing is posted to the daemon as watch-time exposure, whether or not
+        // audio capture is running.
+        this.saviEncounterReporter = new SaviEncounterReporter({
+            enabled: async () => (await this.settings.get(['saviEncounterRecording'])).saviEncounterRecording,
+            targetLanguage: async () => (await getCachedRoamingSettings()).targetLanguage,
+            episodeId: () => deriveEpisodeId(window.location.href, document.title),
+            // Which words of the line are showing WITH a gloss label — stored
+            // as aided exposure (glossed) on the encounters.
+            glossedLemmas: (text, track) => this.saviGlossController.glossedLemmasFor(text, track),
+            send: (message) => browser.runtime.sendMessage({ sender: 'savi-video', message }),
+        });
+        this.subtitleController.onSaviStartedShowing = (subtitle) => this.saviEncounterReporter.report(subtitle);
         // Lift the subtitles above the streaming player's control bar while it is
         // visible (they share the same bottom strip and fight over the mouse),
         // restoring the user's configured offset when it hides. Runtime-only.
@@ -589,6 +609,7 @@ export default class Binding {
         this.saviHoverDictionary.start();
         void this.saviGlossController.start();
         void this.saviGlossHover.start();
+        void this.saviEncounterReporter.start();
         this.saviControlsClearance.start();
 
         const seek = (forward: boolean) => {
@@ -1223,6 +1244,8 @@ export default class Binding {
 
         this.subtitleController.subtitleAnnotations.settingsUpdated(currentSettings);
         this.subtitleController.setSubtitleSettings(currentSettings);
+        // Re-arm with the current toggle + target language (both may change).
+        void this.saviEncounterReporter.start();
 
         if (convertNetflixRubyChanged || subtitleHtmlChanged) {
             this.subtitleController.cacheHtml();
@@ -1318,6 +1341,7 @@ export default class Binding {
         this.saviHoverDictionary.stop();
         this.saviGlossController.stop();
         this.saviGlossHover.stop();
+        this.saviEncounterReporter.stop();
         this.saviControlsClearance.stop();
         this.unsubscribeStatisticsSeek?.();
         this.unsubscribeStatisticsSeek = undefined;
