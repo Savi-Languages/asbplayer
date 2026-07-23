@@ -170,16 +170,25 @@ export const startCapture = async (
     {
         episodeId,
         show,
+        showId,
         title,
         lang,
         audio,
         browser,
-    }: { episodeId: string; show?: string; title?: string; lang?: string; audio: boolean; browser?: string }
+    }: {
+        episodeId: string;
+        show?: string;
+        showId?: string;
+        title?: string;
+        lang?: string;
+        audio: boolean;
+        browser?: string;
+    }
 ): Promise<CaptureStartResult> => {
     const body = await request(
         config,
         '/v2/capture/start',
-        jsonInit({ episodeId, show, title, lang, audio, browser })
+        jsonInit({ episodeId, show, showId, title, lang, audio, browser })
     );
     return { captureId: body.captureId, audio: body.audio };
 };

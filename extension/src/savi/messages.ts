@@ -25,6 +25,11 @@ export interface SaviStartCaptureMessage {
     readonly episodeId: string;
     // Series name (e.g. "Dark"); absent for films / unrecognized pages.
     readonly show?: string;
+    // The show's STABLE platform id ("netflix:80209013"), when the site
+    // exposes one. Display names are localized and can change with the
+    // profile language; the library groups episodes by this instead, falling
+    // back to the name where absent.
+    readonly showId?: string;
     // Episode label (e.g. "S1:E3 Secrets") or, when no show is known, the
     // best available page title. Always present.
     readonly title: string;

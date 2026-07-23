@@ -520,6 +520,7 @@ export default class SaviCommandHandler implements CommandHandler {
             const result = await startCapture(config, {
                 episodeId: message.episodeId,
                 show: message.show,
+                showId: message.showId,
                 title: message.title,
                 lang: message.lang,
                 audio: saviAudioRecording,

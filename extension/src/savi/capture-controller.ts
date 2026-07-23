@@ -73,6 +73,12 @@ export class SaviCaptureController {
         sender: Browser.runtime.MessageSender,
         sendResponse: (response?: any) => void
     ) => void;
+    // The show's stable platform id ("netflix:80209013"), announced by the
+    // page script when metadata loads. Display titles are localized and can
+    // change with the profile language; this can't — the library groups by it,
+    // falling back to the show NAME on sites without one.
+    private _showId?: string;
+    private _showIdListener?: EventListener;
 
     constructor(host: SaviCaptureHost) {
         this._host = host;
@@ -86,6 +92,14 @@ export class SaviCaptureController {
         if (this._messageListener !== undefined) {
             return;
         }
+
+        this._showIdListener = (event) => {
+            const showId = (event as CustomEvent).detail?.showId;
+            if (typeof showId === 'string' && showId.length > 0) {
+                this._showId = showId;
+            }
+        };
+        document.addEventListener('savi-netflix-show-id', this._showIdListener);
 
         this._messageListener = (request, sender, sendResponse) => {
             if (request?.sender !== 'savi-extension-to-video') {
@@ -122,6 +136,10 @@ export class SaviCaptureController {
     }
 
     unbind() {
+        if (this._showIdListener !== undefined) {
+            document.removeEventListener('savi-netflix-show-id', this._showIdListener);
+            this._showIdListener = undefined;
+        }
         this._nativeSubtitleHider.clear();
         this._recordButton.destroy();
         this._replayButton.destroy();
@@ -273,6 +291,7 @@ export class SaviCaptureController {
                     command: 'savi-start-capture',
                     episodeId,
                     show,
+                    showId: this._showId,
                     title,
                     lang,
                     subtitles: serializeToSrt(subtitles),
