@@ -45,6 +45,7 @@ import {
     SaviTokenizeResponse,
     SaviWatchedLineMessage,
     SaviWatchedLineResponse,
+    SaviEngagementSessionMessage,
 } from './messages';
 import { daemonToken } from './account';
 import { resolveCloudBase, translate as cloudTranslate, wordBuckets as cloudWordBuckets } from './cloud-client';
@@ -66,6 +67,7 @@ import {
     postPlaybackState,
     postSubtitles,
     postWatchedLine,
+    postEngagementSession,
     SaviDaemonConfig,
     segmentLine,
     explainWord,
@@ -158,6 +160,9 @@ export default class SaviCommandHandler implements CommandHandler {
                 return true;
             case 'savi-watched-line':
                 this._watchedLine(command.message as SaviWatchedLineMessage).then(sendResponse);
+                return true;
+            case 'savi-engagement-session':
+                this._engagementSession(command.message as SaviEngagementSessionMessage).then(sendResponse);
                 return true;
             case 'savi-mine-line':
                 this._mineLine(command.message as SaviMineLineMessage)
@@ -433,6 +438,31 @@ export default class SaviCommandHandler implements CommandHandler {
         }
     }
 
+    private async _engagementSession(message: SaviEngagementSessionMessage): Promise<{ ok: boolean }> {
+        const config = await this._daemonConfig();
+        if (!config) {
+            return { ok: false };
+        }
+        try {
+            await postEngagementSession(config, {
+                id: message.id,
+                kind: message.kind,
+                lang: message.lang,
+                source: message.source,
+                engagedMs: message.engagedMs,
+                startedAtMs: message.startedAtMs,
+                endedAtMs: message.endedAtMs,
+                tzOffsetMin: message.tzOffsetMin,
+            });
+            return { ok: true };
+        } catch (e) {
+            // The content script retries once on a false response. It carries
+            // the same id both times, so a first attempt that actually landed
+            // is deduped daemon-side rather than double-credited.
+            return { ok: false };
+        }
+    }
+
     private async _mineLine(message: SaviMineLineMessage): Promise<SaviMineLineResponse> {
         const config = await this._daemonConfig();
         if (!config) {
@@ -628,8 +658,7 @@ export default class SaviCommandHandler implements CommandHandler {
             }
 
             const { session, seq } = allocated;
-            const post = () =>
-                postPlaybackState(config, { captureId: session.captureId, seq, ops: message.ops });
+            const post = () => postPlaybackState(config, { captureId: session.captureId, seq, ops: message.ops });
 
             const handle = async (result: Awaited<ReturnType<typeof post>>): Promise<SaviPlaybackStateResponse> => {
                 if (result.sessionGone) {
@@ -687,7 +716,6 @@ export default class SaviCommandHandler implements CommandHandler {
             return { requested: false };
         }
     }
-
 }
 
 /** Finish the in-flight capture when its tab closes (wired to tabs.onRemoved

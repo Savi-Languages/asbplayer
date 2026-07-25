@@ -70,11 +70,7 @@ const candidateBaseUrls = (configuredBase: string): string[] => {
         // Configured port → the named family → preferred+1..+5 as a last
         // resort — the same walk as the shell's pick_port.
         const ports = [
-            ...new Set([
-                preferred,
-                ...PORT_CANDIDATES,
-                ...Array.from({ length: 5 }, (_, i) => preferred + 1 + i),
-            ]),
+            ...new Set([preferred, ...PORT_CANDIDATES, ...Array.from({ length: 5 }, (_, i) => preferred + 1 + i)]),
         ];
         return ports.map((port) => {
             const candidate = new URL(url.origin);
@@ -268,6 +264,26 @@ export const postWatchedLine = async (
         '/v2/events/watched',
         jsonInit({ lang, text, source, occurredAtMs, glossedWords, hoverGlossedWords })
     );
+};
+
+// POST {base}/v2/events/session {id, kind, lang, source?, engagedMs,
+// startedAtMs, endedAtMs, tzOffsetMin} — one closed block of engaged learning
+// time. The daemon clamps rather than rejects, so odd values return 200; only
+// a blank id or an unknown kind is a 400.
+export const postEngagementSession = async (
+    config: SaviDaemonConfig,
+    session: {
+        id: string;
+        kind: string;
+        lang: string;
+        source?: string;
+        engagedMs: number;
+        startedAtMs: number;
+        endedAtMs: number;
+        tzOffsetMin: number;
+    }
+): Promise<void> => {
+    await request(config, '/v2/events/session', jsonInit(session));
 };
 
 // ── Hover dictionary ────────────────────────────────────────────────────

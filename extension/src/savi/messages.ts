@@ -239,6 +239,29 @@ export interface SaviWatchedLineMessage {
     readonly hoverGlossedWords: string[];
 }
 
+/** One closed block of actively-engaged learning time (SV-21). Sent from the
+ *  content script to the background, which forwards it to the daemon.
+ *
+ *  `kind` is the PROCESSING DEPTH axis and `source` the orthogonal METHOD
+ *  axis, so the same episode legitimately reports both `watch` time (tab
+ *  visible and focused) and `listen` time (playing while backgrounded). */
+export interface SaviEngagementSessionMessage {
+    readonly command: 'savi-engagement-session';
+    /** Client-generated UUID — the daemon dedupes on it, so a retry after a
+     *  dropped response can't double-credit. Never reuse one. */
+    readonly id: string;
+    readonly kind: 'flashcard' | 'watch' | 'relisten' | 'listen' | 'ambient';
+    readonly lang: string;
+    readonly source?: string;
+    /** ACCRUED engaged ms, not the wall span. */
+    readonly engagedMs: number;
+    readonly startedAtMs: number;
+    readonly endedAtMs: number;
+    /** Device UTC offset in minutes EAST of UTC at capture time. Cannot be
+     *  reconstructed later — without it, relocating re-buckets history. */
+    readonly tzOffsetMin: number;
+}
+
 export interface SaviWatchedLineResponse {
     readonly ok: boolean;
 }
