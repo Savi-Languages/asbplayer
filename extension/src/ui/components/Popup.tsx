@@ -173,6 +173,7 @@ const Popup = ({
     return (
         <Paper>
             <Stack direction="column" spacing={1.5} sx={{ padding: theme.spacing(1.5) }}>
+                <SaviCapturePanel settings={settings} />
                 <ButtonGroup
                     fullWidth
                     size="small"
@@ -213,7 +214,6 @@ const Popup = ({
                     )}
                     <NavButton startIcon={<TutorialIcon />} onClick={onOpenUserGuide} label={t('action.userGuide')} />
                 </ButtonGroup>
-                <SaviCapturePanel settings={settings} />
                 <Grid
                     item
                     style={{

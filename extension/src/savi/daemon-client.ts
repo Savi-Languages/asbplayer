@@ -213,9 +213,15 @@ export const browserHintFromUserAgent = (ua: string): string | undefined => {
 export const postPlaybackState = async (
     config: SaviDaemonConfig,
     { captureId, seq, ops }: { captureId: string; seq: number; ops: unknown[] }
-): Promise<{ ok: boolean; audio?: string }> => {
+): Promise<{ ok: boolean; audio?: string; sessionGone?: boolean }> => {
     const body = await request(config, '/v2/capture/playback-state', jsonInit({ captureId, seq, ops }));
-    return { ok: body.ok === true, audio: typeof body.audio === 'string' ? body.audio : undefined };
+    return {
+        ok: body.ok === true,
+        audio: typeof body.audio === 'string' ? body.audio : undefined,
+        // The daemon finished this session behind our back (orphan sweep /
+        // restart) — the caller should drop its bookkeeping and restart.
+        sessionGone: body.sessionGone === true,
+    };
 };
 
 export const postSubtitles = async (

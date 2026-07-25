@@ -82,6 +82,9 @@ export interface SaviPlaybackStateResponse {
     /** The daemon's current audio state for the session ('recording' | 'idle'
      *  | 'off'), when known. */
     readonly audio?: string;
+    /** The daemon no longer knows this session (orphan-sweep auto-finish or a
+     *  daemon restart) — bookkeeping was cleared; the capture should restart. */
+    readonly sessionGone?: boolean;
 }
 
 // ── popup → background ──────────────────────────────────────────────────
@@ -340,6 +343,10 @@ export interface SaviCaptureEndedToVideoMessage {
     readonly info?: CaptureFinishInfo;
     readonly failedSegments?: number;
     readonly errorMessage?: string;
+    /** The daemon finished/forgot the session while it was still live here
+     *  (orphan sweep after idle, daemon restart). The controller restarts the
+     *  capture — the new take merges with whatever was already finished. */
+    readonly expired?: boolean;
 }
 
 export interface SaviRequestStartToVideoMessage {

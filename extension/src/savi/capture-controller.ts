@@ -128,6 +128,20 @@ export class SaviCaptureController {
                         this._deactivate();
                     }
 
+                    if (request.message.expired) {
+                        // The daemon auto-finished the session while we were
+                        // idle (or restarted). The user is clearly watching
+                        // again — restart the capture; the new take merges
+                        // with what was already finished. A deliberate stop
+                        // stays stopped.
+                        const { episodeId } = this._pageMetadata();
+                        if (!this._starting && !this._deliberatelyStopped.has(episodeId)) {
+                            this._host.notify('Savi: capture restarted after idle timeout');
+                            this.start(false);
+                        }
+                        return;
+                    }
+
                     this._notifyFinished(request.message);
                 }
             }

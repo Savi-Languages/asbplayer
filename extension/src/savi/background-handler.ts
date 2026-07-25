@@ -631,14 +631,30 @@ export default class SaviCommandHandler implements CommandHandler {
             const post = () =>
                 postPlaybackState(config, { captureId: session.captureId, seq, ops: message.ops });
 
-            try {
-                const result = await post();
+            const handle = async (result: Awaited<ReturnType<typeof post>>): Promise<SaviPlaybackStateResponse> => {
+                if (result.sessionGone) {
+                    // The daemon finished this session behind our back (orphan
+                    // sweep after a long idle, or a daemon restart). Drop the
+                    // stale bookkeeping and tell the tab so the capture
+                    // controller restarts — the new take merges with whatever
+                    // was already finished.
+                    await clearCaptureSession();
+                    const command: SaviCommand<SaviCaptureEndedToVideoMessage> = {
+                        sender: 'savi-extension-to-video',
+                        message: { command: 'savi-capture-ended', src: session.src, ok: false, expired: true },
+                    };
+                    browser.tabs.sendMessage(session.tabId, command).catch(() => {});
+                    return { ok: false, sessionGone: true };
+                }
                 return { ok: result.ok, audio: result.audio };
+            };
+
+            try {
+                return await handle(await post());
             } catch (e) {
                 try {
                     // Same seq on retry: the daemon never saw the failed send.
-                    const result = await post();
-                    return { ok: result.ok, audio: result.audio };
+                    return await handle(await post());
                 } catch (e2) {
                     console.warn('savi: playback-state batch dropped', e2);
                     return { ok: false };
