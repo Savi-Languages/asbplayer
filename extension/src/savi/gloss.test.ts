@@ -40,6 +40,17 @@ describe('isContentWord', () => {
         expect(isContentWord('a')).toBe(false); // single letter
         expect(isContentWord('y')).toBe(false);
     });
+
+    it('glosses common lexical adverbs, which are vocabulary not grammar', () => {
+        // The founder found "más" in "no sé qué más querés" silently
+        // unglossable — no label, no translate request, and absent from the
+        // word list, because savi-core's ingest filter dropped it before an
+        // encounter was ever written. These are A1 vocabulary, not structural
+        // glue; they self-resolve once the gloss threshold sees them learned.
+        for (const word of ['más', 'bien', 'muy', 'también', 'tampoco', 'algo', 'así', 'aunque', 'según']) {
+            expect(isContentWord(word)).toBe(true);
+        }
+    });
 });
 
 describe('segmentLine', () => {
@@ -192,6 +203,17 @@ describe('glossable ⊆ reviewable', () => {
         // do fall through.
         for (const aux of ['seré', 'estuvieron', 'estaban', 'habría', 'siendo']) {
             expect(isContentWord(aux)).toBe(false);
+        }
+    });
+
+    it('mirrors savi-core exactly, so nothing glossable is unreviewable', () => {
+        // This set must never be NARROWER than savi-core's STOPWORDS. When the
+        // nine lexical adverbs were freed, BOTH lists had to move together —
+        // freeing only savi-core would have left them tracked but never
+        // labelled, and freeing only this one would label a word that can
+        // never enter review.
+        for (const structural of ['el', 'la', 'de', 'que', 'y', 'se', 'lo', 'por', 'para']) {
+            expect(isContentWord(structural)).toBe(false);
         }
     });
 

@@ -43,21 +43,30 @@ const PRIMARY_TRACK = 0;
 // by BCP-47 primary subtag. (Japanese is covered by the hover dictionary.)
 const NON_SPACE_DELIMITED = new Set(['ja', 'zh', 'yue', 'wuu', 'ko', 'th', 'lo', 'km', 'my', 'bo']);
 
-// Spanish function words — ported from savi-core's `es` analyzer STOPWORDS so
-// SV-12 (before the SV-13 known-word filter kicks in) doesn't gloss el/la/de/que.
-// Kept in sync with crates/savi-core/src/analyzer.rs (`mod es`).
+// Spanish STRUCTURAL function words — ported from savi-core's `es` analyzer
+// STOPWORDS so SV-12 (before the SV-13 known-word filter kicks in) doesn't
+// gloss el/la/de/que. Kept in sync with crates/savi-core/src/analyzer.rs
+// (`mod es`); this set must never be NARROWER than savi-core's, or we gloss a
+// word that can never enter review.
+//
+// Nine words were removed from both lists after the founder found `más`
+// unglossable AND absent from the word list: más, bien, muy, también, tampoco,
+// algo, así, aunque, según. They are lexical items a beginner must learn, not
+// grammatical glue, and they self-resolve — once known, proficiency ≥ the
+// gloss threshold suppresses the label, which is the scheduler's job rather
+// than a hardcoded list's.
 const SPANISH_STOPWORDS = new Set<string>([
-    'a', 'al', 'algo', 'ante', 'aquel', 'aquella', 'aquello', 'aqui', 'aquí', 'así',
-    'aunque', 'bajo', 'bien', 'como', 'cómo', 'con', 'contra', 'cual', 'cuál', 'cuando',
+    'a', 'al', 'ante', 'aquel', 'aquella', 'aquello', 'aqui', 'aquí',
+    'bajo', 'como', 'cómo', 'con', 'contra', 'cual', 'cuál', 'cuando',
     'cuándo', 'de', 'del', 'desde', 'donde', 'dónde', 'e', 'el', 'él', 'ella', 'ellas',
     'ellos', 'en', 'entre', 'era', 'eran', 'eres', 'es', 'esa', 'ese', 'eso', 'esta',
     'está', 'estaba', 'estamos', 'están', 'estar', 'estas', 'este', 'esto', 'estos',
     'estoy', 'fue', 'fueron', 'ha', 'haber', 'había', 'han', 'has', 'hasta', 'hay',
-    'he', 'la', 'las', 'le', 'les', 'lo', 'los', 'más', 'me', 'mi', 'mis', 'muy',
+    'he', 'la', 'las', 'le', 'les', 'lo', 'los', 'me', 'mi', 'mis',
     'ni', 'no', 'nos', 'nosotros', 'nuestra', 'nuestro', 'o', 'os', 'para', 'pero',
-    'por', 'porque', 'pues', 'que', 'qué', 'quien', 'quién', 'se', 'según', 'ser',
-    'si', 'sí', 'sido', 'sin', 'sobre', 'somos', 'son', 'soy', 'su', 'sus', 'también',
-    'tampoco', 'te', 'tras', 'tu', 'tú', 'tus', 'u', 'un', 'una', 'unas', 'unos',
+    'por', 'porque', 'pues', 'que', 'qué', 'quien', 'quién', 'se', 'ser',
+    'si', 'sí', 'sido', 'sin', 'sobre', 'somos', 'son', 'soy', 'su', 'sus',
+    'te', 'tras', 'tu', 'tú', 'tus', 'u', 'un', 'una', 'unas', 'unos',
     'usted', 'ustedes', 'vosotros', 'y', 'ya', 'yo',
 ]);
 
