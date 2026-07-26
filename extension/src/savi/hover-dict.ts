@@ -395,6 +395,12 @@ function positionPopup(popup: HTMLDivElement, arrow: HTMLDivElement, word: DOMRe
 
 /** Attaches a hover handler over subtitle text: boxes the word under the
  *  cursor and shows a daemon-backed dictionary popup for it. */
+/** The headline label of a dictionary result — the first gloss of the first
+ *  sense (what the popup shows most prominently). '' when there's none (a
+ *  kanji-only result still teaches, but there is no label to persist). */
+const firstDictGloss = (entries: SaviDictEntry[]): string =>
+    entries[0]?.senses?.[0]?.glosses?.[0] ?? '';
+
 export class SaviHoverDictionary {
     private readonly _tokenizeCache = new Map<string, SaviToken[]>();
     // null = the daemon returned no AI segmentation for this line → use rule-based.
@@ -424,10 +430,16 @@ export class SaviHoverDictionary {
     private readonly _transcriptSentFor = new Set<string>();
 
     /** @param _videoProvider returns the bound media element, so a mined card
-     *  can screenshot the current frame. Defaults to none (no screenshot). */
+     *  can screenshot the current frame. Defaults to none (no screenshot).
+     *  @param _onReveal called when a word's meaning was actually SHOWN to the
+     *  user (hover popup / tap panel), with the line, the word surface, and
+     *  the displayed gloss — the encounter reporter records it as a
+     *  hover_glossed encounter carrying the label (SV-20). This is what makes
+     *  the JA path feed the reviewer at all. */
     constructor(
         private readonly _videoProvider: () => HTMLMediaElement | null = () => null,
-        private readonly _subtitleProvider: () => SerializableSubtitle[] = () => []
+        private readonly _subtitleProvider: () => SerializableSubtitle[] = () => [],
+        private readonly _onReveal?: (lineText: string, word: string, gloss: string) => void
     ) {}
 
     start() {
@@ -576,6 +588,9 @@ export class SaviHoverDictionary {
             )
         );
         popup.style.display = 'block';
+        // The word's meaning is now on screen — a hover_glossed encounter with
+        // the shown label (SV-20). Kanji-only results reveal no label ('').
+        this._onReveal?.(text, span.token.text, firstDictGloss(result.entries));
         // Anchor to the word so the arrow points at it; fall back to the cursor.
         const anchor = wordRect ?? new DOMRect(x, y, 0, 0);
         positionPopup(popup, this._arrow!, anchor);
@@ -719,6 +734,9 @@ export class SaviHoverDictionary {
             kanji: dict.kanji,
             onMine: (button) => void this._mine(text, span.token, term, button),
         });
+        // A deliberate tap-open study of the word — record the reveal with the
+        // dictionary headline (upgraded below if the AI in-context gloss lands).
+        this._onReveal?.(text, span.token.text, firstDictGloss(dict.entries));
         // Pause the video while the study panel is up and KEEP it paused until the
         // user dismisses it — independent of the cursor or the hover-pause setting.
         // (isOverHoverSurface returns true while _panelOpen, so the binding's
@@ -747,6 +765,12 @@ export class SaviHoverDictionary {
                     }
                 }
                 panel.setContext(featured, aiTokens);
+                // The AI in-context gloss is the best label for this exact
+                // sentence — overwrite the dictionary headline on the pending
+                // encounter (the line is still open: the panel pauses playback).
+                if (featured?.gloss) {
+                    this._onReveal?.(text, span.token.text, featured.gloss);
+                }
             })
             .catch(() => panel.setContext(null, null));
         // In parallel, fetch the detailed "explain like a sensei" note for the

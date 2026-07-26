@@ -6,7 +6,7 @@ const deps = (overrides: Partial<EncounterReporterDeps> = {}) => {
         enabled: async () => true,
         targetLanguage: async () => 'es',
         episodeId: () => 'netflix:81234567',
-        glossedLemmas: () => [],
+        glossedEntries: () => [],
         send: async (message) => {
             sent.push(message);
         },
@@ -21,7 +21,8 @@ const line = (text: string, start = 84210, track = 0) => ({ text, start, track }
 describe('SaviEncounterReporter (line lifecycle)', () => {
     it('finalizes a line when the NEXT line starts, with full context', async () => {
         const { d, sent } = deps({
-            glossedLemmas: (text) => (text.includes('quería') ? ['quería'] : []),
+            glossedEntries: (text) =>
+                text.includes('quería') ? [{ word: 'quería', gloss: 'wanted' }] : [],
         });
         const reporter = new SaviEncounterReporter(d);
         await reporter.start();
@@ -38,7 +39,7 @@ describe('SaviEncounterReporter (line lifecycle)', () => {
                 episodeId: 'netflix:81234567',
                 lineStartMs: 84210,
                 occurredAtMs: 1753189200000,
-                glossedWords: ['quería'],
+                glossedWords: [{ word: 'quería', gloss: 'wanted' }],
                 hoverGlossedWords: [],
             },
         ]);
@@ -46,31 +47,34 @@ describe('SaviEncounterReporter (line lifecycle)', () => {
 
     it('samples gloss state at FINALIZE, so late-resolving labels still count', async () => {
         // The gloss settles only after the line opened (the delay-bias case).
-        let settled: string[] = [];
-        const { d, sent } = deps({ glossedLemmas: () => settled });
+        let settled: { word: string; gloss: string }[] = [];
+        const { d, sent } = deps({ glossedEntries: () => settled });
         const reporter = new SaviEncounterReporter(d);
         await reporter.start();
 
         reporter.report(line('No quería hablar de eso'));
-        settled = ['hablar']; // label appeared a beat after line start
+        settled = [{ word: 'hablar', gloss: 'to talk' }]; // label appeared a beat after line start
         reporter.report(line('Siguiente', 90000));
 
-        expect(sent[0].glossedWords).toEqual(['hablar']);
+        expect(sent[0].glossedWords).toEqual([{ word: 'hablar', gloss: 'to talk' }]);
     });
 
-    it('accumulates hover reveals during the display window (incl. the hover-hold)', async () => {
+    it('accumulates hover reveals with labels during the display window (incl. the hover-hold)', async () => {
         const { d, sent } = deps();
         const reporter = new SaviEncounterReporter(d);
         await reporter.start();
 
         reporter.report(line('No quería hablar de eso'));
-        reporter.noteHoverReveal('No quería hablar de eso', 'Hablar'); // lowercased + deduped
-        reporter.noteHoverReveal('No quería hablar de eso', 'hablar');
-        reporter.noteHoverReveal('No quería hablar de eso', 'eso');
-        reporter.noteHoverReveal('some other line', 'nope'); // wrong line — ignored
+        reporter.noteHoverReveal('No quería hablar de eso', 'Hablar', 'to speak'); // lowercased + deduped
+        reporter.noteHoverReveal('No quería hablar de eso', 'hablar', 'to talk'); // latest label wins
+        reporter.noteHoverReveal('No quería hablar de eso', 'eso'); // no label captured → ''
+        reporter.noteHoverReveal('some other line', 'nope', 'x'); // wrong line — ignored
         reporter.report(line('Siguiente', 90000));
 
-        expect(sent[0].hoverGlossedWords).toEqual(['hablar', 'eso']);
+        expect(sent[0].hoverGlossedWords).toEqual([
+            { word: 'hablar', gloss: 'to talk' },
+            { word: 'eso', gloss: '' },
+        ]);
     });
 
     it('captures the episode id at OPEN time (SPA episode change safety)', async () => {

@@ -241,6 +241,8 @@ export const postEpisodeTranscript = async (
 // glossedWords?, hoverGlossedWords?} — one displayed subtitle line → Level-1
 // TokenEncounters, tokenized daemon-side; each token stores its encounter
 // context (bare / glossed / hover_glossed; inline label wins over hover).
+// SV-20: entries are {word, gloss} so the shown label is persisted on the
+// encounter (the daemon also still accepts the legacy bare-string form).
 export const postWatchedLine = async (
     config: SaviDaemonConfig,
     {
@@ -255,8 +257,8 @@ export const postWatchedLine = async (
         text: string;
         source?: string;
         occurredAtMs?: number;
-        glossedWords?: string[];
-        hoverGlossedWords?: string[];
+        glossedWords?: { word: string; gloss: string }[];
+        hoverGlossedWords?: { word: string; gloss: string }[];
     }
 ): Promise<void> => {
     await request(

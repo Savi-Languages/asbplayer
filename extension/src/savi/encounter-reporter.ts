@@ -11,7 +11,7 @@
 // Deliberately fire-and-forget with no queue: the daemon is the outbox, and
 // a lost line costs one line's exposure, never playback smoothness.
 
-import { SaviWatchedLineMessage } from './messages';
+import { GlossedWordEntry, SaviWatchedLineMessage } from './messages';
 
 /** The displayed-line slice the reporter needs (matches asbplayer's SubtitleModel). */
 export interface ShownLine {
@@ -31,8 +31,11 @@ interface PendingLine {
      *  pending line to the next episode at flush time. */
     readonly episodeId: string;
     readonly lang: string;
-    /** Lowercased words the user hover-revealed while this line displayed. */
-    readonly hovered: Set<string>;
+    /** Lowercased word → the label revealed for it while this line displayed
+     *  ('' when the label text wasn't captured). A later reveal of the same
+     *  word (e.g. the AI in-context gloss landing after the dictionary one)
+     *  overwrites — the richest label wins. */
+    readonly hovered: Map<string, string>;
 }
 
 // Injected so the reporter is testable without extension APIs; the binding
@@ -44,10 +47,11 @@ export interface EncounterReporterDeps {
     targetLanguage: () => Promise<string>;
     /** Platform-stable episode id for the current page. */
     episodeId: () => string;
-    /** Lowercased words of the line currently displayed WITH an inline gloss
-     *  label (the gloss controller's settled render truth). Sampled at
-     *  FINALIZE time, so late-resolving labels are still counted. */
-    glossedLemmas: (text: string, track?: number) => string[];
+    /** The words of the line currently displayed WITH an inline gloss label,
+     *  each with the shown label text (the gloss controller's settled render
+     *  truth, SV-20). Sampled at FINALIZE time, so late-resolving labels are
+     *  still counted. */
+    glossedEntries: (text: string, track?: number) => GlossedWordEntry[];
     /** Deliver the message to the background (browser.runtime.sendMessage). */
     send: (message: SaviWatchedLineMessage) => Promise<unknown>;
     now?: () => number;
@@ -117,19 +121,21 @@ export class SaviEncounterReporter {
             occurredAtMs: (this._deps.now ?? Date.now)(),
             episodeId: this._deps.episodeId(),
             lang: this._lang,
-            hovered: new Set(),
+            hovered: new Map(),
         });
     }
 
-    /** The hover-gloss feature revealed a gloss for `word` on `lineText`. */
-    noteHoverReveal(lineText: string, word: string): void {
+    /** The hover-gloss / hover-dictionary feature revealed a label for `word`
+     *  on `lineText`. `gloss` is the label text as shown (SV-20; '' when not
+     *  captured). A repeat reveal overwrites — the latest label wins. */
+    noteHoverReveal(lineText: string, word: string, gloss: string = ''): void {
         if (!this._armed) {
             return;
         }
         const key = word.toLowerCase();
         for (const line of this._pending) {
             if (line.text === lineText.trim()) {
-                line.hovered.add(key);
+                line.hovered.set(key, gloss.trim());
             }
         }
     }
@@ -143,8 +149,8 @@ export class SaviEncounterReporter {
                 episodeId: line.episodeId,
                 lineStartMs: line.lineStartMs,
                 occurredAtMs: line.occurredAtMs,
-                glossedWords: this._deps.glossedLemmas(line.text, line.track),
-                hoverGlossedWords: [...line.hovered],
+                glossedWords: this._deps.glossedEntries(line.text, line.track),
+                hoverGlossedWords: [...line.hovered].map(([word, gloss]) => ({ word, gloss })),
             })
             .catch((e) => console.debug('savi: watched-line dropped', e));
     }
