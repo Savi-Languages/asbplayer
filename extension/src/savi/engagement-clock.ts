@@ -30,6 +30,16 @@ export interface ClockInputs {
      *  clock as `tick`'s `now` — not wall time. A clock step must not be able to
      *  make a present user look idle. */
     lastInteractionAt: number;
+    /** Has this media ever played? (`video.played.length > 0`.)
+     *
+     *  Paused-and-present time BEFORE the first play is someone reading a
+     *  synopsis or picking a title — not studying it. Optional, defaulting to
+     *  `true`, because surfaces with no media at all (the card reviewer) have
+     *  nothing to have played and presence there IS the activity. */
+    everPlayed?: boolean;
+    /** Has playback finished? (`video.ended`.) Sitting on the post-credits
+     *  screen with the tab focused is not watching. Optional, default `false`. */
+    ended?: boolean;
 }
 
 /** A closed block, ready for an adapter to stamp and send. */
@@ -97,8 +107,16 @@ export function activeKind(
     // Paused and away: nothing is reaching them at all.
     if (!attended) return null;
 
-    // Paused but present and recently active — hovering a word for a gloss,
-    // reading the line again. That is studying, not idling.
+    // Paused, present — but only INSIDE a viewing. The founder timed a 39:19
+    // watch that Savi recorded as 41:19, and this was the gap: the tab is
+    // focused and the mouse is moving while browsing to a title and again
+    // while the credits roll, and both were credited as `watch`. Neither is
+    // language exposure by any definition.
+    if (inputs.everPlayed === false || inputs.ended === true) return null;
+
+    // A pause between the first play and the end, with recent activity —
+    // hovering a word for a gloss, reading the line again. That IS studying,
+    // and it stays counted.
     return now - inputs.lastInteractionAt <= opts.idleMs ? opts.foregroundKind : null;
 }
 

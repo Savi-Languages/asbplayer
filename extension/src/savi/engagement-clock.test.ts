@@ -87,6 +87,33 @@ describe('activeKind — the truth table IS the spec', () => {
         expect(activeKind(inputs({ focused: false, lastInteractionAt: 0 }), 0, opts)).toBeNull();
     });
 
+    it('paused BEFORE the first play → nothing, even attended and active', () => {
+        // The founder timed a 39:19 watch that Savi recorded as 41:19. This
+        // was the leak: browsing to a title with the tab focused and the mouse
+        // moving credited `watch` before a single frame had played.
+        const i = inputs({ playing: false, lastInteractionAt: 0, everPlayed: false });
+        expect(activeKind(i, 1_000, opts)).toBeNull();
+    });
+
+    it('paused AFTER the end → nothing (the credits are not exposure)', () => {
+        const i = inputs({ playing: false, lastInteractionAt: 0, everPlayed: true, ended: true });
+        expect(activeKind(i, 1_000, opts)).toBeNull();
+    });
+
+    it('paused MID-viewing still counts — that is the studying case', () => {
+        // The half of the rule the founder explicitly asked to keep: pausing
+        // to hover a word is learning, and must not be collateral damage.
+        const i = inputs({ playing: false, lastInteractionAt: 0, everPlayed: true, ended: false });
+        expect(activeKind(i, 1_000, opts)).toBe('watch');
+    });
+
+    it('omitting the media flags preserves the reviewer, which has no media', () => {
+        // `everPlayed` defaults true and `ended` false precisely so a surface
+        // with nothing to play is unaffected — presence IS the activity there.
+        const reviewer = { foregroundKind: 'flashcard' as const, backgroundKind: null, idleMs: 60_000 };
+        expect(activeKind(inputs({ lastInteractionAt: 0 }), 1_000, reviewer)).toBe('flashcard');
+    });
+
     it('a null backgroundKind means an unattended surface accrues nothing', () => {
         // The reviewer's configuration: a hidden tab is not reviewing.
         const reviewer = { foregroundKind: 'flashcard' as const, backgroundKind: null, idleMs: 60_000 };

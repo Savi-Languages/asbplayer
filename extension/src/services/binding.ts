@@ -843,6 +843,11 @@ export default class Binding {
                 playing: !this.video.paused && !this.video.ended && this.video.readyState >= 2,
                 visible: document.visibilityState === 'visible',
                 focused: document.hasFocus(),
+                // `played` is native and resets with the media resource, so a
+                // new episode in the same SPA starts un-played with no state
+                // of our own to keep in sync.
+                everPlayed: this.video.played.length > 0,
+                ended: this.video.ended,
             });
 
             const command: VideoToExtensionCommand<VideoHeartbeatMessage> = {
