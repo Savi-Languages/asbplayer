@@ -17,11 +17,14 @@
 // are language-disjoint, so gloss ruby never collides with the JA hover path).
 
 import {
+    GlossedWordEntry,
     SaviCommand,
     SaviGlossTranslateMessage,
     SaviGlossTranslateResponse,
     SaviWordBucketsMessage,
     SaviWordBucketsResponse,
+    SaviWordProficiencyMessage,
+    SaviWordProficiencyResponse,
 } from './messages';
 import { getCachedRoamingSettings } from './cloud-settings';
 import type { WordBucket } from './cloud-client';
@@ -170,21 +173,33 @@ export function buildGlossHtml(
     return glossed ? html : '';
 }
 
-/** The lowercased words a settled gloss-HTML line actually wraps in gloss ruby
- *  — the exact render truth for "which words carried a label". Safe to extract
- *  with a pattern because WE generated the markup and word segments are pure
- *  letter runs (no entities possible inside them). De-duplicated. */
-export function glossedLemmasFromHtml(html: string): string[] {
-    const out: string[] = [];
+/** Undo `escapeHtml` on extracted `<rt>` label text (labels may legitimately
+ *  contain &, <, etc. after DeepL — they were escaped at render time). */
+const unescapeHtml = (s: string): string =>
+    s.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+
+/** The words a settled gloss-HTML line actually wraps in gloss ruby, each with
+ *  the LABEL it displays (SV-20: the daemon persists the label so the reviewer
+ *  can key sense pairs off it) — the exact render truth. Safe to extract with a
+ *  pattern because WE generated the markup and word segments are pure letter
+ *  runs (no entities possible inside them). De-duplicated by word. */
+export function glossedEntriesFromHtml(html: string): GlossedWordEntry[] {
+    const out: GlossedWordEntry[] = [];
     const seen = new Set<string>();
-    for (const match of html.matchAll(/<ruby class="asb-gloss">([^<]+)<rt>/g)) {
-        const lemma = match[1].toLowerCase();
-        if (!seen.has(lemma)) {
-            seen.add(lemma);
-            out.push(lemma);
+    for (const match of html.matchAll(/<ruby class="asb-gloss">([^<]+)<rt>([^<]*)<\/rt>/g)) {
+        const word = match[1].toLowerCase();
+        if (!seen.has(word)) {
+            seen.add(word);
+            out.push({ word, gloss: unescapeHtml(match[2]).trim() });
         }
     }
     return out;
+}
+
+/** The lowercased glossed words only (legacy shape — see
+ *  [`glossedEntriesFromHtml`] for the labeled SV-20 form). */
+export function glossedLemmasFromHtml(html: string): string[] {
+    return glossedEntriesFromHtml(html).map((e) => e.word);
 }
 
 // A gloss LABEL must be short — a word or a short phrase. A long, sentence-like
@@ -205,7 +220,9 @@ export function isReasonableGloss(gloss: string): boolean {
 
 // ── The controller ────────────────────────────────────────────────────────
 
-const sendToBackground = <R>(message: SaviGlossTranslateMessage | SaviWordBucketsMessage): Promise<R> => {
+const sendToBackground = <R>(
+    message: SaviGlossTranslateMessage | SaviWordBucketsMessage | SaviWordProficiencyMessage
+): Promise<R> => {
     const command: SaviCommand<typeof message> = { sender: 'savi-video', message };
     return browser.runtime.sendMessage(command) as Promise<R>;
 };
@@ -378,6 +395,17 @@ export class SaviGlossController implements GlossProvider {
         return settled ? glossedLemmasFromHtml(settled) : [];
     }
 
+    /** Like [`glossedLemmasFor`] but each word carries the LABEL it displays
+     *  (SV-20) — what the encounter reporter sends so the daemon can persist
+     *  the shown translation on the encounter. */
+    glossedEntriesFor(text: string, track?: number): GlossedWordEntry[] {
+        if (!this._glossable || (track ?? PRIMARY_TRACK) !== PRIMARY_TRACK) {
+            return [];
+        }
+        const settled = this._lineHtml.get(text);
+        return settled ? glossedEntriesFromHtml(settled) : [];
+    }
+
     /** The target (learning) language, for the hover module's context. */
     get targetLang(): string {
         return this._targetLang;
@@ -393,9 +421,30 @@ export class SaviGlossController implements GlossProvider {
         return this._translate(word.toLowerCase(), lineText, true);
     }
 
-    // SV-13: the Known-inclusive buckets for the target language; a lemma marked
-    // `known` is skipped. Best-effort — a failure just leaves _known empty.
+    // Which lemmas to SKIP glossing. SV-20: proficiency-first — the review
+    // engine's per-lemma retrievability dominates the decision (skip when
+    // proficiency ≥ the roaming `review.glossThreshold`, default 0.8). When
+    // the proficiency endpoint is unavailable (old cloud / signed out), fall
+    // back to SV-13's binary buckets (skip `known`). A total failure leaves
+    // _known empty → gloss every content word.
     private async _loadKnown(): Promise<void> {
+        try {
+            const response = await sendToBackground<SaviWordProficiencyResponse>({
+                command: 'savi-word-proficiency',
+                lang: this._targetLang,
+            });
+            if (response?.proficiency) {
+                const threshold = response.threshold;
+                this._known = new Set(
+                    Object.entries(response.proficiency)
+                        .filter(([, p]) => p >= threshold)
+                        .map(([lemma]) => lemma)
+                );
+                return;
+            }
+        } catch {
+            // fall through to buckets
+        }
         try {
             const response = await sendToBackground<SaviWordBucketsResponse>({
                 command: 'savi-word-buckets',

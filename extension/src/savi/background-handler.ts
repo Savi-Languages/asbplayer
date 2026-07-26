@@ -19,6 +19,8 @@ import {
     SaviGlossTranslateResponse,
     SaviWordBucketsMessage,
     SaviWordBucketsResponse,
+    SaviWordProficiencyMessage,
+    SaviWordProficiencyResponse,
     SaviDictMessage,
     SaviDictResponse,
     SaviEpisodeTranscriptMessage,
@@ -47,7 +49,14 @@ import {
     SaviWatchedLineResponse,
 } from './messages';
 import { daemonToken } from './account';
-import { resolveCloudBase, translate as cloudTranslate, wordBuckets as cloudWordBuckets } from './cloud-client';
+import {
+    DEFAULT_GLOSS_THRESHOLD,
+    glossThreshold as cloudGlossThreshold,
+    resolveCloudBase,
+    translate as cloudTranslate,
+    wordBuckets as cloudWordBuckets,
+    wordsProficiency as cloudWordsProficiency,
+} from './cloud-client';
 import {
     clearCaptureSession,
     getCaptureSession,
@@ -194,6 +203,13 @@ export default class SaviCommandHandler implements CommandHandler {
                     .then(sendResponse)
                     .catch(() => sendResponse({} as SaviGlossTranslateResponse));
                 return true;
+            case 'savi-word-proficiency':
+                this._wordProficiency(command.message as SaviWordProficiencyMessage)
+                    .then(sendResponse)
+                    .catch(() =>
+                        sendResponse({ threshold: DEFAULT_GLOSS_THRESHOLD } as SaviWordProficiencyResponse)
+                    );
+                return true;
             case 'savi-word-buckets':
                 this._wordBuckets(command.message as SaviWordBucketsMessage)
                     .then(sendResponse)
@@ -284,6 +300,22 @@ export default class SaviCommandHandler implements CommandHandler {
             return { buckets: await cloudWordBuckets(saviCloudUrl, message.lang) };
         } catch (e) {
             return { buckets: {} };
+        }
+    }
+
+    // Glossing (SV-20): the review engine's per-lemma proficiency + the
+    // roaming threshold. `proficiency` undefined = signed out / old cloud /
+    // unreachable → the content script falls back to the buckets signal.
+    private async _wordProficiency(message: SaviWordProficiencyMessage): Promise<SaviWordProficiencyResponse> {
+        const { saviCloudUrl } = await this._settings.get(['saviCloudUrl']);
+        try {
+            const [proficiency, threshold] = await Promise.all([
+                cloudWordsProficiency(saviCloudUrl, message.lang),
+                cloudGlossThreshold(saviCloudUrl),
+            ]);
+            return { proficiency, threshold };
+        } catch (e) {
+            return { threshold: DEFAULT_GLOSS_THRESHOLD };
         }
     }
 

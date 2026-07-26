@@ -1,6 +1,7 @@
 import {
     buildGlossHtml,
     glossableLemmas,
+    glossedEntriesFromHtml,
     glossedLemmasFromHtml,
     isContentWord,
     isGlossableLanguage,
@@ -153,5 +154,32 @@ describe('glossedLemmasFromHtml', () => {
     it('is empty for plain (un-glossed) lines', () => {
         expect(glossedLemmasFromHtml('')).toEqual([]);
         expect(glossedLemmasFromHtml('nada que ver aquí')).toEqual([]);
+    });
+});
+
+describe('glossedEntriesFromHtml (SV-20)', () => {
+    it('extracts each glossed word WITH its displayed label', () => {
+        const segments = segmentLine('Quiero un gato bonito, gato mío');
+        const html = buildGlossHtml(segments, (lemma) =>
+            lemma === 'gato' ? 'cat' : lemma === 'bonito' ? 'pretty' : undefined
+        );
+        expect(glossedEntriesFromHtml(html)).toEqual([
+            { word: 'gato', gloss: 'cat' },
+            { word: 'bonito', gloss: 'pretty' },
+        ]);
+    });
+
+    it('unescapes label text that was HTML-escaped at render time', () => {
+        const segments = segmentLine('Ley de oferta');
+        const html = buildGlossHtml(segments, (lemma) =>
+            lemma === 'ley' ? 'law & order' : undefined
+        );
+        expect(html).toContain('law &amp; order'); // escaped in the markup…
+        expect(glossedEntriesFromHtml(html)[0]).toEqual({ word: 'ley', gloss: 'law & order' }); // …raw out
+    });
+
+    it('is empty for plain lines', () => {
+        expect(glossedEntriesFromHtml('')).toEqual([]);
+        expect(glossedEntriesFromHtml('nada que ver aquí')).toEqual([]);
     });
 });

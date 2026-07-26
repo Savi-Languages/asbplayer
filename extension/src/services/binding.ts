@@ -257,7 +257,11 @@ export default class Binding {
         });
         this.saviHoverDictionary = new SaviHoverDictionary(
             () => this.video,
-            () => this.subtitleController.subtitles
+            () => this.subtitleController.subtitles,
+            // A JA hover popup / tap panel showed a word's meaning — recorded
+            // as a hover_glossed encounter carrying the shown label (SV-20).
+            // This is what makes the Japanese path feed the reviewer.
+            (lineText, word, gloss) => this.saviEncounterReporter.noteHoverReveal(lineText, word, gloss)
         );
         // Glossing (SV-12/13): supplies gloss-ruby HTML to the subtitle controller;
         // a resolved gloss asks the controller to re-render the showing lines. The
@@ -284,8 +288,10 @@ export default class Binding {
             // notification banner shares the subtitle DOM shape).
             subtitles: () => this.subtitleController.subtitles,
             // A revealed hover gloss is an active lookup — recorded on the
-            // line's watched encounter as hover_glossed context.
-            onReveal: (lineText, word) => this.saviEncounterReporter.noteHoverReveal(lineText, word),
+            // line's watched encounter as hover_glossed context, with the
+            // shown label (SV-20).
+            onReveal: (lineText, word, gloss) =>
+                this.saviEncounterReporter.noteHoverReveal(lineText, word, gloss),
         });
         this.subtitleController.onSaviWillStopShowing = () => this.saviGlossHover.onWillStopShowing();
         // Encounter recording (SV-18): every primary-track line that starts
@@ -296,8 +302,9 @@ export default class Binding {
             targetLanguage: async () => (await getCachedRoamingSettings()).targetLanguage,
             episodeId: () => deriveEpisodeId(window.location.href, document.title),
             // Which words of the line are showing WITH a gloss label — stored
-            // as aided exposure (glossed) on the encounters.
-            glossedLemmas: (text, track) => this.saviGlossController.glossedLemmasFor(text, track),
+            // as aided exposure (glossed) on the encounters, each with the
+            // shown label text (SV-20).
+            glossedEntries: (text, track) => this.saviGlossController.glossedEntriesFor(text, track),
             send: (message) => browser.runtime.sendMessage({ sender: 'savi-video', message }),
         });
         this.subtitleController.onSaviStartedShowing = (subtitle) => this.saviEncounterReporter.report(subtitle);

@@ -108,3 +108,55 @@ export const wordBuckets = async (cloudUrl: string, lang: string): Promise<Recor
     const body = (await response.json()) as { buckets?: Record<string, WordBucket> };
     return body.buckets ?? {};
 };
+
+/** Per-lemma proficiency [0,1] from the SV-20 review engine
+ *  (GET /v2/words/{lang}/proficiency): exposure-weighted mean retrievability.
+ *  Untracked lemmas are absent (treat as 0 → gloss). Returns undefined when
+ *  signed out; throws on a non-2xx response (an old cloud → the caller falls
+ *  back to buckets). */
+export const wordsProficiency = async (
+    cloudUrl: string,
+    lang: string
+): Promise<Record<string, number> | undefined> => {
+    const token = await currentAccessToken();
+    if (!token) {
+        return undefined;
+    }
+    const response = await fetchWithTimeout(
+        `${resolveCloudBase(cloudUrl)}/v2/words/${encodeURIComponent(lang)}/proficiency`,
+        { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
+    );
+    if (!response.ok) {
+        throw new Error(`cloud word proficiency failed: HTTP ${response.status}`);
+    }
+    const body = (await response.json()) as { proficiency?: Record<string, number> };
+    return body.proficiency ?? {};
+};
+
+/** The default gloss-decision threshold: gloss when proficiency < this. */
+export const DEFAULT_GLOSS_THRESHOLD = 0.8;
+
+/** The roaming `review.glossThreshold` setting (GET /v2/settings), defaulting
+ *  to [`DEFAULT_GLOSS_THRESHOLD`] when unset / signed out / unreachable. */
+export const glossThreshold = async (cloudUrl: string): Promise<number> => {
+    try {
+        const token = await currentAccessToken();
+        if (!token) {
+            return DEFAULT_GLOSS_THRESHOLD;
+        }
+        const response = await fetchWithTimeout(`${resolveCloudBase(cloudUrl)}/v2/settings`, {
+            headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+        });
+        if (!response.ok) {
+            return DEFAULT_GLOSS_THRESHOLD;
+        }
+        const body = (await response.json()) as {
+            settings?: Record<string, { value?: unknown } | undefined>;
+        };
+        const review = body.settings?.['review']?.value as { glossThreshold?: unknown } | undefined;
+        const raw = review?.glossThreshold;
+        return typeof raw === 'number' && raw > 0 && raw < 1 ? raw : DEFAULT_GLOSS_THRESHOLD;
+    } catch {
+        return DEFAULT_GLOSS_THRESHOLD;
+    }
+};

@@ -222,6 +222,14 @@ export interface SaviEpisodeTranscriptResponse {
 // background relays it to the daemon's POST /v2/events/watched, which tokenizes
 // the raw text into Level-1 TokenEncounters. Fire-and-forget: a lost line loses
 // only that line's exposure.
+/** One glossed word + the label that was shown for it (SV-20: the daemon
+ *  persists the label so the reviewer can key sense pairs off it). `gloss`
+ *  may be empty when the label text wasn't captured (e.g. an old cache). */
+export interface GlossedWordEntry {
+    readonly word: string;
+    readonly gloss: string;
+}
+
 export interface SaviWatchedLineMessage {
     readonly command: 'savi-watched-line';
     readonly lang: string;
@@ -230,13 +238,15 @@ export interface SaviWatchedLineMessage {
     readonly lineStartMs: number;
     readonly occurredAtMs: number;
     /** Lowercased words displayed WITH an inline gloss label while the line
-     *  showed (SV-12/13) — stored as `glossed` (passive aided exposure).
-     *  Empty for CJK lines / glossing off / not settled. */
-    readonly glossedWords: string[];
-    /** Lowercased words whose gloss the user revealed on demand (hover) while
-     *  the line showed — stored as `hover_glossed` (active lookup). The
-     *  inline label wins when a word appears in both lists. */
-    readonly hoverGlossedWords: string[];
+     *  showed (SV-12/13), each with the shown label (SV-20) — stored as
+     *  `glossed` (passive aided exposure). Empty for CJK lines / glossing
+     *  off / not settled. */
+    readonly glossedWords: GlossedWordEntry[];
+    /** Lowercased words whose gloss the user revealed on demand (hover)
+     *  while the line showed, each with the revealed label — stored as
+     *  `hover_glossed` (active lookup). The inline label wins when a word
+     *  appears in both lists. */
+    readonly hoverGlossedWords: GlossedWordEntry[];
 }
 
 export interface SaviWatchedLineResponse {
@@ -315,6 +325,21 @@ export interface SaviWordBucketsMessage {
 
 export interface SaviWordBucketsResponse {
     readonly buckets: Record<string, 'new' | 'word_box' | 'known'>;
+}
+
+// Per-lemma proficiency [0,1] from the SV-20 review engine — the graded
+// successor to buckets for the glossing decision: gloss a word iff its
+// proficiency is below the user's threshold. `proficiency` undefined =
+// signed out / unreachable → the caller falls back to buckets.
+export interface SaviWordProficiencyMessage {
+    readonly command: 'savi-word-proficiency';
+    readonly lang: string;
+}
+
+export interface SaviWordProficiencyResponse {
+    readonly proficiency?: Record<string, number>;
+    /** The roaming `review.glossThreshold` setting (default 0.8). */
+    readonly threshold: number;
 }
 
 // Capture a JPEG of the current video frame for a mined card. A content script
