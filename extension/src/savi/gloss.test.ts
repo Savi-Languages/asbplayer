@@ -183,3 +183,24 @@ describe('glossedEntriesFromHtml (SV-20)', () => {
         expect(glossedEntriesFromHtml('nada que ver aquí')).toEqual([]);
     });
 });
+
+describe('glossable ⊆ reviewable', () => {
+    it('does not gloss conjugations whose lemma is a function word', () => {
+        // savi-core drops these (lemma ser/estar/haber is a stopword), so
+        // glossing them would label a word on screen that can never enter
+        // review — the founder's "voy" worry, with the examples that really
+        // do fall through.
+        for (const aux of ['seré', 'estuvieron', 'estaban', 'habría', 'siendo']) {
+            expect(isContentWord(aux)).toBe(false);
+        }
+    });
+
+    it('still glosses real verbs, including ambiguous ones', () => {
+        // "voy" → ir, a content verb: glossable AND reviewable, so it must
+        // keep its label. "fuimos" maps to both ir and ser — the ir reading
+        // makes it reviewable, so it stays glossable too.
+        for (const word of ['voy', 'fuimos', 'corriendo', 'llevar']) {
+            expect(isContentWord(word)).toBe(true);
+        }
+    });
+});

@@ -61,6 +61,45 @@ const SPANISH_STOPWORDS = new Set<string>([
     'usted', 'ustedes', 'vosotros', 'y', 'ya', 'yo',
 ]);
 
+// Conjugations whose LEMMA is a function word (ser/estar/haber/…), which the
+// surface list above cannot see.
+//
+// This closes a real hole the founder asked about: savi-core drops a token when
+// its *lemma* is a stopword, so "seré" and "estuvieron" never become encounters
+// and can never enter review — but they are not in the surface list, so the
+// extension glossed them anyway. The result was a word labelled on screen
+// forever with no path to ever learning it, since the SV-13 known-word filter
+// reads proficiency 0 for a word that is not in the deck at all.
+//
+// Generated from crates/savi-core/data/lemmatization-es.txt ∩ the analyzer's
+// STOPWORDS. Only forms whose EVERY lemma is a function word are listed:
+// "fuimos" maps to both `ir` (a real verb) and `ser`, so it stays glossable —
+// dropping it would hide a word the learner genuinely can review.
+//
+// ("voy" → `ir` is NOT here, and correctly so: it is reviewable.)
+const SPANISH_AUXILIARY_FORMS = new Set<string>([
+    'aes', 'aquellas', 'aquellos', 'aquél', 'aquélla', 'aquéllas', 'aquéllos', 'asina',
+    'asín', 'bajos', 'bienes', 'contras', 'cuales', 'cuáles', 'ello', 'erais', 'esas',
+    'esos', 'estabais', 'estaban', 'estabas', 'estad', 'estada', 'estadas', 'estado',
+    'estando', 'estaremos', 'estará', 'estarán', 'estarás', 'estaré', 'estaréis', 'estaría',
+    'estaríais', 'estaríamos', 'estarían', 'estarías', 'estemos', 'estes', 'estuve',
+    'estuviera', 'estuvierais', 'estuvieran', 'estuvieras', 'estuviere', 'estuviereis',
+    'estuvieren', 'estuvieres', 'estuvieron', 'estuviese', 'estuvieseis', 'estuviesen',
+    'estuvieses', 'estuvimos', 'estuviste', 'estuvisteis', 'estuviéramos', 'estuviéremos',
+    'estuviésemos', 'estuvo', 'estábamos', 'estáis', 'estás', 'esté', 'estéis', 'estén',
+    'estés', 'haberes', 'habida', 'habidas', 'habido', 'habidos', 'habiendo', 'habremos',
+    'habrá', 'habrán', 'habrás', 'habré', 'habréis', 'habría', 'habríais', 'habríamos',
+    'habrían', 'habrías', 'habéis', 'habíais', 'habíamos', 'habían', 'habías', 'haya',
+    'hayamos', 'hayan', 'hayáis', 'hube', 'hubiera', 'hubierais', 'hubieran', 'hubieras',
+    'hubiere', 'hubiereis', 'hubieren', 'hubieres', 'hubieron', 'hubiese', 'hubieseis',
+    'hubiesen', 'hubieses', 'hubimos', 'hubiste', 'hubisteis', 'hubiéramos', 'hubiéremos',
+    'hubiésemos', 'hubo', 'noes', 'nosotras', 'nuestras', 'nuestros', 'oes', 'peros',
+    'quienes', 'quiénes', 'sea', 'seamos', 'sean', 'seas', 'sed', 'seremos', 'seres',
+    'será', 'serán', 'serás', 'seré', 'seréis', 'sería', 'seríais', 'seríamos', 'serían',
+    'serías', 'seáis', 'siendo', 'sis', 'sois', 'sones', 'sons', 'síes', 'vos', 'vosotras',
+    'éramos', 'ésa', 'ésas', 'ése', 'ésos', 'ésta', 'éstas', 'éste', 'éstos', 'úes',
+]);
+
 /** One piece of a subtitle line: a word token or the gap between words. The
  *  pieces concatenate back to the original line exactly. */
 export interface GlossSegment {
@@ -84,9 +123,16 @@ export function isGlossableLanguage(lang: string): boolean {
 }
 
 /** A content word iff it is not a function word and at least two letters —
- *  mirrors the `es` analyzer's noise policy (used before the SV-13 known filter). */
+ *  mirrors the `es` analyzer's noise policy (used before the SV-13 known filter).
+ *
+ *  Both lists matter: the surface stoplist catches `de`/`que`, and the
+ *  auxiliary list catches conjugations like `seré` whose LEMMA is a function
+ *  word. Without the second, savi-core would refuse to make them encounters
+ *  while this kept labelling them — glossed forever, never reviewable. */
 export function isContentWord(lemma: string): boolean {
-    return lemma.length >= 2 && !SPANISH_STOPWORDS.has(lemma);
+    return (
+        lemma.length >= 2 && !SPANISH_STOPWORDS.has(lemma) && !SPANISH_AUXILIARY_FORMS.has(lemma)
+    );
 }
 
 // After one of these, the next capitalized word starts a new sentence (so it is
