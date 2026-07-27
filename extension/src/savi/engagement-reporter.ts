@@ -20,8 +20,9 @@ export interface EngagementReporterDeps {
     enabled: () => Promise<boolean>;
     /** The account-roaming target language ('' = not set → don't report). */
     targetLanguage: () => Promise<string>;
-    /** Platform-stable episode id for the current page. */
-    episodeId: () => string;
+    /** Platform-stable episode id for the current page, or `undefined` while
+     *  the page has not settled onto one (Netflix mid-navigation). */
+    episodeId: () => string | undefined;
     /** Monotonic timestamp of the user's last interaction. */
     lastInteractionAt: () => number;
     /** Deliver the message to the background (browser.runtime.sendMessage). */
@@ -39,6 +40,12 @@ export interface PlaybackSample {
     playing: boolean;
     visible: boolean;
     focused: boolean;
+    /** `video.played.length > 0` and `video.ended` — see `ClockInputs`. These
+     *  stop paused-but-present time counting before the first play (browsing a
+     *  title) or after the end (the credits). Optional so a caller with no
+     *  media is unaffected. */
+    everPlayed?: boolean;
+    ended?: boolean;
 }
 
 export class SaviEngagementReporter {
@@ -86,13 +93,15 @@ export class SaviEngagementReporter {
             return;
         }
         if (this._episodeId === '') {
-            this._episodeId = this._deps.episodeId();
+            this._episodeId = this._deps.episodeId() ?? '';
         }
         const inputs: ClockInputs = {
             playing: sample.playing,
             visible: sample.visible,
             focused: sample.focused,
             lastInteractionAt: this._deps.lastInteractionAt(),
+            everPlayed: sample.everPlayed,
+            ended: sample.ended,
         };
         this._clock.tick((this._deps.now ?? (() => performance.now()))(), (this._deps.wallNow ?? Date.now)(), inputs);
     }
@@ -110,7 +119,7 @@ export class SaviEngagementReporter {
     }
 
     private _emit(session: SessionFlush): void {
-        const episodeId = this._episodeId || this._deps.episodeId();
+        const episodeId = this._episodeId || this._deps.episodeId() || '';
         this._episodeId = '';
         const message: SaviEngagementSessionMessage = {
             command: 'savi-engagement-session',

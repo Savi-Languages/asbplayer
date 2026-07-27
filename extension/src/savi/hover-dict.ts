@@ -751,7 +751,13 @@ export class SaviHoverDictionary {
         // the AI explanation + segmentation can ground in the episode gist — not just
         // the ±2 neighbouring lines — even when you only ever tap (never mine). Awaited
         // so the FIRST tap of an episode already benefits; a no-op on later taps.
-        await this._maybeSendTranscript(deriveEpisodeId(location.href, document.title)).catch(() => {});
+        // Skipped entirely when the page has no stable id yet — grounding the
+        // AI in an episode we cannot name would file the transcript under a
+        // throwaway id.
+        const transcriptEpisodeId = deriveEpisodeId(location.href, document.title);
+        if (transcriptEpisodeId !== undefined) {
+            await this._maybeSendTranscript(transcriptEpisodeId).catch(() => {});
+        }
         // AI in-context — fired ONLY here, on a deliberate tap. Far fewer calls than
         // per-hover (so the providers stop rate-limiting), and a slow/failed call
         // degrades to a graceful "unavailable" inside the panel.
@@ -818,6 +824,10 @@ export class SaviHoverDictionary {
         button.textContent = 'Adding…';
         try {
             const episodeId = deriveEpisodeId(location.href, document.title);
+            if (episodeId === undefined) {
+                button.textContent = 'Not ready';
+                return;
+            }
             // Make sure the daemon has the whole-episode transcript (once per
             // episode) so the card's scene-level context gets an episode gist,
             // even on an episode the user never recorded. Best-effort, awaited so

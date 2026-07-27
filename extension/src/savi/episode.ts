@@ -84,22 +84,47 @@ const youtubeVideoId = (parsed: URL): string | undefined => {
     return undefined;
 };
 
-// Pure, total: never throws; returns a non-empty, daemon-safe-ish id for any
-// input. Unknown / unparseable urls fall back to a hostname:slug(title) id.
-export const deriveEpisodeId = (url: string, title: string): string => {
+// Hosts whose episodes have a STABLE platform id. On these, a title slug is
+// never an acceptable substitute — see `deriveEpisodeId`.
+const platformHosts = ['netflix.com', 'youtube.com', 'youtu.be'];
+
+// Pure, total: never throws.
+//
+// Returns `undefined` when the page is on a KNOWN platform but its stable id
+// cannot be read yet. That is not a failure to handle gracefully with a
+// fallback — it is "ask again in a moment", and minting an id anyway is what
+// produced duplicate library entries:
+//
+//   Netflix is an SPA, so `/watch/<id>` appears in the URL a beat after
+//   navigation. Deriving during that beat fell through to
+//   `netflix.com:<slug(document.title)>`, and `document.title` is bare
+//   "Netflix" until the episode loads — so the id came out
+//   `netflix.com:netflix`. The daemon keys its episode store on this id, so
+//   the SAME episode captured either side of that beat produced two stores,
+//   two deliverables, and two library rows with different line counts.
+//
+//   Worse, `netflix.com:netflix` is one bucket shared by EVERY unidentified
+//   Netflix capture, so unrelated episodes could stitch into each other.
+//
+// Sites with no platform id (generic hosts) still get the hostname:slug
+// fallback — there a title slug is the best identity available, not a
+// premature guess at a better one.
+export const deriveEpisodeId = (url: string, title: string): string | undefined => {
     const parsed = parseUrl(url);
 
     if (parsed !== undefined) {
         if (hostMatches(parsed.host, 'netflix.com')) {
             const id = netflixVideoId(parsed);
-            if (id !== undefined) {
-                return `netflix:${id}`;
-            }
+            return id !== undefined ? `netflix:${id}` : undefined;
         }
 
         const youtube = youtubeVideoId(parsed);
         if (youtube !== undefined) {
             return `youtube:${youtube}`;
+        }
+
+        if (platformHosts.some((host) => hostMatches(parsed.host, host))) {
+            return undefined; // a YouTube page with no video id yet
         }
     }
 

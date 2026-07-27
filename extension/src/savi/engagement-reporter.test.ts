@@ -8,14 +8,26 @@ interface Harness {
     sent: SaviEngagementSessionMessage[];
     /** Advance the monotonic + wall clocks together and tick. */
     play: (seconds: number) => void;
-    setSample: (s: { playing?: boolean; visible?: boolean; focused?: boolean }) => void;
+    setSample: (s: {
+        playing?: boolean;
+        visible?: boolean;
+        focused?: boolean;
+        everPlayed?: boolean;
+        ended?: boolean;
+    }) => void;
     send: jest.Mock;
 }
 
 function harness(over: Partial<EngagementReporterDeps> = {}, sendImpl?: jest.Mock): Harness {
     const sent: SaviEngagementSessionMessage[] = [];
     let now = 0;
-    let sample = { playing: true, visible: true, focused: true };
+    let sample: {
+        playing: boolean;
+        visible: boolean;
+        focused: boolean;
+        everPlayed?: boolean;
+        ended?: boolean;
+    } = { playing: true, visible: true, focused: true };
     let ids = 0;
 
     const send =
@@ -200,5 +212,46 @@ describe('SaviEngagementReporter', () => {
         expect(sent).toHaveLength(1);
         expect(sent[0].engagedMs).toBe(30_000);
         expect(sent[0].kind).toBe('watch');
+    });
+});
+
+describe('media-state passthrough', () => {
+    // The regression this exists for: `everPlayed`/`ended` were added to the
+    // clock and passed from the binding, but `PlaybackSample` never carried
+    // them and `tick` never forwarded them — so the fix that was supposed to
+    // stop counting the Netflix lobby and the credits did nothing at all.
+    // Jest transpiles without typechecking, so the whole suite stayed green.
+    // This asserts the wiring at RUNTIME, where types could not.
+
+    it('does not credit a paused page that has never played', async () => {
+        const h = harness();
+        await h.reporter.start();
+        h.setSample({ playing: false, everPlayed: false });
+        h.play(120); // two minutes browsing a title, mouse moving
+        h.reporter.flush();
+        expect(h.sent).toHaveLength(0);
+    });
+
+    it('does not credit a paused page once playback has ended', async () => {
+        const h = harness();
+        await h.reporter.start();
+        h.setSample({ playing: false, everPlayed: true, ended: true });
+        h.play(120); // sitting on the credits
+        h.reporter.flush();
+        expect(h.sent).toHaveLength(0);
+    });
+
+    it('still credits a pause INSIDE a viewing', async () => {
+        // The half that must survive: pausing to study a line is learning.
+        // Kept inside the 60 s idle window — the harness pins the last
+        // interaction at 0, so a longer pause would stop for that reason
+        // instead and the test would pass without proving anything.
+        const h = harness();
+        await h.reporter.start();
+        h.setSample({ playing: false, everPlayed: true, ended: false });
+        h.play(50);
+        h.reporter.flush();
+        expect(h.sent).toHaveLength(1);
+        expect(h.sent[0].engagedMs).toBeGreaterThan(30_000);
     });
 });

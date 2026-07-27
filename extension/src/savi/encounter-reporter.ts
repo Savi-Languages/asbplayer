@@ -46,7 +46,10 @@ export interface EncounterReporterDeps {
     /** The account-roaming target language ('' = not set → don't report). */
     targetLanguage: () => Promise<string>;
     /** Platform-stable episode id for the current page. */
-    episodeId: () => string;
+    /** Platform-stable episode id, or `undefined` while the page has not
+     *  settled onto one. Lines are dropped rather than filed under a
+     *  throwaway id — see `deriveEpisodeId`. */
+    episodeId: () => string | undefined;
     /** The words of the line currently displayed WITH an inline gloss label,
      *  each with the shown label text (the gloss controller's settled render
      *  truth, SV-20). Sampled at FINALIZE time, so late-resolving labels are
@@ -114,12 +117,21 @@ export class SaviEncounterReporter {
         // ends with playback resuming into this line).
         this.flush();
 
+        // No stable id yet (Netflix mid-navigation): drop the line rather than
+        // file it under a throwaway episode. One line of exposure is a cheaper
+        // loss than a duplicate library entry, and the id settles within a
+        // beat.
+        const episodeId = this._deps.episodeId();
+        if (episodeId === undefined) {
+            return;
+        }
+
         this._pending.push({
             text,
             track: subtitle.track ?? PRIMARY_TRACK,
             lineStartMs: Math.round(subtitle.start),
             occurredAtMs: (this._deps.now ?? Date.now)(),
-            episodeId: this._deps.episodeId(),
+            episodeId,
             lang: this._lang,
             hovered: new Map(),
         });

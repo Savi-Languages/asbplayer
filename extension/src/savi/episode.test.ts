@@ -73,7 +73,10 @@ describe('deriveEpisodeId — Netflix', () => {
     });
 
     it('falls back to hostname:slug on a non-watch Netflix page (no videoId)', () => {
-        expect(deriveEpisodeId('https://www.netflix.com/browse', 'Home - Netflix')).toBe('netflix.com:home');
+        // A Netflix page with no /watch/<id> yields NO id at all — see
+        // `deriveEpisodeId`. Falling back to a title slug is what produced
+        // `netflix.com:netflix`, a bucket every unidentified capture shared.
+        expect(deriveEpisodeId('https://www.netflix.com/browse', 'Home - Netflix')).toBeUndefined();
     });
 });
 
@@ -92,10 +95,12 @@ describe('deriveEpisodeId — YouTube', () => {
         expect(deriveEpisodeId('https://music.youtube.com/watch?v=abc123', 'Song')).toBe('youtube:abc123');
     });
 
-    it('falls back to hostname:slug when ?v= is missing', () => {
-        expect(deriveEpisodeId('https://www.youtube.com/feed/subscriptions', 'Subscriptions - YouTube')).toBe(
-            'youtube.com:subscriptions'
-        );
+    it('yields NO id on a YouTube page with no video id', () => {
+        // Same rule as Netflix: a known platform never falls back to a title
+        // slug, because the daemon keys its episode store on this id.
+        expect(
+            deriveEpisodeId('https://www.youtube.com/feed/subscriptions', 'Subscriptions - YouTube')
+        ).toBeUndefined();
     });
 });
 
@@ -127,10 +132,11 @@ describe('deriveEpisodeId — generic fallback', () => {
 
     it('produces a daemon-safe fallback id (no separators / traversal)', () => {
         const id = deriveEpisodeId('https://x.test/v', '日本語/タイトル..テスト');
-        expect(id.length).toBeGreaterThan(0);
-        expect(id.split(':').pop()).not.toContain('/');
-        expect(id.split(':').pop()).not.toContain('\\');
-        expect(id.split(':').pop()).not.toContain('..');
+        expect(id).toBeDefined();
+        expect(id!.length).toBeGreaterThan(0);
+        expect(id!.split(':').pop()).not.toContain('/');
+        expect(id!.split(':').pop()).not.toContain('\\');
+        expect(id!.split(':').pop()).not.toContain('..');
     });
 
     it('never throws on garbage input', () => {
@@ -329,5 +335,39 @@ describe('deriveShowAndTitleFromBasename', () => {
             show: 'Alice in Borderland',
             title: 'S02E03 Knight of Swords',
         });
+    });
+});
+
+describe('deriveEpisodeId — the duplicate-episode guard', () => {
+    it('refuses an id mid-navigation, then gives the stable one', () => {
+        // The founder's duplicate library rows, reproduced. Netflix is an SPA:
+        // for a beat after navigating, the URL has no /watch/<id> and
+        // document.title is still bare "Netflix". Deriving during that beat
+        // used to yield `netflix.com:netflix`, and the daemon keys its episode
+        // store on the id — so the same episode captured either side of the
+        // beat became TWO stores, two deliverables, two library rows with
+        // different line counts.
+        expect(deriveEpisodeId('https://www.netflix.com/browse', 'Netflix')).toBeUndefined();
+        expect(deriveEpisodeId('https://www.netflix.com/watch/80220491', 'Netflix')).toBe('netflix:80220491');
+    });
+
+    it('gives the same id however the title changes around it', () => {
+        // The id must not move as the page fills in its title — that was the
+        // other half of the split.
+        const url = 'https://www.netflix.com/watch/80220491';
+        expect(deriveEpisodeId(url, 'Netflix')).toBe(deriveEpisodeId(url, 'GO! Vive a tu manera - Netflix'));
+        expect(deriveEpisodeId(url, 'S2:E10 Something | Netflix')).toBe('netflix:80220491');
+    });
+
+    it('never yields the shared junk bucket again', () => {
+        // `netflix.com:netflix` was one id for EVERY unidentified capture, so
+        // unrelated episodes could stitch into each other.
+        for (const [url, title] of [
+            ['https://www.netflix.com/', 'Netflix'],
+            ['https://www.netflix.com/browse', 'Netflix'],
+            ['https://www.netflix.com/title/80220491', 'Netflix'],
+        ]) {
+            expect(deriveEpisodeId(url, title)).toBeUndefined();
+        }
     });
 });

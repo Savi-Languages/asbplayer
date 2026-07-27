@@ -135,7 +135,7 @@ export class SaviCaptureController {
                         // with what was already finished. A deliberate stop
                         // stays stopped.
                         const { episodeId } = this._pageMetadata();
-                        if (!this._starting && !this._deliberatelyStopped.has(episodeId)) {
+                        if (episodeId !== undefined && !this._starting && !this._deliberatelyStopped.has(episodeId)) {
                             this._host.notify('Savi: capture restarted after idle timeout');
                             this.start(false);
                         }
@@ -201,7 +201,15 @@ export class SaviCaptureController {
                     // deliberately stopped this episode earlier in the session.
                     this._recordButton.show();
                     const { episodeId } = this._pageMetadata();
-                    if (!this._active && !this._starting && !this._deliberatelyStopped.has(episodeId)) {
+                    // No stable id yet (Netflix mid-navigation) — the next
+                    // heartbeat will have one. Starting now would mint a
+                    // throwaway id and split the episode's takes in two.
+                    if (
+                        episodeId !== undefined &&
+                        !this._active &&
+                        !this._starting &&
+                        !this._deliberatelyStopped.has(episodeId)
+                    ) {
                         this.start(false);
                     }
                 } else {
@@ -297,6 +305,15 @@ export class SaviCaptureController {
 
             const video = this._host.video;
             const { episodeId, show, title } = this._pageMetadata();
+            if (episodeId === undefined) {
+                // The page has no stable platform id yet. Refusing is the
+                // whole fix: the daemon keys its episode store on this id, so
+                // capturing under a made-up one produces a SECOND store for an
+                // episode that already has one — a duplicate library row with
+                // its own line count, and takes that never stitch together.
+                this._host.notify('Savi: waiting for the episode to load');
+                return;
+            }
             const lang = (streamingLastLanguagesSynced[window.location.host] ?? []).find((l) => l && l !== '-');
 
             const command: SaviCommand<SaviStartCaptureMessage> = {
@@ -370,7 +387,7 @@ export class SaviCaptureController {
     // start. All DOM reading lives here (content-script context); the
     // parsing/derivation is delegated to the pure helpers in episode.ts so
     // it stays unit-tested. Fully defensive — never throws.
-    private _pageMetadata(): { episodeId: string; show?: string; title: string } {
+    private _pageMetadata(): { episodeId: string | undefined; show?: string; title: string } {
         const url = this._safeLocationHref();
         const documentTitle = this._safeDocumentTitle();
 
@@ -467,7 +484,10 @@ export class SaviCaptureController {
         }
 
         if (deliberate) {
-            this._deliberatelyStopped.add(this._pageMetadata().episodeId);
+            const { episodeId } = this._pageMetadata();
+            if (episodeId !== undefined) {
+                this._deliberatelyStopped.add(episodeId);
+            }
         }
 
         const segmenter = this._segmenter;
