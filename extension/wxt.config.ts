@@ -80,7 +80,7 @@ export default defineConfig({
         // Tracks the savi monorepo's GLOBAL semver (root package.json there) —
         // bump this manually alongside `pnpm version:set` in the savi repo.
         // (Independent of the upstream asbplayer version this fork came from.)
-        const version = '0.28.0';
+        const version = '0.29.0';
         const isDev = mode === 'development';
         const devLabel = isDev ? ' (Dev)' : '';
         const title = `${extName}${devLabel}`;
