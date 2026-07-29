@@ -1,11 +1,14 @@
-// Account-roaming settings the extension reads/writes on the savi cloud's
-// generic key-value store (`GET /v2/settings`, `PUT /v2/settings/{key}`, LWW —
-// see savi crates/savi-cloud). Two values roam with the user's account so they
-// follow every device: the learner's `targetLanguage` (which streaming subtitle
-// track to auto-load, SV-8) and their `openSubtitlesApiKey` (the fallback
-// search). The daemon is credential-free and does no cloud I/O, so — like the
-// account session itself — the extension talks to the cloud directly with the
-// account JWT (extension/src/savi/account.ts).
+// Account-roaming settings the extension reads from the savi cloud. The
+// learner's `targetLanguage` (which streaming subtitle track to auto-load,
+// SV-8) lives on the generic key-value store (`GET /v2/settings`,
+// `PUT /v2/settings/{key}`, LWW). The OpenSubtitles key moved to savi's typed
+// `api_keys` rows in SV-30 (multiple keys, quota rotation, entered in SAVI
+// settings — this extension no longer offers an input for it); the fallback
+// fetch still works by pulling the first usable key from
+// `GET /v2/api-keys?provider=opensubtitles` into the same local cache. The
+// daemon is credential-free and does no cloud I/O, so — like the account
+// session itself — the extension talks to the cloud directly with the account
+// JWT (extension/src/savi/account.ts).
 //
 // The cloud is the source of truth; we mirror both values into
 // `browser.storage.local` so the content script (target-language auto-select)
@@ -19,7 +22,8 @@ import { currentAccessToken } from './account';
 export interface SaviRoamingSettings {
     /** BCP-47 tag/subtag of the language being learned, e.g. `es`, `ja`, `es-419`. */
     readonly targetLanguage: string;
-    /** opensubtitles.com consumer API key (https://www.opensubtitles.com/vi/consumers). */
+    /** The first usable opensubtitles.com key from savi's api_keys rows —
+     *  CACHE ONLY; managed in savi Settings, never written from here. */
     readonly openSubtitlesApiKey: string;
 }
 
@@ -29,11 +33,15 @@ export const DEFAULT_ROAMING_SETTINGS: SaviRoamingSettings = { targetLanguage: '
 export const ROAMING_CACHE_KEY = 'saviRoamingSettings';
 
 // Cloud KV keys — each must satisfy the cloud's valid_setting_key (alphanumeric
-// + . _ -). One roaming value ⇒ one KV key.
-const CLOUD_KEY: { [K in keyof SaviRoamingSettings]: string } = {
+// + . _ -). Only values the extension WRITES live here; the OpenSubtitles key
+// is read-only from the api_keys endpoint.
+const CLOUD_KEY = {
     targetLanguage: 'targetLanguage',
-    openSubtitlesApiKey: 'openSubtitlesApiKey',
-};
+} as const;
+
+/** Roaming values this extension may write. The OpenSubtitles key is
+ *  deliberately absent — it is entered and managed in savi Settings. */
+export type WritableRoamingKey = keyof typeof CLOUD_KEY;
 
 const normalizeBaseUrl = (baseUrl: string) => baseUrl.trim().replace(/\/+$/, '');
 
@@ -78,6 +86,33 @@ const cloudFetch = async (cloudUrl: string, path: string, init: RequestInit): Pr
     });
 };
 
+/** The first usable OpenSubtitles key from savi's api_keys rows: skips keys
+ *  parked by quota exhaustion, falls back to the first key, then to
+ *  `undefined` (no rows / request failed — caller keeps the cache). */
+const fetchOpenSubtitlesKey = async (cloudUrl: string): Promise<string | undefined> => {
+    const response = await cloudFetch(cloudUrl, '/v2/api-keys?provider=opensubtitles', { method: 'GET' });
+
+    if (!response || !response.ok) {
+        return undefined;
+    }
+
+    const body = await response.json();
+
+    if (!Array.isArray(body?.keys)) {
+        // Not the api-keys shape — treat as a failed read, keep the cache.
+        return undefined;
+    }
+
+    const keys = body.keys as { key?: unknown; exhaustedUntilMs?: unknown }[];
+    const usable = keys.find(
+        (k) => typeof k.key === 'string' && (typeof k.exhaustedUntilMs !== 'number' || k.exhaustedUntilMs <= Date.now())
+    );
+    const chosen = usable ?? keys.find((k) => typeof k.key === 'string');
+    // An empty list is authoritative — the account holds no keys (they are
+    // managed in savi Settings), so the cache clears rather than lingering.
+    return typeof chosen?.key === 'string' ? chosen.key : '';
+};
+
 /** Pull both roaming values from the cloud into the local cache (call on sign-in
  *  and when a settings UI mounts). A signed-out or unreachable cloud leaves the
  *  cache untouched — same code path as offline. */
@@ -91,6 +126,9 @@ export const loadRoamingSettings = async (cloudUrl: string): Promise<SaviRoaming
 
         const body = await response.json();
         const rows = (body?.settings ?? {}) as Record<string, { value?: unknown } | undefined>;
+        // The OpenSubtitles key rides the same refresh from its own endpoint;
+        // `undefined` (failed/absent) keeps whatever the cache had.
+        const openSubtitlesApiKey = await fetchOpenSubtitlesKey(cloudUrl).catch(() => undefined);
         // Merge: take the cloud's value for a key only when the cloud has a row
         // for it, so a value set locally (e.g. while signed out) is not clobbered
         // by an absent cloud key before its own write-through lands.
@@ -99,9 +137,7 @@ export const loadRoamingSettings = async (cloudUrl: string): Promise<SaviRoaming
             targetLanguage: rows[CLOUD_KEY.targetLanguage]
                 ? rows[CLOUD_KEY.targetLanguage]?.value
                 : current.targetLanguage,
-            openSubtitlesApiKey: rows[CLOUD_KEY.openSubtitlesApiKey]
-                ? rows[CLOUD_KEY.openSubtitlesApiKey]?.value
-                : current.openSubtitlesApiKey,
+            openSubtitlesApiKey: openSubtitlesApiKey ?? current.openSubtitlesApiKey,
         });
         await setCache(merged);
         return merged;
@@ -116,7 +152,7 @@ export const loadRoamingSettings = async (cloudUrl: string): Promise<SaviRoaming
  *  surfaces that while the value already works on this device. */
 export const putRoamingSetting = async (
     cloudUrl: string,
-    key: keyof SaviRoamingSettings,
+    key: WritableRoamingKey,
     value: string
 ): Promise<SaviRoamingSettings> => {
     const next: SaviRoamingSettings = { ...(await getCachedRoamingSettings()), [key]: value };

@@ -154,8 +154,6 @@ const SettingsPage = ({
                         onSaviSignOut={saviAccount.signOut}
                         saviTargetLanguage={saviRoaming.targetLanguage}
                         onSaviTargetLanguageChange={saviRoaming.setTargetLanguage}
-                        saviOpenSubtitlesApiKey={saviRoaming.openSubtitlesApiKey}
-                        onSaviOpenSubtitlesApiKeyChange={saviRoaming.setOpenSubtitlesApiKey}
                     />
                 </DialogContent>
                 <Box style={{ marginBottom: theme.spacing(2) }} className={classes.profilesContainer}>

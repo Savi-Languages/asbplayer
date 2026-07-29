@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import Button from '@mui/material/Button';
-import Link from '@mui/material/Link';
 import Stack from '@mui/material/Stack';
 import Switch from '@mui/material/Switch';
 import Typography from '@mui/material/Typography';
@@ -48,11 +47,12 @@ interface Props {
     saviAccountEmail?: string;
     onSaviSignIn?: (email: string, password: string) => Promise<{ ok: boolean; errorMessage?: string }>;
     onSaviSignOut?: () => Promise<void>;
-    // Account-roaming settings (extension hosts only — cloud-backed).
+    // Account-roaming settings (extension hosts only — cloud-backed). The
+    // OpenSubtitles API key is deliberately NOT here anymore (SV-30): it is
+    // entered and managed in SAVI's Settings (multiple keys, quota rotation);
+    // the auto-load fallback reads it from the account automatically.
     saviTargetLanguage?: string;
     onSaviTargetLanguageChange?: (value: string) => void;
-    saviOpenSubtitlesApiKey?: string;
-    onSaviOpenSubtitlesApiKeyChange?: (value: string) => void;
 }
 
 const SaviSettingsTab: React.FC<Props> = ({
@@ -63,8 +63,6 @@ const SaviSettingsTab: React.FC<Props> = ({
     onSaviSignOut,
     saviTargetLanguage,
     onSaviTargetLanguageChange,
-    saviOpenSubtitlesApiKey,
-    onSaviOpenSubtitlesApiKeyChange,
 }) => {
     const {
         saviAutoLoadSubtitles,
@@ -178,7 +176,9 @@ const SaviSettingsTab: React.FC<Props> = ({
                         onChange={(e) => onSettingChanged('saviAutoLoadSubtitles', e.target.checked)}
                     />
                 }
-                label={'Auto-load subtitles in your target language from the player (or OpenSubtitles)'}
+                label={
+                    'Auto-load subtitles in your target language from the player (or OpenSubtitles — key managed in Savi Settings)'
+                }
                 labelPlacement="start"
             />
             <SwitchLabelWithHoverEffect
@@ -209,29 +209,6 @@ const SaviSettingsTab: React.FC<Props> = ({
                     helperText={`Language you're learning, as a BCP-47 code — e.g. es, es-419, ja. ${roamingHint}`}
                 />
             )}
-            {roamingSupported && onSaviOpenSubtitlesApiKeyChange !== undefined && (
-                <CommitOnBlurTextField
-                    label={'OpenSubtitles API key (fallback)'}
-                    type="password"
-                    value={saviOpenSubtitlesApiKey ?? ''}
-                    onCommit={(value) => onSaviOpenSubtitlesApiKeyChange(value.trim())}
-                    helperText={
-                        <>
-                            {'Used only when the player has no track in your language. Get a key at '}
-                            <Link
-                                href="https://www.opensubtitles.com/vi/consumers"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                underline="hover"
-                            >
-                                {'opensubtitles.com/consumers'}
-                            </Link>
-                            {`. ${roamingHint}`}
-                        </>
-                    }
-                />
-            )}
-
             <SettingsSection>{'Savi capture'}</SettingsSection>
             <SwitchLabelWithHoverEffect
                 control={

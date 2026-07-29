@@ -450,7 +450,7 @@ export default class VideoDataSyncController {
             }
 
             console.info(
-                '[savi auto-load] no %s track among [%s], and no OpenSubtitles key set',
+                '[savi auto-load] no %s track among [%s], and no OpenSubtitles key set — add one in Savi Settings',
                 targetLanguage,
                 detectedLangs.join(', ') || 'none'
             );

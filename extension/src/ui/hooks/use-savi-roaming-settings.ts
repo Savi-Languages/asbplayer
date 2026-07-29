@@ -1,9 +1,12 @@
-// React state for the account-roaming savi settings (target language +
-// OpenSubtitles key) in the options page / popup. The cloud is the source of
-// truth (extension/src/savi/cloud-settings.ts): we seed from the local cache,
+// React state for the account-roaming savi settings (target language) in the
+// options page / popup. The cloud is the source of truth
+// (extension/src/savi/cloud-settings.ts): we seed from the local cache,
 // refresh from the cloud on mount, and write through (optimistically) on every
 // change. Writes while signed out still update the local cache — they just don't
 // reach the account until the next sign-in — so we swallow that error here.
+// (The OpenSubtitles key is no longer edited here — it is managed in SAVI's
+// Settings as api_keys rows; the background's fallback fetch reads it from the
+// roaming cache, refreshed alongside these values.)
 
 import { useCallback, useEffect, useState } from 'react';
 import {
@@ -12,15 +15,14 @@ import {
     loadRoamingSettings,
     putRoamingSetting,
     SaviRoamingSettings,
+    WritableRoamingKey,
 } from '@/savi/cloud-settings';
 import { resolveCloudBase } from '@/savi/cloud-client';
 
 export interface SaviRoamingSettingsHook {
     readonly targetLanguage: string;
-    readonly openSubtitlesApiKey: string;
     readonly loaded: boolean;
     readonly setTargetLanguage: (value: string) => void;
-    readonly setOpenSubtitlesApiKey: (value: string) => void;
 }
 
 export const useSaviRoamingSettings = (cloudUrl: string): SaviRoamingSettingsHook => {
@@ -59,7 +61,7 @@ export const useSaviRoamingSettings = (cloudUrl: string): SaviRoamingSettingsHoo
     }, [cloudUrl]);
 
     const update = useCallback(
-        (key: keyof SaviRoamingSettings, value: string) => {
+        (key: WritableRoamingKey, value: string) => {
             setState((prev) => ({ ...prev, [key]: value }));
             void putRoamingSetting(resolveCloudBase(cloudUrl), key, value).catch((e) =>
                 // Signed out / offline: the local cache still has the value.
@@ -71,9 +73,7 @@ export const useSaviRoamingSettings = (cloudUrl: string): SaviRoamingSettingsHoo
 
     return {
         targetLanguage: state.targetLanguage,
-        openSubtitlesApiKey: state.openSubtitlesApiKey,
         loaded,
         setTargetLanguage: useCallback((value: string) => update('targetLanguage', value), [update]),
-        setOpenSubtitlesApiKey: useCallback((value: string) => update('openSubtitlesApiKey', value), [update]),
     };
 };

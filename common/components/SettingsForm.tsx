@@ -218,10 +218,10 @@ interface Props {
     onSaviSignIn?: (email: string, password: string) => Promise<{ ok: boolean; errorMessage?: string }>;
     onSaviSignOut?: () => Promise<void>;
     // Account-roaming savi settings (extension hosts only — cloud-backed).
+    // The OpenSubtitles key moved to SAVI's Settings (SV-30) and is no longer
+    // plumbed here.
     saviTargetLanguage?: string;
     onSaviTargetLanguageChange?: (value: string) => void;
-    saviOpenSubtitlesApiKey?: string;
-    onSaviOpenSubtitlesApiKeyChange?: (value: string) => void;
 }
 
 // Filter out keys that look like '0', '1', ... as those are invalid
@@ -276,8 +276,6 @@ export default function SettingsForm({
     onSaviSignOut,
     saviTargetLanguage,
     onSaviTargetLanguageChange,
-    saviOpenSubtitlesApiKey,
-    onSaviOpenSubtitlesApiKeyChange,
 }: Props) {
     const supportsDictionary = !extensionInstalled || extensionSupportsDictionary;
     const supportsDictionaryBrowser = !extensionInstalled || extensionSupportsDictionaryBrowser;
@@ -611,8 +609,6 @@ export default function SettingsForm({
                         onSaviSignOut={onSaviSignOut}
                         saviTargetLanguage={saviTargetLanguage}
                         onSaviTargetLanguageChange={onSaviTargetLanguageChange}
-                        saviOpenSubtitlesApiKey={saviOpenSubtitlesApiKey}
-                        onSaviOpenSubtitlesApiKeyChange={onSaviOpenSubtitlesApiKeyChange}
                     />
                 </TabPanel>
                 <TabPanel value={tabIndex} index={tabIndicesById['about']} tabsOrientation={tabsOrientation}>
