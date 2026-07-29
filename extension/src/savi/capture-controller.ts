@@ -51,6 +51,10 @@ export interface SaviCaptureHost {
  *  sent at exactly that moment. */
 const segmentOpSendAttempts = 3;
 const segmentOpRetryDelayMs = 150;
+/** How often the open segment is re-asserted to the daemon. Bounds how much
+ *  audio a dropped op can cost; small enough to be a few seconds, large enough
+ *  that it is not chatter. */
+const segmentReassertIntervalMs = 5_000;
 
 /**
  * Deliver a message, retrying transient failures.
@@ -111,6 +115,7 @@ export class SaviCaptureController {
     // falling back to the show NAME on sites without one.
     private _showId?: string;
     private _showIdListener?: EventListener;
+    private _lastReassertMs = 0;
 
     constructor(host: SaviCaptureHost) {
         this._host = host;
@@ -580,6 +585,19 @@ export class SaviCaptureController {
         return this._host.currentSubtitles().filter((s) => s.track === 0 && s.text.trim().length > 0);
     }
 
+    private _reassertSegment() {
+        const segment = this._segmenter?.currentSegment;
+        if (segment === undefined) {
+            return;
+        }
+        const now = Date.now();
+        if (now - this._lastReassertMs < segmentReassertIntervalMs) {
+            return;
+        }
+        this._lastReassertMs = now;
+        this._sendSegmentOps([{ op: 'segment-start', segment }]);
+    }
+
     private _attachVideoListeners() {
         const video = this._host.video;
         const nowMs = () => video.currentTime * 1000;
@@ -593,6 +611,22 @@ export class SaviCaptureController {
             ['seeked', () => handle(this._segmenter?.seeked(nowMs()) ?? [])],
             ['ratechange', () => handle(this._segmenter?.rateChange(nowMs(), video.playbackRate) ?? [])],
             ['ended', () => this.stop()],
+            // KEEPALIVE. `timeupdate` fires ~4x/s while playing; throttled to
+            // one re-assertion every few seconds.
+            //
+            // Boundary ops are the daemon's ONLY picture of what is being
+            // recorded, and after a dropped 'segment-start' the segmenter has
+            // no reason to emit anything again until the next pause or seek.
+            // So continuous watching goes unrecorded indefinitely: one real
+            // episode lost a contiguous 20 minutes, identically in two
+            // separate takes, and the tap then hit its 10-minute idle watchdog
+            // and stopped altogether. Retrying the send (0.32.2) narrows the
+            // window; only re-asserting closes it, because it recovers from a
+            // loss that already happened.
+            //
+            // Safe to repeat: the daemon ignores a Begin for the segment it
+            // already has open, and registers segments idempotently by id.
+            ['timeupdate', () => this._reassertSegment()],
         ];
 
         for (const [event, listener] of this._videoListeners) {

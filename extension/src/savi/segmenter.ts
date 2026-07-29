@@ -41,6 +41,20 @@ export class Segmenter {
     private _recording = false;
     private _rate = 1;
     private _nextSegmentIndex = 0;
+    private _current?: SegmentMeta;
+
+    /** The segment currently open, if any.
+     *
+     *  Exposed so the caller can RE-ASSERT it. Boundary ops are the daemon's
+     *  only picture of what is being recorded, and after a dropped
+     *  'segment-start' nothing further is emitted until the next pause or
+     *  seek — so continuous watching can go unrecorded indefinitely. One real
+     *  episode lost a contiguous 20 minutes that way, identically in two
+     *  separate takes. Repeating the open segment lets the daemon recover
+     *  without the user doing anything. */
+    get currentSegment(): SegmentMeta | undefined {
+        return this._current;
+    }
 
     get recording() {
         return this._recording;
@@ -142,6 +156,7 @@ export class Segmenter {
             mediaTimeMs: Math.max(0, Math.round(mediaTimeMs)),
             rate: this._rate,
         };
+        this._current = segment;
         return [{ type: 'segment-start', segment }];
     }
 
@@ -151,6 +166,7 @@ export class Segmenter {
         }
 
         this._recording = false;
+        this._current = undefined;
         return [{ type: 'segment-end' }];
     }
 }
