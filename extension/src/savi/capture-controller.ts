@@ -46,6 +46,38 @@ export interface SaviCaptureHost {
     notify: (locKey: string, replacements?: { [key: string]: string }) => void;
 }
 
+/** Delivery attempts for a segment boundary op. MV3 rejects `sendMessage`
+ *  while the service worker is tearing down, and a pause op is likely to be
+ *  sent at exactly that moment. */
+const segmentOpSendAttempts = 3;
+const segmentOpRetryDelayMs = 150;
+
+/**
+ * Deliver a message, retrying transient failures.
+ *
+ * Exported for its own test: the controller needs a live video element and a
+ * settings provider to construct, and this behaviour is worth pinning without
+ * either.
+ */
+export const sendWithRetry = async (
+    send: () => Promise<unknown>,
+    attempts = segmentOpSendAttempts,
+    delayMs = segmentOpRetryDelayMs,
+    sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms))
+): Promise<boolean> => {
+    for (let attempt = 0; attempt < attempts; attempt++) {
+        try {
+            await send();
+            return true;
+        } catch {
+            if (attempt + 1 < attempts) {
+                await sleep(delayMs * (attempt + 1));
+            }
+        }
+    }
+    return false;
+};
+
 export class SaviCaptureController {
     private readonly _host: SaviCaptureHost;
     private readonly _nativeSubtitleHider = new NativeSubtitleHider();
@@ -604,9 +636,24 @@ export class SaviCaptureController {
             return;
         }
 
-        // Fire-and-forget to the background, which attaches captureId + seq
-        // and relays to the daemon (content scripts can't reach it — CORS).
-        // Ops are low-frequency; waking a sleeping service worker is fine.
+        // Relayed via the background, which attaches captureId + seq and talks
+        // to the daemon (content scripts can't — CORS).
+        //
+        // RETRIED, because these are not advisory. A dropped 'segment-end' is
+        // not a lost hint that the stitcher can paper over: the daemon has no
+        // other way to learn playback stopped — the playback-state route
+        // carries no playing flag, and the recorder's watchdog only fires when
+        // NO segment is open. So the tap keeps recording into the abandoned
+        // segment, and because a take's coverage is
+        // `media_start + audio_ms * rate`, that silence is claimed as covered
+        // audio. One real episode ended up 48% digital silence with 229 of its
+        // 469 lines promising audio that did not exist.
+        //
+        // MV3 suspends this service worker routinely and `sendMessage` rejects
+        // while it is tearing down, which is exactly when a pause op is likely
+        // to be sent. Re-applying is safe: the daemon registers segments
+        // idempotently by id, and a duplicate end with nothing open is a
+        // no-op.
         const command: SaviCommand<SaviPlaybackStateMessage> = {
             sender: 'savi-video',
             message: {
@@ -614,8 +661,16 @@ export class SaviCaptureController {
                 ops,
             },
         };
-        browser.runtime.sendMessage(command).catch(() => {
-            // Background unreachable; the daemon's stitcher self-heals.
-        });
+        void this._sendWithRetry(command, ops);
+    }
+
+    private async _sendWithRetry(command: SaviCommand<SaviPlaybackStateMessage>, ops: SaviSegmentOp[]) {
+        const delivered = await sendWithRetry(() => browser.runtime.sendMessage(command));
+        if (!delivered) {
+            // Out of attempts. Say so: the daemon still believes a segment is
+            // open and keeps recording into it, so coverage will overstate.
+            // A silent failure here is what made this take days to find.
+            console.warn('savi: could not deliver segment ops after retries; coverage may overstate', ops);
+        }
     }
 }
