@@ -91,7 +91,7 @@ bound (another extension claimed it). Set it at **`edge://extensions/shortcuts`*
 (or `chrome://extensions/shortcuts`) under _"Savi: grant audio permission and
 start recording this tab"_.
 
-There's also a **Record button** on the video (bottom-left) — click it to
+There's also a **Record button** on the video (top-right) — click it to
 start/stop, and it turns into a pulsing red "Recording" while live. One catch
 the browser forces on everyone: a _click in the page_ can't grant the audio
 permission (only the shortcut / toolbar icon can), so the **first** record of a
