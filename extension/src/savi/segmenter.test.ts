@@ -167,3 +167,37 @@ describe('Segmenter', () => {
         expect(segmentStarts(s2.begin(1000.5, 1, false))[0].mediaTimeMs).toBe(1001);
     });
 });
+
+describe('currentSegment (keepalive support)', () => {
+    it('exposes the open segment so it can be re-asserted', () => {
+        // The daemon's only picture of what is recording comes from these ops.
+        // After a dropped 'segment-start' the segmenter emits nothing further
+        // until the next pause or seek, so continuous watching goes
+        // unrecorded — one real episode lost 20 contiguous minutes that way.
+        const s = new Segmenter();
+        expect(s.currentSegment).toBeUndefined();
+
+        s.begin(0, 1, false);
+        const open = s.currentSegment;
+        expect(open).toBeDefined();
+        expect(open!.mediaTimeMs).toBe(0);
+
+        // Stable across re-reads: re-asserting must repeat the SAME segment
+        // id, or the daemon would treat each keepalive as a new segment and
+        // shred the recording into 5-second files.
+        expect(s.currentSegment).toEqual(open);
+    });
+
+    it('clears on pause and returns a NEW segment on resume', () => {
+        const s = new Segmenter();
+        s.begin(0, 1, false);
+        const first = s.currentSegment!;
+        s.pause();
+        expect(s.currentSegment).toBeUndefined(); // nothing to re-assert
+
+        s.play(5_000);
+        const second = s.currentSegment!;
+        expect(second.segmentId).not.toBe(first.segmentId);
+        expect(second.mediaTimeMs).toBe(5_000);
+    });
+});

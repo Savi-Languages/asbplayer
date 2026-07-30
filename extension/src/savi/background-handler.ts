@@ -1,16 +1,16 @@
 // Background-side orchestration for savi capture, registered as one
 // extra CommandHandler in asbplayer's background handler list.
 //
-// Responsibilities that can only live here: minting tabCapture stream
-// ids, ensuring the offscreen document exists, and talking to the savi
-// daemon for capture start (the offscreen document owns chunk upload and
-// finish so captures survive service-worker sleep).
+// SV-18: the daemon records audio through its own system tap, so the
+// background owns the whole session lifecycle — daemon start/subtitles,
+// relaying playback-state segment cuts (with a persisted monotonic seq),
+// and finish. The session record lives in storage.session (capture-session
+// module) so it survives MV3 service-worker restarts. No offscreen document
+// and no tabCapture are involved anymore.
 
 import { SettingsProvider } from '@project/common/settings';
 import { CommandHandler } from '@/handlers/command-handler';
-import { ensureOffscreenAudioServiceDocument } from '@/services/offscreen-document';
 import {
-    SaviCaptureEndedMessage,
     SaviCaptureEndedToVideoMessage,
     SaviCaptureFrameResponse,
     SaviCaptureState,
@@ -19,9 +19,8 @@ import {
     SaviGlossTranslateResponse,
     SaviWordBucketsMessage,
     SaviWordBucketsResponse,
-    SaviOffscreenStartMessage,
-    SaviOffscreenStateMessage,
-    SaviOffscreenStopMessage,
+    SaviWordProficiencyMessage,
+    SaviWordProficiencyResponse,
     SaviDictMessage,
     SaviDictResponse,
     SaviEpisodeTranscriptMessage,
@@ -30,9 +29,10 @@ import {
     SaviMineLineResponse,
     SaviOpenSubtitlesFetchMessage,
     SaviOpenSubtitlesFetchResponse,
+    SaviPlaybackStateMessage,
+    SaviPlaybackStateResponse,
     SaviRoamingSettingsResponse,
     SaviRequestStartMessage,
-    SaviGetIntentResponse,
     SaviSegmentLineMessage,
     SaviSegmentLineResponse,
     SaviExplainWordMessage,
@@ -45,16 +45,38 @@ import {
     SaviStopCaptureResponse,
     SaviTokenizeMessage,
     SaviTokenizeResponse,
+    SaviWatchedLineMessage,
+    SaviWatchedLineResponse,
+    SaviEngagementSessionMessage,
 } from './messages';
 import { daemonToken } from './account';
-import { resolveCloudBase, translate as cloudTranslate, wordBuckets as cloudWordBuckets } from './cloud-client';
-import { clearRecordingIntent, hasRecordingIntent, setRecordingIntent } from './recording-intent';
 import {
+    DEFAULT_GLOSS_THRESHOLD,
+    glossThreshold as cloudGlossThreshold,
+    resolveCloudBase,
+    translate as cloudTranslate,
+    wordBuckets as cloudWordBuckets,
+    wordsProficiency as cloudWordsProficiency,
+} from './cloud-client';
+import {
+    clearCaptureSession,
+    getCaptureSession,
+    nextPlaybackSeq,
+    setCaptureSession,
+    CaptureSessionRecord,
+    SaviCaptureAudio,
+} from './capture-session';
+import {
+    browserHintFromUserAgent,
+    finishCapture,
     lookupDict,
     mineLine,
     normalizedBaseUrl,
     postEpisodeTranscript,
+    postPlaybackState,
     postSubtitles,
+    postWatchedLine,
+    postEngagementSession,
     SaviDaemonConfig,
     segmentLine,
     explainWord,
@@ -82,7 +104,7 @@ export default class SaviCommandHandler implements CommandHandler {
     }
 
     get sender() {
-        return ['savi-video', 'savi-popup', 'savi-offscreen'];
+        return ['savi-video', 'savi-popup'];
     }
 
     get command() {
@@ -104,10 +126,12 @@ export default class SaviCommandHandler implements CommandHandler {
                     });
                 return true;
             case 'savi-stop-capture':
-                this._stopCapture(command.message as SaviStopCaptureMessage, sender).then(sendResponse);
+                this._stopCapture().then(sendResponse);
                 return true;
-            case 'savi-get-intent':
-                this._getIntent(sender).then(sendResponse);
+            case 'savi-playback-state':
+                this._playbackState(command.message as SaviPlaybackStateMessage, sender)
+                    .then(sendResponse)
+                    .catch(() => sendResponse({ ok: false } as SaviPlaybackStateResponse));
                 return true;
             case 'savi-capture-state':
                 this._captureState().then(sendResponse);
@@ -142,6 +166,12 @@ export default class SaviCommandHandler implements CommandHandler {
                 return true;
             case 'savi-episode-transcript':
                 this._storeEpisodeTranscript(command.message as SaviEpisodeTranscriptMessage).then(sendResponse);
+                return true;
+            case 'savi-watched-line':
+                this._watchedLine(command.message as SaviWatchedLineMessage).then(sendResponse);
+                return true;
+            case 'savi-engagement-session':
+                this._engagementSession(command.message as SaviEngagementSessionMessage).then(sendResponse);
                 return true;
             case 'savi-mine-line':
                 this._mineLine(command.message as SaviMineLineMessage)
@@ -178,14 +208,18 @@ export default class SaviCommandHandler implements CommandHandler {
                     .then(sendResponse)
                     .catch(() => sendResponse({} as SaviGlossTranslateResponse));
                 return true;
+            case 'savi-word-proficiency':
+                this._wordProficiency(command.message as SaviWordProficiencyMessage)
+                    .then(sendResponse)
+                    .catch(() =>
+                        sendResponse({ threshold: DEFAULT_GLOSS_THRESHOLD } as SaviWordProficiencyResponse)
+                    );
+                return true;
             case 'savi-word-buckets':
                 this._wordBuckets(command.message as SaviWordBucketsMessage)
                     .then(sendResponse)
                     .catch(() => sendResponse({ buckets: {} } as SaviWordBucketsResponse));
                 return true;
-            case 'savi-capture-ended':
-                this._forwardCaptureEnded(command.message as SaviCaptureEndedMessage);
-                break;
         }
 
         return false;
@@ -271,6 +305,22 @@ export default class SaviCommandHandler implements CommandHandler {
             return { buckets: await cloudWordBuckets(saviCloudUrl, message.lang) };
         } catch (e) {
             return { buckets: {} };
+        }
+    }
+
+    // Glossing (SV-20): the review engine's per-lemma proficiency + the
+    // roaming threshold. `proficiency` undefined = signed out / old cloud /
+    // unreachable → the content script falls back to the buckets signal.
+    private async _wordProficiency(message: SaviWordProficiencyMessage): Promise<SaviWordProficiencyResponse> {
+        const { saviCloudUrl } = await this._settings.get(['saviCloudUrl']);
+        try {
+            const [proficiency, threshold] = await Promise.all([
+                cloudWordsProficiency(saviCloudUrl, message.lang),
+                cloudGlossThreshold(saviCloudUrl),
+            ]);
+            return { proficiency, threshold };
+        } catch (e) {
+            return { threshold: DEFAULT_GLOSS_THRESHOLD };
         }
     }
 
@@ -399,6 +449,52 @@ export default class SaviCommandHandler implements CommandHandler {
         }
     }
 
+    private async _watchedLine(message: SaviWatchedLineMessage): Promise<SaviWatchedLineResponse> {
+        const config = await this._daemonConfig();
+        if (!config) {
+            return { ok: false };
+        }
+        try {
+            await postWatchedLine(config, {
+                lang: message.lang,
+                text: message.text,
+                source: `watch:${message.episodeId}:${message.lineStartMs}`,
+                occurredAtMs: message.occurredAtMs,
+                glossedWords: message.glossedWords,
+                hoverGlossedWords: message.hoverGlossedWords,
+            });
+            return { ok: true };
+        } catch (e) {
+            // Fire-and-forget contract: a dropped line loses one line's exposure.
+            return { ok: false };
+        }
+    }
+
+    private async _engagementSession(message: SaviEngagementSessionMessage): Promise<{ ok: boolean }> {
+        const config = await this._daemonConfig();
+        if (!config) {
+            return { ok: false };
+        }
+        try {
+            await postEngagementSession(config, {
+                id: message.id,
+                kind: message.kind,
+                lang: message.lang,
+                source: message.source,
+                engagedMs: message.engagedMs,
+                startedAtMs: message.startedAtMs,
+                endedAtMs: message.endedAtMs,
+                tzOffsetMin: message.tzOffsetMin,
+            });
+            return { ok: true };
+        } catch (e) {
+            // The content script retries once on a false response. It carries
+            // the same id both times, so a first attempt that actually landed
+            // is deduped daemon-side rather than double-credited.
+            return { ok: false };
+        }
+    }
+
     private async _mineLine(message: SaviMineLineMessage): Promise<SaviMineLineResponse> {
         const config = await this._daemonConfig();
         if (!config) {
@@ -451,7 +547,6 @@ export default class SaviCommandHandler implements CommandHandler {
             return { started: false, errorCode: 'other', errorMessage: 'no tab id for capture request' };
         }
 
-        const { saviDaemonToken } = await this._settings.get(['saviDaemonToken']);
         const config = await this._daemonConfig();
 
         if (!config) {
@@ -462,25 +557,44 @@ export default class SaviCommandHandler implements CommandHandler {
             };
         }
 
-        const state = await this._captureState();
+        const existing = await getCaptureSession();
 
-        if (state.active) {
-            return {
-                started: false,
-                errorCode: 'already-capturing',
-                errorMessage: 'a savi capture is already running',
-            };
+        if (existing !== undefined) {
+            // One session at a time (the daemon has one tap). A session whose
+            // tab is gone is stale bookkeeping — sweep it and continue.
+            try {
+                await browser.tabs.get(existing.tabId);
+                return {
+                    started: false,
+                    errorCode: 'already-capturing',
+                    errorMessage: 'a savi capture is already running',
+                };
+            } catch (e) {
+                await clearCaptureSession();
+            }
         }
 
+        const { saviAudioRecording } = await this._settings.get(['saviAudioRecording']);
         let captureId: string;
+        let audio: SaviCaptureAudio;
 
         try {
-            captureId = await startCapture(config, {
+            const result = await startCapture(config, {
                 episodeId: message.episodeId,
                 show: message.show,
+                showId: message.showId,
                 title: message.title,
                 lang: message.lang,
+                audio: saviAudioRecording,
+                browser: browserHintFromUserAgent(navigator.userAgent),
             });
+            captureId = result.captureId;
+            // A pre-SV-18 daemon ignores the audio field entirely — surface
+            // that as unavailable so the user knows to update.
+            audio = (result.audio as SaviCaptureAudio | undefined) ?? {
+                state: 'unavailable',
+                reason: 'the savi daemon predates desktop audio capture — update the desktop app',
+            };
             await postSubtitles(config, {
                 captureId,
                 content: message.subtitles,
@@ -494,86 +608,132 @@ export default class SaviCommandHandler implements CommandHandler {
             };
         }
 
-        await ensureOffscreenAudioServiceDocument();
-        const streamId = await this._mediaStreamId(tabId);
-
-        const offscreenCommand: SaviCommand<SaviOffscreenStartMessage> = {
-            sender: 'savi-extension-to-offscreen',
-            message: {
-                command: 'savi-offscreen-start',
-                streamId,
-                captureId,
-                episodeId: message.episodeId,
-                show: message.show,
-                title: message.title,
-                baseUrl: config.baseUrl,
-                // The LAN fallback only — the offscreen document re-resolves
-                // the account token per chunk (a capture outlives a JWT).
-                lanToken: saviDaemonToken.trim(),
-                requester: { tabId, src: message.src },
-            },
-        };
-        const response = (await browser.runtime.sendMessage(offscreenCommand)) as {
-            started: boolean;
-            errorCode?: string;
-            errorMessage?: string;
-        };
-
-        if (!response?.started) {
-            // No heavy "enable audio recording" modal here anymore — the
-            // content-side capture controller shows a light toast (pointing at
-            // the Ctrl+Shift+S shortcut) only when the user explicitly asked to
-            // record, and stays silent on the every-reload auto-start.
-            return {
-                started: false,
-                errorCode: response?.errorCode === 'no-active-tab' ? 'no-active-tab' : 'other',
-                errorMessage: response?.errorMessage ?? 'failed to start recording',
-            };
-        }
-
-        // Capture truly started — mark this tab so a later reload's silently
-        // failing auto-start can tell "you were recording" from "never started".
-        await setRecordingIntent(tabId);
-        return { started: true, captureId };
+        await setCaptureSession({
+            tabId,
+            src: message.src,
+            captureId,
+            episodeId: message.episodeId,
+            title: message.title,
+            seq: 0,
+            audio,
+        });
+        return { started: true, captureId, audio };
     }
 
-    private async _stopCapture(
-        message: SaviStopCaptureMessage,
-        sender: Browser.runtime.MessageSender
-    ): Promise<SaviStopCaptureResponse> {
-        // A DELIBERATE user stop clears the tab's recording intent so a later
-        // reload doesn't nag to resume. A reload / next-episode / video-end stop
-        // sends clearIntent=false, keeping intent so the guard can prompt.
-        if (message.clearIntent && sender.tab?.id !== undefined) {
-            await clearRecordingIntent(sender.tab.id);
+    private async _stopCapture(): Promise<SaviStopCaptureResponse> {
+        const session = await getCaptureSession();
+
+        if (session === undefined) {
+            return { stopped: false, errorMessage: 'no savi capture is running' };
         }
+
+        const config = await this._daemonConfig();
+        await clearCaptureSession();
+
+        if (!config) {
+            // The daemon keeps the session resumable; nothing to finish now.
+            return { stopped: false, errorMessage: 'sign in to savi (or set a daemon token) to finish' };
+        }
+
+        // Acknowledge immediately; the finish result (stitching can take a
+        // while) travels out-of-band as savi-capture-ended. The pending fetch
+        // keeps the service worker alive; if the worker is killed anyway, the
+        // daemon still completes the finish — only the toast is lost.
+        void this._finishAndNotify(config, session);
+        return { stopped: true };
+    }
+
+    private async _finishAndNotify(config: SaviDaemonConfig, session: CaptureSessionRecord): Promise<void> {
+        let ended: SaviCaptureEndedToVideoMessage;
+
         try {
-            const command: SaviCommand<SaviOffscreenStopMessage> = {
-                sender: 'savi-extension-to-offscreen',
-                message: { command: 'savi-offscreen-stop' },
-            };
-            return (await browser.runtime.sendMessage(command)) as SaviStopCaptureResponse;
+            const info = await finishCapture(config, session.captureId);
+            ended = { command: 'savi-capture-ended', src: session.src, ok: true, info };
         } catch (e) {
-            return { stopped: false, errorMessage: e instanceof Error ? e.message : String(e) };
+            ended = {
+                command: 'savi-capture-ended',
+                src: session.src,
+                ok: false,
+                errorMessage: e instanceof Error ? e.message : String(e),
+            };
         }
+
+        const command: SaviCommand<SaviCaptureEndedToVideoMessage> = {
+            sender: 'savi-extension-to-video',
+            message: ended,
+        };
+        browser.tabs.sendMessage(session.tabId, command).catch(() => {});
     }
 
-    private async _getIntent(sender: Browser.runtime.MessageSender): Promise<SaviGetIntentResponse> {
-        return { intentSet: await hasRecordingIntent(sender.tab?.id) };
+    // Playback-state relay: per-batch seq allocated (and persisted) up front,
+    // batches serialized through a promise chain so HTTP ordering matches op
+    // ordering, one retry for transient network failures, then drop with a
+    // warning (the daemon's stitcher self-heals a lost segment-end).
+    private _playbackChain: Promise<unknown> = Promise.resolve();
+
+    private async _playbackState(
+        message: SaviPlaybackStateMessage,
+        sender: Browser.runtime.MessageSender
+    ): Promise<SaviPlaybackStateResponse> {
+        const tabId = sender.tab?.id;
+        const run = this._playbackChain.then(async (): Promise<SaviPlaybackStateResponse> => {
+            const allocated = await nextPlaybackSeq();
+
+            if (allocated === undefined || (tabId !== undefined && allocated.session.tabId !== tabId)) {
+                return { ok: false };
+            }
+
+            const config = await this._daemonConfig();
+
+            if (!config) {
+                return { ok: false };
+            }
+
+            const { session, seq } = allocated;
+            const post = () => postPlaybackState(config, { captureId: session.captureId, seq, ops: message.ops });
+
+            const handle = async (result: Awaited<ReturnType<typeof post>>): Promise<SaviPlaybackStateResponse> => {
+                if (result.sessionGone) {
+                    // The daemon finished this session behind our back (orphan
+                    // sweep after a long idle, or a daemon restart). Drop the
+                    // stale bookkeeping and tell the tab so the capture
+                    // controller restarts — the new take merges with whatever
+                    // was already finished.
+                    await clearCaptureSession();
+                    const command: SaviCommand<SaviCaptureEndedToVideoMessage> = {
+                        sender: 'savi-extension-to-video',
+                        message: { command: 'savi-capture-ended', src: session.src, ok: false, expired: true },
+                    };
+                    browser.tabs.sendMessage(session.tabId, command).catch(() => {});
+                    return { ok: false, sessionGone: true };
+                }
+                return { ok: result.ok, audio: result.audio };
+            };
+
+            try {
+                return await handle(await post());
+            } catch (e) {
+                try {
+                    // Same seq on retry: the daemon never saw the failed send.
+                    return await handle(await post());
+                } catch (e2) {
+                    console.warn('savi: playback-state batch dropped', e2);
+                    return { ok: false };
+                }
+            }
+        });
+        this._playbackChain = run.catch(() => {});
+        return run;
     }
 
     private async _captureState(): Promise<SaviCaptureState> {
-        try {
-            const command: SaviCommand<SaviOffscreenStateMessage> = {
-                sender: 'savi-extension-to-offscreen',
-                message: { command: 'savi-offscreen-state' },
-            };
-            const state = (await browser.runtime.sendMessage(command)) as SaviCaptureState | undefined;
-            return state ?? { active: false };
-        } catch (e) {
-            // No offscreen document; nothing is capturing.
+        const session = await getCaptureSession();
+
+        if (session === undefined) {
             return { active: false };
         }
+
+        return { active: true, episodeId: session.episodeId, title: session.title, tabId: session.tabId };
     }
 
     private async _requestStart(message: SaviRequestStartMessage): Promise<{ requested: boolean }> {
@@ -588,24 +748,29 @@ export default class SaviCommandHandler implements CommandHandler {
             return { requested: false };
         }
     }
-
-    private _forwardCaptureEnded(message: SaviCaptureEndedMessage) {
-        const command: SaviCommand<SaviCaptureEndedToVideoMessage> = {
-            sender: 'savi-extension-to-video',
-            message: {
-                command: 'savi-capture-ended',
-                src: message.requester.src,
-                ok: message.ok,
-                info: message.info,
-                errorMessage: message.errorMessage,
-            },
-        };
-        browser.tabs.sendMessage(message.requester.tabId, command).catch(() => {});
-    }
-
-    private _mediaStreamId(tabId: number): Promise<string> {
-        return new Promise((resolve) => {
-            browser.tabCapture.getMediaStreamId({ targetTabId: tabId }, (streamId) => resolve(streamId));
-        });
-    }
 }
+
+/** Finish the in-flight capture when its tab closes (wired to tabs.onRemoved
+ *  in the background entrypoint). Best-effort: on any failure the daemon
+ *  keeps the session resumable on disk. */
+export const finishCaptureForClosedTab = async (tabId: number, settings: SettingsProvider): Promise<void> => {
+    const session = await getCaptureSession();
+
+    if (session === undefined || session.tabId !== tabId) {
+        return;
+    }
+
+    await clearCaptureSession();
+    const { saviDaemonUrl, saviDaemonToken } = await settings.get(['saviDaemonUrl', 'saviDaemonToken']);
+    const token = await daemonToken(saviDaemonToken);
+
+    if (!saviDaemonUrl.trim() || !token) {
+        return;
+    }
+
+    try {
+        await finishCapture({ baseUrl: normalizedBaseUrl(saviDaemonUrl), token }, session.captureId);
+    } catch (e) {
+        console.warn('savi: finishing capture for closed tab failed', e);
+    }
+};

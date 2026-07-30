@@ -2,22 +2,17 @@
 // asbplayer's senders so upstream message handling is untouched.
 //
 // Senders:
-//   'savi-video'                content script → background (start/stop)
+//   'savi-video'                content script → background (start/stop,
+//                               playback-state segment cuts, dict, gloss, …)
 //   'savi-popup'                popup → background (state/start/stop)
-//   'savi-video-to-offscreen'   content script → offscreen document
-//                               (segment cuts; skips the service worker so
-//                               cuts keep flowing even if it is asleep)
-//   'savi-extension-to-offscreen' background → offscreen document
-//   'savi-offscreen'            offscreen document → background
 //   'savi-extension-to-video'   background → content script
+//
+// (SV-18 removed the offscreen-document senders: audio is recorded by the
+// daemon's own system tap now, so no tab-capture recorder exists.)
 
 import { SegmentMeta } from './segmenter';
 import { CaptureFinishInfo, SaviDictEntry, SaviKanjiFull, SaviKanjiInfo, SaviToken } from './daemon-client';
-
-export interface SaviRequester {
-    readonly tabId: number;
-    readonly src: string;
-}
+import { SaviCaptureAudio } from './capture-session';
 
 // ── content script → background ─────────────────────────────────────────
 
@@ -30,6 +25,11 @@ export interface SaviStartCaptureMessage {
     readonly episodeId: string;
     // Series name (e.g. "Dark"); absent for films / unrecognized pages.
     readonly show?: string;
+    // The show's STABLE platform id ("netflix:80209013"), when the site
+    // exposes one. Display names are localized and can change with the
+    // profile language; the library groups episodes by this instead, falling
+    // back to the name where absent.
+    readonly showId?: string;
     // Episode label (e.g. "S1:E3 Secrets") or, when no show is known, the
     // best available page title. Always present.
     readonly title: string;
@@ -46,17 +46,15 @@ export interface SaviStartCaptureMessage {
 
 export interface SaviStopCaptureMessage {
     readonly command: 'savi-stop-capture';
-    // True only on a DELIBERATE user stop (manual toggle / popup). The background
-    // clears the tab's recording-intent marker only then — so a reload, SPA
-    // next-episode, or video-end (which also stop capture) KEEP intent, letting
-    // the recording guard prompt to resume.
-    readonly clearIntent: boolean;
 }
 
 export interface SaviStartCaptureResponse {
     readonly started: boolean;
     readonly captureId?: string;
-    readonly errorCode?: 'not-configured' | 'already-capturing' | 'daemon-unreachable' | 'no-active-tab' | 'other';
+    /** The daemon's audio report (SV-18): whether ITS tap is recording for
+     *  this session. `legacy` means an old daemon that ignored the field. */
+    readonly audio?: SaviCaptureAudio;
+    readonly errorCode?: 'not-configured' | 'already-capturing' | 'daemon-unreachable' | 'other';
     readonly errorMessage?: string;
 }
 
@@ -69,16 +67,24 @@ export interface SaviStopCaptureResponse {
     readonly errorMessage?: string;
 }
 
-// Ask whether THIS tab had a recording before the current page load (intent
-// persisted in storage.session across the reload). The recording guard uses it
-// to tell a reload-drop (intent set → prompt to resume) from a never-started
-// episode (intent unset → a calmer, gated nudge).
-export interface SaviGetIntentMessage {
-    readonly command: 'savi-get-intent';
+// Playback-state segment cuts (SV-18): the content script samples the video's
+// media time/rate at each play/pause/seek/rate event and forwards the ops; the
+// background attaches the session's captureId + a persisted monotonic seq and
+// relays to the daemon, which slices its own tap recording accordingly. Ops
+// are low-frequency, so waking a sleeping service worker per batch is fine.
+export interface SaviPlaybackStateMessage {
+    readonly command: 'savi-playback-state';
+    readonly ops: SaviSegmentOp[];
 }
 
-export interface SaviGetIntentResponse {
-    readonly intentSet: boolean;
+export interface SaviPlaybackStateResponse {
+    readonly ok: boolean;
+    /** The daemon's current audio state for the session ('recording' | 'idle'
+     *  | 'off'), when known. */
+    readonly audio?: string;
+    /** The daemon no longer knows this session (orphan-sweep auto-finish or a
+     *  daemon restart) — bookkeeping was cleared; the capture should restart. */
+    readonly sessionGone?: boolean;
 }
 
 // ── popup → background ──────────────────────────────────────────────────
@@ -211,6 +217,65 @@ export interface SaviEpisodeTranscriptResponse {
     readonly ok: boolean;
 }
 
+// One displayed subtitle line → one watch-time exposure event (SV-18). Fired by
+// the encounter reporter as each primary-track line starts showing; the
+// background relays it to the daemon's POST /v2/events/watched, which tokenizes
+// the raw text into Level-1 TokenEncounters. Fire-and-forget: a lost line loses
+// only that line's exposure.
+/** One glossed word + the label that was shown for it (SV-20: the daemon
+ *  persists the label so the reviewer can key sense pairs off it). `gloss`
+ *  may be empty when the label text wasn't captured (e.g. an old cache). */
+export interface GlossedWordEntry {
+    readonly word: string;
+    readonly gloss: string;
+}
+
+export interface SaviWatchedLineMessage {
+    readonly command: 'savi-watched-line';
+    readonly lang: string;
+    readonly text: string;
+    readonly episodeId: string;
+    readonly lineStartMs: number;
+    readonly occurredAtMs: number;
+    /** Lowercased words displayed WITH an inline gloss label while the line
+     *  showed (SV-12/13), each with the shown label (SV-20) — stored as
+     *  `glossed` (passive aided exposure). Empty for CJK lines / glossing
+     *  off / not settled. */
+    readonly glossedWords: GlossedWordEntry[];
+    /** Lowercased words whose gloss the user revealed on demand (hover)
+     *  while the line showed, each with the revealed label — stored as
+     *  `hover_glossed` (active lookup). The inline label wins when a word
+     *  appears in both lists. */
+    readonly hoverGlossedWords: GlossedWordEntry[];
+}
+
+/** One closed block of actively-engaged learning time (SV-21). Sent from the
+ *  content script to the background, which forwards it to the daemon.
+ *
+ *  `kind` is the PROCESSING DEPTH axis and `source` the orthogonal METHOD
+ *  axis, so the same episode legitimately reports both `watch` time (tab
+ *  visible and focused) and `listen` time (playing while backgrounded). */
+export interface SaviEngagementSessionMessage {
+    readonly command: 'savi-engagement-session';
+    /** Client-generated UUID — the daemon dedupes on it, so a retry after a
+     *  dropped response can't double-credit. Never reuse one. */
+    readonly id: string;
+    readonly kind: 'flashcard' | 'watch' | 'relisten' | 'listen' | 'ambient';
+    readonly lang: string;
+    readonly source?: string;
+    /** ACCRUED engaged ms, not the wall span. */
+    readonly engagedMs: number;
+    readonly startedAtMs: number;
+    readonly endedAtMs: number;
+    /** Device UTC offset in minutes EAST of UTC at capture time. Cannot be
+     *  reconstructed later — without it, relocating re-buckets history. */
+    readonly tzOffsetMin: number;
+}
+
+export interface SaviWatchedLineResponse {
+    readonly ok: boolean;
+}
+
 // Search OpenSubtitles.com for a subtitle in the target language and return its
 // text (SV-8 fallback, used only when the streaming player has no target-language
 // track). Runs in the background because MV3 blocks cross-origin fetches from
@@ -285,6 +350,21 @@ export interface SaviWordBucketsResponse {
     readonly buckets: Record<string, 'new' | 'word_box' | 'known'>;
 }
 
+// Per-lemma proficiency [0,1] from the SV-20 review engine — the graded
+// successor to buckets for the glossing decision: gloss a word iff its
+// proficiency is below the user's threshold. `proficiency` undefined =
+// signed out / unreachable → the caller falls back to buckets.
+export interface SaviWordProficiencyMessage {
+    readonly command: 'savi-word-proficiency';
+    readonly lang: string;
+}
+
+export interface SaviWordProficiencyResponse {
+    readonly proficiency?: Record<string, number>;
+    /** The roaming `review.glossThreshold` setting (default 0.8). */
+    readonly threshold: number;
+}
+
 // Capture a JPEG of the current video frame for a mined card. A content script
 // can't call tabs.captureVisibleTab (background-only), so it asks the
 // background for the full-tab data URL, then crops it locally to the video.
@@ -296,56 +376,11 @@ export interface SaviCaptureFrameResponse {
     readonly dataUrl?: string;
 }
 
-// ── content script → offscreen document ─────────────────────────────────
-
+// The segment-cut wire ops, shared with the daemon's playback-state endpoint
+// (crates/savi-daemon capture_audio::WireSegmentOp mirrors this exactly).
 export type SaviSegmentOp =
     | { readonly op: 'segment-start'; readonly segment: SegmentMeta }
     | { readonly op: 'segment-end' };
-
-export interface SaviSegmentMessage {
-    readonly command: 'savi-segment';
-    readonly ops: SaviSegmentOp[];
-}
-
-// ── background → offscreen document ─────────────────────────────────────
-
-export interface SaviOffscreenStartMessage {
-    readonly command: 'savi-offscreen-start';
-    readonly streamId: string;
-    readonly captureId: string;
-    readonly episodeId: string;
-    readonly show?: string;
-    readonly title: string;
-    readonly baseUrl: string;
-    /** The legacy LAN token, as a FALLBACK only (may be ''). The offscreen
-     *  document resolves the signed-in account's token per chunk — a capture
-     *  outlives the ~1h JWT, so a token snapshotted at start would go stale
-     *  mid-episode. */
-    readonly lanToken: string;
-    readonly requester: SaviRequester;
-}
-
-export interface SaviOffscreenStopMessage {
-    readonly command: 'savi-offscreen-stop';
-}
-
-export interface SaviOffscreenStateMessage {
-    readonly command: 'savi-offscreen-state';
-}
-
-// ── offscreen document → background ─────────────────────────────────────
-
-// Sent whenever a capture finishes — explicit stop, video ended, or the
-// captured tab going away — carrying the daemon's episode summary (or the
-// failure). Forwarded to the capture's tab as a toast.
-export interface SaviCaptureEndedMessage {
-    readonly command: 'savi-capture-ended';
-    readonly requester: SaviRequester;
-    readonly ok: boolean;
-    readonly info?: CaptureFinishInfo;
-    readonly failedSegments?: number;
-    readonly errorMessage?: string;
-}
 
 // ── background → content script ─────────────────────────────────────────
 
@@ -356,6 +391,10 @@ export interface SaviCaptureEndedToVideoMessage {
     readonly info?: CaptureFinishInfo;
     readonly failedSegments?: number;
     readonly errorMessage?: string;
+    /** The daemon finished/forgot the session while it was still live here
+     *  (orphan sweep after idle, daemon restart). The controller restarts the
+     *  capture — the new take merges with whatever was already finished. */
+    readonly expired?: boolean;
 }
 
 export interface SaviRequestStartToVideoMessage {
@@ -363,12 +402,6 @@ export interface SaviRequestStartToVideoMessage {
 }
 
 export interface SaviCommand<M> {
-    readonly sender:
-        | 'savi-video'
-        | 'savi-popup'
-        | 'savi-video-to-offscreen'
-        | 'savi-extension-to-offscreen'
-        | 'savi-offscreen'
-        | 'savi-extension-to-video';
+    readonly sender: 'savi-video' | 'savi-popup' | 'savi-extension-to-video';
     readonly message: M;
 }

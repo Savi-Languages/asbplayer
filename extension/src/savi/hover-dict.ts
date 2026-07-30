@@ -38,8 +38,11 @@ import { cropAndResize } from '@project/common/src/image-transformer';
 // The overlay that stacks subtitle lines (the target language AND its
 // translation). We never tokenize this whole thing — we resolve the single
 // line under the cursor below — but we use it to confirm a [data-track] span is
-// actually a subtitle line.
-const SUBTITLE_CONTAINER = '.asbplayer-subtitles';
+// actually a subtitle line. The overlay uses a DIFFERENT content class in
+// fullscreen ('asbplayer-fullscreen-subtitles', see subtitle-controller's
+// _elementOverlayParams) — both must match, or hover dies the moment the
+// player goes fullscreen (it did).
+const SUBTITLE_CONTAINER = '.asbplayer-subtitles, .asbplayer-fullscreen-subtitles';
 // The embedded dictionary is Japanese; lines without any Japanese (e.g. the
 // English translation track) are skipped so we never box or tokenize them.
 const LANG = 'ja';
@@ -392,6 +395,12 @@ function positionPopup(popup: HTMLDivElement, arrow: HTMLDivElement, word: DOMRe
 
 /** Attaches a hover handler over subtitle text: boxes the word under the
  *  cursor and shows a daemon-backed dictionary popup for it. */
+/** The headline label of a dictionary result — the first gloss of the first
+ *  sense (what the popup shows most prominently). '' when there's none (a
+ *  kanji-only result still teaches, but there is no label to persist). */
+const firstDictGloss = (entries: SaviDictEntry[]): string =>
+    entries[0]?.senses?.[0]?.glosses?.[0] ?? '';
+
 export class SaviHoverDictionary {
     private readonly _tokenizeCache = new Map<string, SaviToken[]>();
     // null = the daemon returned no AI segmentation for this line → use rule-based.
@@ -421,10 +430,16 @@ export class SaviHoverDictionary {
     private readonly _transcriptSentFor = new Set<string>();
 
     /** @param _videoProvider returns the bound media element, so a mined card
-     *  can screenshot the current frame. Defaults to none (no screenshot). */
+     *  can screenshot the current frame. Defaults to none (no screenshot).
+     *  @param _onReveal called when a word's meaning was actually SHOWN to the
+     *  user (hover popup / tap panel), with the line, the word surface, and
+     *  the displayed gloss — the encounter reporter records it as a
+     *  hover_glossed encounter carrying the label (SV-20). This is what makes
+     *  the JA path feed the reviewer at all. */
     constructor(
         private readonly _videoProvider: () => HTMLMediaElement | null = () => null,
-        private readonly _subtitleProvider: () => SerializableSubtitle[] = () => []
+        private readonly _subtitleProvider: () => SerializableSubtitle[] = () => [],
+        private readonly _onReveal?: (lineText: string, word: string, gloss: string) => void
     ) {}
 
     start() {
@@ -573,6 +588,9 @@ export class SaviHoverDictionary {
             )
         );
         popup.style.display = 'block';
+        // The word's meaning is now on screen — a hover_glossed encounter with
+        // the shown label (SV-20). Kanji-only results reveal no label ('').
+        this._onReveal?.(text, span.token.text, firstDictGloss(result.entries));
         // Anchor to the word so the arrow points at it; fall back to the cursor.
         const anchor = wordRect ?? new DOMRect(x, y, 0, 0);
         positionPopup(popup, this._arrow!, anchor);
@@ -716,6 +734,9 @@ export class SaviHoverDictionary {
             kanji: dict.kanji,
             onMine: (button) => void this._mine(text, span.token, term, button),
         });
+        // A deliberate tap-open study of the word — record the reveal with the
+        // dictionary headline (upgraded below if the AI in-context gloss lands).
+        this._onReveal?.(text, span.token.text, firstDictGloss(dict.entries));
         // Pause the video while the study panel is up and KEEP it paused until the
         // user dismisses it — independent of the cursor or the hover-pause setting.
         // (isOverHoverSurface returns true while _panelOpen, so the binding's
@@ -730,7 +751,13 @@ export class SaviHoverDictionary {
         // the AI explanation + segmentation can ground in the episode gist — not just
         // the ±2 neighbouring lines — even when you only ever tap (never mine). Awaited
         // so the FIRST tap of an episode already benefits; a no-op on later taps.
-        await this._maybeSendTranscript(deriveEpisodeId(location.href, document.title)).catch(() => {});
+        // Skipped entirely when the page has no stable id yet — grounding the
+        // AI in an episode we cannot name would file the transcript under a
+        // throwaway id.
+        const transcriptEpisodeId = deriveEpisodeId(location.href, document.title);
+        if (transcriptEpisodeId !== undefined) {
+            await this._maybeSendTranscript(transcriptEpisodeId).catch(() => {});
+        }
         // AI in-context — fired ONLY here, on a deliberate tap. Far fewer calls than
         // per-hover (so the providers stop rate-limiting), and a slow/failed call
         // degrades to a graceful "unavailable" inside the panel.
@@ -744,6 +771,12 @@ export class SaviHoverDictionary {
                     }
                 }
                 panel.setContext(featured, aiTokens);
+                // The AI in-context gloss is the best label for this exact
+                // sentence — overwrite the dictionary headline on the pending
+                // encounter (the line is still open: the panel pauses playback).
+                if (featured?.gloss) {
+                    this._onReveal?.(text, span.token.text, featured.gloss);
+                }
             })
             .catch(() => panel.setContext(null, null));
         // In parallel, fetch the detailed "explain like a sensei" note for the
@@ -791,6 +824,10 @@ export class SaviHoverDictionary {
         button.textContent = 'Adding…';
         try {
             const episodeId = deriveEpisodeId(location.href, document.title);
+            if (episodeId === undefined) {
+                button.textContent = 'Not ready';
+                return;
+            }
             // Make sure the daemon has the whole-episode transcript (once per
             // episode) so the card's scene-level context gets an episode gist,
             // even on an episode the user never recorded. Best-effort, awaited so

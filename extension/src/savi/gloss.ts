@@ -17,11 +17,14 @@
 // are language-disjoint, so gloss ruby never collides with the JA hover path).
 
 import {
+    GlossedWordEntry,
     SaviCommand,
     SaviGlossTranslateMessage,
     SaviGlossTranslateResponse,
     SaviWordBucketsMessage,
     SaviWordBucketsResponse,
+    SaviWordProficiencyMessage,
+    SaviWordProficiencyResponse,
 } from './messages';
 import { getCachedRoamingSettings } from './cloud-settings';
 import type { WordBucket } from './cloud-client';
@@ -40,22 +43,70 @@ const PRIMARY_TRACK = 0;
 // by BCP-47 primary subtag. (Japanese is covered by the hover dictionary.)
 const NON_SPACE_DELIMITED = new Set(['ja', 'zh', 'yue', 'wuu', 'ko', 'th', 'lo', 'km', 'my', 'bo']);
 
-// Spanish function words — ported from savi-core's `es` analyzer STOPWORDS so
-// SV-12 (before the SV-13 known-word filter kicks in) doesn't gloss el/la/de/que.
-// Kept in sync with crates/savi-core/src/analyzer.rs (`mod es`).
+// Spanish STRUCTURAL function words — ported from savi-core's `es` analyzer
+// STOPWORDS so SV-12 (before the SV-13 known-word filter kicks in) doesn't
+// gloss el/la/de/que. Kept in sync with crates/savi-core/src/analyzer.rs
+// (`mod es`); this set must never be NARROWER than savi-core's, or we gloss a
+// word that can never enter review.
+//
+// Nine words were removed from both lists after the founder found `más`
+// unglossable AND absent from the word list: más, bien, muy, también, tampoco,
+// algo, así, aunque, según. They are lexical items a beginner must learn, not
+// grammatical glue, and they self-resolve — once known, proficiency ≥ the
+// gloss threshold suppresses the label, which is the scheduler's job rather
+// than a hardcoded list's.
 const SPANISH_STOPWORDS = new Set<string>([
-    'a', 'al', 'algo', 'ante', 'aquel', 'aquella', 'aquello', 'aqui', 'aquí', 'así',
-    'aunque', 'bajo', 'bien', 'como', 'cómo', 'con', 'contra', 'cual', 'cuál', 'cuando',
+    'a', 'al', 'ante', 'aquel', 'aquella', 'aquello', 'aqui', 'aquí',
+    'bajo', 'como', 'cómo', 'con', 'contra', 'cual', 'cuál', 'cuando',
     'cuándo', 'de', 'del', 'desde', 'donde', 'dónde', 'e', 'el', 'él', 'ella', 'ellas',
     'ellos', 'en', 'entre', 'era', 'eran', 'eres', 'es', 'esa', 'ese', 'eso', 'esta',
     'está', 'estaba', 'estamos', 'están', 'estar', 'estas', 'este', 'esto', 'estos',
     'estoy', 'fue', 'fueron', 'ha', 'haber', 'había', 'han', 'has', 'hasta', 'hay',
-    'he', 'la', 'las', 'le', 'les', 'lo', 'los', 'más', 'me', 'mi', 'mis', 'muy',
+    'he', 'la', 'las', 'le', 'les', 'lo', 'los', 'me', 'mi', 'mis',
     'ni', 'no', 'nos', 'nosotros', 'nuestra', 'nuestro', 'o', 'os', 'para', 'pero',
-    'por', 'porque', 'pues', 'que', 'qué', 'quien', 'quién', 'se', 'según', 'ser',
-    'si', 'sí', 'sido', 'sin', 'sobre', 'somos', 'son', 'soy', 'su', 'sus', 'también',
-    'tampoco', 'te', 'tras', 'tu', 'tú', 'tus', 'u', 'un', 'una', 'unas', 'unos',
+    'por', 'porque', 'pues', 'que', 'qué', 'quien', 'quién', 'se', 'ser',
+    'si', 'sí', 'sido', 'sin', 'sobre', 'somos', 'son', 'soy', 'su', 'sus',
+    'te', 'tras', 'tu', 'tú', 'tus', 'u', 'un', 'una', 'unas', 'unos',
     'usted', 'ustedes', 'vosotros', 'y', 'ya', 'yo',
+]);
+
+// Conjugations whose LEMMA is a function word (ser/estar/haber/…), which the
+// surface list above cannot see.
+//
+// This closes a real hole the founder asked about: savi-core drops a token when
+// its *lemma* is a stopword, so "seré" and "estuvieron" never become encounters
+// and can never enter review — but they are not in the surface list, so the
+// extension glossed them anyway. The result was a word labelled on screen
+// forever with no path to ever learning it, since the SV-13 known-word filter
+// reads proficiency 0 for a word that is not in the deck at all.
+//
+// Generated from crates/savi-core/data/lemmatization-es.txt ∩ the analyzer's
+// STOPWORDS. Only forms whose EVERY lemma is a function word are listed:
+// "fuimos" maps to both `ir` (a real verb) and `ser`, so it stays glossable —
+// dropping it would hide a word the learner genuinely can review.
+//
+// ("voy" → `ir` is NOT here, and correctly so: it is reviewable.)
+const SPANISH_AUXILIARY_FORMS = new Set<string>([
+    'aes', 'aquellas', 'aquellos', 'aquél', 'aquélla', 'aquéllas', 'aquéllos', 'asina',
+    'asín', 'bajos', 'bienes', 'contras', 'cuales', 'cuáles', 'ello', 'erais', 'esas',
+    'esos', 'estabais', 'estaban', 'estabas', 'estad', 'estada', 'estadas', 'estado',
+    'estando', 'estaremos', 'estará', 'estarán', 'estarás', 'estaré', 'estaréis', 'estaría',
+    'estaríais', 'estaríamos', 'estarían', 'estarías', 'estemos', 'estes', 'estuve',
+    'estuviera', 'estuvierais', 'estuvieran', 'estuvieras', 'estuviere', 'estuviereis',
+    'estuvieren', 'estuvieres', 'estuvieron', 'estuviese', 'estuvieseis', 'estuviesen',
+    'estuvieses', 'estuvimos', 'estuviste', 'estuvisteis', 'estuviéramos', 'estuviéremos',
+    'estuviésemos', 'estuvo', 'estábamos', 'estáis', 'estás', 'esté', 'estéis', 'estén',
+    'estés', 'haberes', 'habida', 'habidas', 'habido', 'habidos', 'habiendo', 'habremos',
+    'habrá', 'habrán', 'habrás', 'habré', 'habréis', 'habría', 'habríais', 'habríamos',
+    'habrían', 'habrías', 'habéis', 'habíais', 'habíamos', 'habían', 'habías', 'haya',
+    'hayamos', 'hayan', 'hayáis', 'hube', 'hubiera', 'hubierais', 'hubieran', 'hubieras',
+    'hubiere', 'hubiereis', 'hubieren', 'hubieres', 'hubieron', 'hubiese', 'hubieseis',
+    'hubiesen', 'hubieses', 'hubimos', 'hubiste', 'hubisteis', 'hubiéramos', 'hubiéremos',
+    'hubiésemos', 'hubo', 'noes', 'nosotras', 'nuestras', 'nuestros', 'oes', 'peros',
+    'quienes', 'quiénes', 'sea', 'seamos', 'sean', 'seas', 'sed', 'seremos', 'seres',
+    'será', 'serán', 'serás', 'seré', 'seréis', 'sería', 'seríais', 'seríamos', 'serían',
+    'serías', 'seáis', 'siendo', 'sis', 'sois', 'sones', 'sons', 'síes', 'vos', 'vosotras',
+    'éramos', 'ésa', 'ésas', 'ése', 'ésos', 'ésta', 'éstas', 'éste', 'éstos', 'úes',
 ]);
 
 /** One piece of a subtitle line: a word token or the gap between words. The
@@ -81,9 +132,16 @@ export function isGlossableLanguage(lang: string): boolean {
 }
 
 /** A content word iff it is not a function word and at least two letters —
- *  mirrors the `es` analyzer's noise policy (used before the SV-13 known filter). */
+ *  mirrors the `es` analyzer's noise policy (used before the SV-13 known filter).
+ *
+ *  Both lists matter: the surface stoplist catches `de`/`que`, and the
+ *  auxiliary list catches conjugations like `seré` whose LEMMA is a function
+ *  word. Without the second, savi-core would refuse to make them encounters
+ *  while this kept labelling them — glossed forever, never reviewable. */
 export function isContentWord(lemma: string): boolean {
-    return lemma.length >= 2 && !SPANISH_STOPWORDS.has(lemma);
+    return (
+        lemma.length >= 2 && !SPANISH_STOPWORDS.has(lemma) && !SPANISH_AUXILIARY_FORMS.has(lemma)
+    );
 }
 
 // After one of these, the next capitalized word starts a new sentence (so it is
@@ -170,6 +228,35 @@ export function buildGlossHtml(
     return glossed ? html : '';
 }
 
+/** Undo `escapeHtml` on extracted `<rt>` label text (labels may legitimately
+ *  contain &, <, etc. after DeepL — they were escaped at render time). */
+const unescapeHtml = (s: string): string =>
+    s.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+
+/** The words a settled gloss-HTML line actually wraps in gloss ruby, each with
+ *  the LABEL it displays (SV-20: the daemon persists the label so the reviewer
+ *  can key sense pairs off it) — the exact render truth. Safe to extract with a
+ *  pattern because WE generated the markup and word segments are pure letter
+ *  runs (no entities possible inside them). De-duplicated by word. */
+export function glossedEntriesFromHtml(html: string): GlossedWordEntry[] {
+    const out: GlossedWordEntry[] = [];
+    const seen = new Set<string>();
+    for (const match of html.matchAll(/<ruby class="asb-gloss">([^<]+)<rt>([^<]*)<\/rt>/g)) {
+        const word = match[1].toLowerCase();
+        if (!seen.has(word)) {
+            seen.add(word);
+            out.push({ word, gloss: unescapeHtml(match[2]).trim() });
+        }
+    }
+    return out;
+}
+
+/** The lowercased glossed words only (legacy shape — see
+ *  [`glossedEntriesFromHtml`] for the labeled SV-20 form). */
+export function glossedLemmasFromHtml(html: string): string[] {
+    return glossedEntriesFromHtml(html).map((e) => e.word);
+}
+
 // A gloss LABEL must be short — a word or a short phrase. A long, sentence-like
 // response is a misbehaving LLM fallback (rambling about senses/alternatives),
 // not a usable label; the caller drops it rather than render a paragraph.
@@ -188,7 +275,9 @@ export function isReasonableGloss(gloss: string): boolean {
 
 // ── The controller ────────────────────────────────────────────────────────
 
-const sendToBackground = <R>(message: SaviGlossTranslateMessage | SaviWordBucketsMessage): Promise<R> => {
+const sendToBackground = <R>(
+    message: SaviGlossTranslateMessage | SaviWordBucketsMessage | SaviWordProficiencyMessage
+): Promise<R> => {
     const command: SaviCommand<typeof message> = { sender: 'savi-video', message };
     return browser.runtime.sendMessage(command) as Promise<R>;
 };
@@ -219,7 +308,22 @@ const MAX_LINE_ATTEMPTS = 3;
 const MAX_CONCURRENT_TRANSLATIONS = 4;
 // Space successive translate dispatches so bursts stay under provider rate limits
 // (~500 requests/min at 120ms). Cache hits and already-settled lines don't dispatch.
+// PRIORITY calls (the on-screen line, hover) skip this gate — it exists to tame
+// prefetch bursts, and a cumulative FIFO gate would make user-facing calls wait
+// behind the whole prefetch backlog.
 const MIN_DISPATCH_INTERVAL_MS = 120;
+// Hard ceiling on one translate round-trip. Without it, a hung background request
+// (an MV3 worker restart, a fetch that never settles) leaks a concurrency slot
+// FOREVER — four leaks and all glossing starves for the rest of the page session.
+const TRANSLATE_TIMEOUT_MS = 10000;
+
+/** `promise`, or a rejection after `ms` — so a hung await can't hold resources
+ *  forever. The underlying work may still settle later; its result is discarded. */
+const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> =>
+    Promise.race([
+        promise,
+        new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms)),
+    ]);
 
 export interface GlossSources {
     /** The playing media element, for prefetch timing. */
@@ -332,6 +436,31 @@ export class SaviGlossController implements GlossProvider {
         return this._glossable;
     }
 
+    /** The lowercased words of `text` currently DISPLAYED with a gloss label
+     *  (from the settled line HTML — exact render truth). Empty when the line
+     *  hasn't settled yet, nothing was glossed, glossing is off, or the track
+     *  isn't the primary one. The encounter reporter samples this at
+     *  line-start; a gloss landing later counts as bare exposure, which
+     *  matches what the user saw at that moment. */
+    glossedLemmasFor(text: string, track?: number): string[] {
+        if (!this._glossable || (track ?? PRIMARY_TRACK) !== PRIMARY_TRACK) {
+            return [];
+        }
+        const settled = this._lineHtml.get(text);
+        return settled ? glossedLemmasFromHtml(settled) : [];
+    }
+
+    /** Like [`glossedLemmasFor`] but each word carries the LABEL it displays
+     *  (SV-20) — what the encounter reporter sends so the daemon can persist
+     *  the shown translation on the encounter. */
+    glossedEntriesFor(text: string, track?: number): GlossedWordEntry[] {
+        if (!this._glossable || (track ?? PRIMARY_TRACK) !== PRIMARY_TRACK) {
+            return [];
+        }
+        const settled = this._lineHtml.get(text);
+        return settled ? glossedEntriesFromHtml(settled) : [];
+    }
+
     /** The target (learning) language, for the hover module's context. */
     get targetLang(): string {
         return this._targetLang;
@@ -347,9 +476,30 @@ export class SaviGlossController implements GlossProvider {
         return this._translate(word.toLowerCase(), lineText, true);
     }
 
-    // SV-13: the Known-inclusive buckets for the target language; a lemma marked
-    // `known` is skipped. Best-effort — a failure just leaves _known empty.
+    // Which lemmas to SKIP glossing. SV-20: proficiency-first — the review
+    // engine's per-lemma retrievability dominates the decision (skip when
+    // proficiency ≥ the roaming `review.glossThreshold`, default 0.8). When
+    // the proficiency endpoint is unavailable (old cloud / signed out), fall
+    // back to SV-13's binary buckets (skip `known`). A total failure leaves
+    // _known empty → gloss every content word.
     private async _loadKnown(): Promise<void> {
+        try {
+            const response = await sendToBackground<SaviWordProficiencyResponse>({
+                command: 'savi-word-proficiency',
+                lang: this._targetLang,
+            });
+            if (response?.proficiency) {
+                const threshold = response.threshold;
+                this._known = new Set(
+                    Object.entries(response.proficiency)
+                        .filter(([, p]) => p >= threshold)
+                        .map(([lemma]) => lemma)
+                );
+                return;
+            }
+        } catch {
+            // fall through to buckets
+        }
         try {
             const response = await sendToBackground<SaviWordBucketsResponse>({
                 command: 'savi-word-buckets',
@@ -452,16 +602,21 @@ export class SaviGlossController implements GlossProvider {
         if (cached !== undefined) {
             return cached; // a previously-resolved word never re-hits the network
         }
-        await this._rateGate();
+        if (!priority) {
+            await this._rateGate(); // prefetch only — user-facing calls must not queue behind it
+        }
         await this._acquire(priority);
         try {
-            const response = await sendToBackground<SaviGlossTranslateResponse>({
-                command: 'savi-gloss-translate',
-                word,
-                targetLang: this._targetLang,
-                glossLang: GLOSS_LANGUAGE,
-                context,
-            });
+            const response = await withTimeout(
+                sendToBackground<SaviGlossTranslateResponse>({
+                    command: 'savi-gloss-translate',
+                    word,
+                    targetLang: this._targetLang,
+                    glossLang: GLOSS_LANGUAGE,
+                    context,
+                }),
+                TRANSLATE_TIMEOUT_MS
+            );
             const gloss = response?.text?.trim();
             // Keep it only if it's a plausible LABEL — drop an LLM ramble (a
             // paragraph of senses/alternatives) rather than render it over a word.

@@ -77,6 +77,8 @@ const SaviSettingsTab: React.FC<Props> = ({
         saviAiSegmentation,
         saviGlossing,
         saviHoverGloss,
+        saviEncounterRecording,
+        saviAudioRecording,
     } = settings;
 
     const [saviEmail, setSaviEmail] = useState('');
@@ -239,6 +241,26 @@ const SaviSettingsTab: React.FC<Props> = ({
                     />
                 }
                 label={'Auto-capture episodes to savi when subtitles load'}
+                labelPlacement="start"
+            />
+            <SwitchLabelWithHoverEffect
+                control={
+                    <Switch
+                        checked={saviEncounterRecording}
+                        onChange={(e) => onSettingChanged('saviEncounterRecording', e.target.checked)}
+                    />
+                }
+                label={'Count words in displayed subtitles toward your listening stats'}
+                labelPlacement="start"
+            />
+            <SwitchLabelWithHoverEffect
+                control={
+                    <Switch
+                        checked={saviAudioRecording}
+                        onChange={(e) => onSettingChanged('saviAudioRecording', e.target.checked)}
+                    />
+                }
+                label={'Record audio during captures (via the desktop app; applies to the next capture)'}
                 labelPlacement="start"
             />
             <SwitchLabelWithHoverEffect

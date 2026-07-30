@@ -143,6 +143,22 @@ export default defineUnlistedScript(() => {
                 const ep = `${videoApi?.getEpisodeNumber?.()}`.padStart(2, '0');
                 const epTitle = videoApi?.getEpisodeTitle?.();
                 basename += ` S${season}E${ep} ${epTitle}`;
+
+                // savi: surface the SHOW's stable Netflix id. Titles are
+                // localized to the profile's display language and can change;
+                // this id can't, so the library groups episodes by it. The
+                // metadata root is the show for episodic content — trust its
+                // id only when it differs from the episode's own id (a same
+                // value would mean we misread the API and would fragment the
+                // library into one group per episode).
+                const showId = videoApi?.getId?.();
+                if ((typeof showId === 'number' || typeof showId === 'string') && `${showId}` !== `${titleId}`) {
+                    document.dispatchEvent(
+                        new CustomEvent('savi-netflix-show-id', {
+                            detail: { showId: `netflix:${showId}` },
+                        })
+                    );
+                }
             }
 
             return [basename, false];

@@ -823,6 +823,14 @@ export interface SaviSettings {
     readonly saviHoverGloss: boolean;
     // Base URL of the savi cloud the extension reads roaming settings from.
     readonly saviCloudUrl: string;
+    // Record each displayed target-language subtitle line to the daemon as a
+    // watch-time word-exposure event (SV-18). Independent of audio recording —
+    // exposure counts even when no audio is captured.
+    readonly saviEncounterRecording: boolean;
+    // Ask the daemon to record audio (its own system tap) during capture
+    // sessions (SV-18). Off → sessions still capture subtitles and finish as
+    // transcript-only episodes. Takes effect on the next capture.
+    readonly saviAudioRecording: boolean;
 }
 
 export type ChromeBoundKeyBindName =

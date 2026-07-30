@@ -1,6 +1,8 @@
 import {
     buildGlossHtml,
     glossableLemmas,
+    glossedEntriesFromHtml,
+    glossedLemmasFromHtml,
     isContentWord,
     isGlossableLanguage,
     isReasonableGloss,
@@ -37,6 +39,17 @@ describe('isContentWord', () => {
         expect(isContentWord('el')).toBe(false);
         expect(isContentWord('a')).toBe(false); // single letter
         expect(isContentWord('y')).toBe(false);
+    });
+
+    it('glosses common lexical adverbs, which are vocabulary not grammar', () => {
+        // The founder found "más" in "no sé qué más querés" silently
+        // unglossable — no label, no translate request, and absent from the
+        // word list, because savi-core's ingest filter dropped it before an
+        // encounter was ever written. These are A1 vocabulary, not structural
+        // glue; they self-resolve once the gloss threshold sees them learned.
+        for (const word of ['más', 'bien', 'muy', 'también', 'tampoco', 'algo', 'así', 'aunque', 'según']) {
+            expect(isContentWord(word)).toBe(true);
+        }
     });
 });
 
@@ -137,5 +150,79 @@ describe('buildGlossHtml', () => {
         expect(html).toContain('&lt;b&gt;cat&lt;/b&gt;'); // gloss escaped, not injected as markup
         expect(html).not.toContain('<b>');
         expect(html).toContain(' &amp; '); // the '&' gap is escaped
+    });
+});
+
+describe('glossedLemmasFromHtml', () => {
+    it('extracts exactly the words the settled HTML wraps in gloss ruby', () => {
+        const segments = segmentLine('Quiero un gato bonito, gato mío');
+        const html = buildGlossHtml(segments, (lemma) =>
+            lemma === 'gato' ? 'cat' : lemma === 'bonito' ? 'pretty' : undefined
+        );
+        expect(glossedLemmasFromHtml(html)).toEqual(['gato', 'bonito']); // deduped, lowercased
+    });
+
+    it('is empty for plain (un-glossed) lines', () => {
+        expect(glossedLemmasFromHtml('')).toEqual([]);
+        expect(glossedLemmasFromHtml('nada que ver aquí')).toEqual([]);
+    });
+});
+
+describe('glossedEntriesFromHtml (SV-20)', () => {
+    it('extracts each glossed word WITH its displayed label', () => {
+        const segments = segmentLine('Quiero un gato bonito, gato mío');
+        const html = buildGlossHtml(segments, (lemma) =>
+            lemma === 'gato' ? 'cat' : lemma === 'bonito' ? 'pretty' : undefined
+        );
+        expect(glossedEntriesFromHtml(html)).toEqual([
+            { word: 'gato', gloss: 'cat' },
+            { word: 'bonito', gloss: 'pretty' },
+        ]);
+    });
+
+    it('unescapes label text that was HTML-escaped at render time', () => {
+        const segments = segmentLine('Ley de oferta');
+        const html = buildGlossHtml(segments, (lemma) =>
+            lemma === 'ley' ? 'law & order' : undefined
+        );
+        expect(html).toContain('law &amp; order'); // escaped in the markup…
+        expect(glossedEntriesFromHtml(html)[0]).toEqual({ word: 'ley', gloss: 'law & order' }); // …raw out
+    });
+
+    it('is empty for plain lines', () => {
+        expect(glossedEntriesFromHtml('')).toEqual([]);
+        expect(glossedEntriesFromHtml('nada que ver aquí')).toEqual([]);
+    });
+});
+
+describe('glossable ⊆ reviewable', () => {
+    it('does not gloss conjugations whose lemma is a function word', () => {
+        // savi-core drops these (lemma ser/estar/haber is a stopword), so
+        // glossing them would label a word on screen that can never enter
+        // review — the founder's "voy" worry, with the examples that really
+        // do fall through.
+        for (const aux of ['seré', 'estuvieron', 'estaban', 'habría', 'siendo']) {
+            expect(isContentWord(aux)).toBe(false);
+        }
+    });
+
+    it('mirrors savi-core exactly, so nothing glossable is unreviewable', () => {
+        // This set must never be NARROWER than savi-core's STOPWORDS. When the
+        // nine lexical adverbs were freed, BOTH lists had to move together —
+        // freeing only savi-core would have left them tracked but never
+        // labelled, and freeing only this one would label a word that can
+        // never enter review.
+        for (const structural of ['el', 'la', 'de', 'que', 'y', 'se', 'lo', 'por', 'para']) {
+            expect(isContentWord(structural)).toBe(false);
+        }
+    });
+
+    it('still glosses real verbs, including ambiguous ones', () => {
+        // "voy" → ir, a content verb: glossable AND reviewable, so it must
+        // keep its label. "fuimos" maps to both ir and ser — the ir reading
+        // makes it reviewable, so it stays glossable too.
+        for (const word of ['voy', 'fuimos', 'corriendo', 'llevar']) {
+            expect(isContentWord(word)).toBe(true);
+        }
     });
 });

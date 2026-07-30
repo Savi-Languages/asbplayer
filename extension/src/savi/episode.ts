@@ -84,22 +84,47 @@ const youtubeVideoId = (parsed: URL): string | undefined => {
     return undefined;
 };
 
-// Pure, total: never throws; returns a non-empty, daemon-safe-ish id for any
-// input. Unknown / unparseable urls fall back to a hostname:slug(title) id.
-export const deriveEpisodeId = (url: string, title: string): string => {
+// Hosts whose episodes have a STABLE platform id. On these, a title slug is
+// never an acceptable substitute — see `deriveEpisodeId`.
+const platformHosts = ['netflix.com', 'youtube.com', 'youtu.be'];
+
+// Pure, total: never throws.
+//
+// Returns `undefined` when the page is on a KNOWN platform but its stable id
+// cannot be read yet. That is not a failure to handle gracefully with a
+// fallback — it is "ask again in a moment", and minting an id anyway is what
+// produced duplicate library entries:
+//
+//   Netflix is an SPA, so `/watch/<id>` appears in the URL a beat after
+//   navigation. Deriving during that beat fell through to
+//   `netflix.com:<slug(document.title)>`, and `document.title` is bare
+//   "Netflix" until the episode loads — so the id came out
+//   `netflix.com:netflix`. The daemon keys its episode store on this id, so
+//   the SAME episode captured either side of that beat produced two stores,
+//   two deliverables, and two library rows with different line counts.
+//
+//   Worse, `netflix.com:netflix` is one bucket shared by EVERY unidentified
+//   Netflix capture, so unrelated episodes could stitch into each other.
+//
+// Sites with no platform id (generic hosts) still get the hostname:slug
+// fallback — there a title slug is the best identity available, not a
+// premature guess at a better one.
+export const deriveEpisodeId = (url: string, title: string): string | undefined => {
     const parsed = parseUrl(url);
 
     if (parsed !== undefined) {
         if (hostMatches(parsed.host, 'netflix.com')) {
             const id = netflixVideoId(parsed);
-            if (id !== undefined) {
-                return `netflix:${id}`;
-            }
+            return id !== undefined ? `netflix:${id}` : undefined;
         }
 
         const youtube = youtubeVideoId(parsed);
         if (youtube !== undefined) {
             return `youtube:${youtube}`;
+        }
+
+        if (platformHosts.some((host) => hostMatches(parsed.host, host))) {
+            return undefined; // a YouTube page with no video id yet
         }
     }
 
@@ -197,23 +222,34 @@ export const deriveShowAndTitle = (
 // pure/total: it coerces non-strings to '' and never throws.
 
 // A trailing subtitle-container extension the basename may pick up once it has
-// flowed through subtitle bookkeeping (".srt"/".vtt"/".ass").
-const subtitleExtensionSuffix = /\.(?:srt|vtt|ass)$/i;
+// flowed through subtitle bookkeeping. Includes Netflix's IMSC (".nfimsc")
+// and the TTML family alongside the classic text formats.
+const subtitleExtensionSuffix = /\.(?:srt|vtt|ass|ssa|sub|ttml|dfxp|nfimsc)$/i;
 
 // A trailing language tag that subtitle filenames sometimes carry. Kept
 // deliberately narrow so a real (non-Latin) episode title is never mistaken
 // for a language suffix:
-//   - " (English)" / " (English [CC])" — parenthesized language label, OR
+//   - " (English)" / " (English [CC])" / " (Latin America) [CC]" —
+//     parenthesized label, optionally followed by a bare [CC], OR
 //   - " .en" / " .en-US" / " .jpn" — a dotted 2–3 letter ISO-ish code,
 // each anchored to the end. A bare " English" (no parens, no dot) is NOT
 // stripped, because that is indistinguishable from a real title word.
-const languageTagSuffix = /(?:\s*\([A-Za-z][A-Za-z ]*(?:\[CC\])?\)|\s+\.[A-Za-z]{2,3}(?:-[A-Za-z]{2,4})?)$/;
+const languageTagSuffix =
+    /(?:\s*\([A-Za-z][A-Za-z ]*(?:\[CC\])?\)\s*(?:\[CC\])?|\s+\.[A-Za-z]{2,3}(?:-[A-Za-z]{2,4})?)$/;
+
+// Netflix-style full track label tail: " - es - Spanish (Latin America) [CC]".
+// Anchored on the " - xx - " language-code segment (2–3 letters between
+// dashes), so a real title's dashes ("Spider-Man - Into the Spider-Verse")
+// are never eaten.
+const trackLabelSuffix = /\s+-\s+[A-Za-z]{2,3}(?:-[A-Za-z]{2,4})?\s+-\s+[^-]*$/;
 
 const stripSubtitleFileSuffix = (value: string): string => {
-    // Strip at most one extension, then at most one language tag. Order
-    // matters: "Foo .en.srt" → drop ".srt" → "Foo .en" → drop " .en".
+    // Strip at most one of each, outermost first. Order matters:
+    // "Foo - es - Spanish (Latin America) [CC].nfimsc" → drop ".nfimsc" →
+    // drop the " - es - …" track label; "Foo .en.srt" → ".srt" → " .en".
     const withoutExtension = value.replace(subtitleExtensionSuffix, '');
-    return withoutExtension.replace(languageTagSuffix, '').trim();
+    const withoutTrackLabel = withoutExtension.replace(trackLabelSuffix, '');
+    return withoutTrackLabel.replace(languageTagSuffix, '').trim();
 };
 
 // Series form: "<Show> S<NN>E<NN> <rest>". Show is everything before the

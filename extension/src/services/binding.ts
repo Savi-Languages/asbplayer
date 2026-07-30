@@ -101,6 +101,11 @@ import { SaviHoverDictionary } from '../savi/hover-dict';
 import { SaviGlossController } from '../savi/gloss';
 import { SaviGlossHover } from '../savi/gloss-hover';
 import { SaviControlsClearance } from '../savi/controls-clearance';
+import { SaviEncounterReporter } from '../savi/encounter-reporter';
+import { SaviEngagementReporter } from '../savi/engagement-reporter';
+import { SaviInteractionClock } from '../savi/interaction-clock';
+import { getCachedRoamingSettings } from '../savi/cloud-settings';
+import { deriveEpisodeId } from '../savi/episode';
 
 let netflix = false;
 document.addEventListener('asbplayer-netflix-enabled', (e) => {
@@ -180,6 +185,9 @@ export default class Binding {
     readonly saviCaptureController: SaviCaptureController;
     readonly saviHoverDictionary: SaviHoverDictionary;
     readonly saviGlossController: SaviGlossController;
+    readonly saviEncounterReporter: SaviEncounterReporter;
+    readonly saviEngagementReporter: SaviEngagementReporter;
+    readonly saviInteractionClock: SaviInteractionClock;
     readonly saviGlossHover: SaviGlossHover;
     readonly saviControlsClearance: SaviControlsClearance;
 
@@ -253,7 +261,11 @@ export default class Binding {
         });
         this.saviHoverDictionary = new SaviHoverDictionary(
             () => this.video,
-            () => this.subtitleController.subtitles
+            () => this.subtitleController.subtitles,
+            // A JA hover popup / tap panel showed a word's meaning — recorded
+            // as a hover_glossed encounter carrying the shown label (SV-20).
+            // This is what makes the Japanese path feed the reviewer.
+            (lineText, word, gloss) => this.saviEncounterReporter.noteHoverReveal(lineText, word, gloss)
         );
         // Glossing (SV-12/13): supplies gloss-ruby HTML to the subtitle controller;
         // a resolved gloss asks the controller to re-render the showing lines. The
@@ -276,8 +288,49 @@ export default class Binding {
             video: () => this.video,
             pause: () => this.pause(),
             play: () => void this.play(),
+            // For telling real subtitle lines from look-alike overlays (the
+            // notification banner shares the subtitle DOM shape).
+            subtitles: () => this.subtitleController.subtitles,
+            // A revealed hover gloss is an active lookup — recorded on the
+            // line's watched encounter as hover_glossed context, with the
+            // shown label (SV-20).
+            onReveal: (lineText, word, gloss) => {
+                this.saviEncounterReporter.noteHoverReveal(lineText, word, gloss);
+                // …and it's also the strongest evidence that a PAUSED line is
+                // being studied (SV-21). A hover held still emits no further
+                // DOM events, so without this an actively-studied line would
+                // age into "idle" while the user stares right at it.
+                this.saviInteractionClock.note();
+            },
         });
         this.subtitleController.onSaviWillStopShowing = () => this.saviGlossHover.onWillStopShowing();
+        // Encounter recording (SV-18): every primary-track line that starts
+        // showing is posted to the daemon as watch-time exposure, whether or not
+        // audio capture is running.
+        this.saviEncounterReporter = new SaviEncounterReporter({
+            enabled: async () => (await this.settings.get(['saviEncounterRecording'])).saviEncounterRecording,
+            targetLanguage: async () => (await getCachedRoamingSettings()).targetLanguage,
+            episodeId: () => deriveEpisodeId(window.location.href, document.title),
+            // Which words of the line are showing WITH a gloss label — stored
+            // as aided exposure (glossed) on the encounters, each with the
+            // shown label text (SV-20).
+            glossedEntries: (text, track) => this.saviGlossController.glossedEntriesFor(text, track),
+            send: (message) => browser.runtime.sendMessage({ sender: 'savi-video', message }),
+        });
+        this.subtitleController.onSaviStartedShowing = (subtitle) => this.saviEncounterReporter.report(subtitle);
+        // Engaged learning time (SV-21). Ticked from the heartbeat below
+        // rather than from video events, because the capture controller's
+        // video listeners exist ONLY while a capture is recording — and
+        // saviCaptureEnabled defaults false, so a user who merely watches
+        // would otherwise be invisible.
+        this.saviInteractionClock = new SaviInteractionClock();
+        this.saviEngagementReporter = new SaviEngagementReporter({
+            enabled: async () => (await this.settings.get(['saviEncounterRecording'])).saviEncounterRecording,
+            targetLanguage: async () => (await getCachedRoamingSettings()).targetLanguage,
+            episodeId: () => deriveEpisodeId(window.location.href, document.title),
+            lastInteractionAt: () => this.saviInteractionClock.lastInteractionAt,
+            send: (message) => browser.runtime.sendMessage({ sender: 'savi-video', message }),
+        });
         // Lift the subtitles above the streaming player's control bar while it is
         // visible (they share the same bottom strip and fight over the mouse),
         // restoring the user's configured offset when it hides. Runtime-only.
@@ -586,6 +639,9 @@ export default class Binding {
         this.saviHoverDictionary.start();
         void this.saviGlossController.start();
         void this.saviGlossHover.start();
+        void this.saviEncounterReporter.start();
+        this.saviInteractionClock.bind();
+        void this.saviEngagementReporter.start();
         this.saviControlsClearance.start();
 
         const seek = (forward: boolean) => {
@@ -717,9 +773,7 @@ export default class Binding {
             // Only pause when actually over subtitle TEXT — not the wide empty
             // space of the subtitle container (hovering the blank area beside
             // the text should not pause).
-            const overText =
-                mouseEvent.target instanceof Element &&
-                mouseEvent.target.closest('[data-track]') !== null;
+            const overText = mouseEvent.target instanceof Element && mouseEvent.target.closest('[data-track]') !== null;
             // When savi's on-demand hover feature is active it owns the hover-pause
             // (holds the line at its END instead), so suppress asbplayer's IMMEDIATE
             // pause-on-hover to avoid pausing the moment the cursor lands on a word.
@@ -742,13 +796,8 @@ export default class Binding {
                     // own hover surfaces (the dictionary popup / the word→popup
                     // bridge) — so moving onto the popup to click "+ Add to Anki"
                     // keeps it paused. Resume only once off both.
-                    const onText =
-                        e.target instanceof Element &&
-                        e.target.closest('[data-track]') !== null;
-                    const onHoverSurface = this.saviHoverDictionary.isOverHoverSurface(
-                        e.clientX,
-                        e.clientY
-                    );
+                    const onText = e.target instanceof Element && e.target.closest('[data-track]') !== null;
+                    const onHoverSurface = this.saviHoverDictionary.isOverHoverSurface(e.clientX, e.clientY);
                     if (this._shouldAutoResumeOnSubtitlesMouseOut && !onText && !onHoverSurface) {
                         this.play();
                         this.pausedDueToHover = false;
@@ -788,6 +837,19 @@ export default class Binding {
         this.heartbeatInterval = setInterval(() => {
             this._updateRegisteredVideoSrc(this.video.src || this._fallbackVideoSrc);
 
+            // One line, no new listeners: 1 s sampling against the clock's
+            // 5 s max-delta is exactly the right granularity.
+            this.saviEngagementReporter.tick({
+                playing: !this.video.paused && !this.video.ended && this.video.readyState >= 2,
+                visible: document.visibilityState === 'visible',
+                focused: document.hasFocus(),
+                // `played` is native and resets with the media resource, so a
+                // new episode in the same SPA starts un-played with no state
+                // of our own to keep in sync.
+                everPlayed: this.video.played.length > 0,
+                ended: this.video.ended,
+            });
+
             const command: VideoToExtensionCommand<VideoHeartbeatMessage> = {
                 sender: 'asbplayer-video',
                 message: {
@@ -810,6 +872,11 @@ export default class Binding {
         window.addEventListener('beforeunload', (event) => {
             this.heartbeatInterval && clearInterval(this.heartbeatInterval);
         });
+
+        // Best-effort only — sendMessage during teardown is unreliable. The
+        // clock's 5-minute chunking is the real safety net; this just
+        // shortens the tail when a tab closes mid-block.
+        window.addEventListener('pagehide', () => this.saviEngagementReporter.flush());
 
         this.listener = (
             request: any,
@@ -1220,6 +1287,9 @@ export default class Binding {
 
         this.subtitleController.subtitleAnnotations.settingsUpdated(currentSettings);
         this.subtitleController.setSubtitleSettings(currentSettings);
+        // Re-arm with the current toggle + target language (both may change).
+        void this.saviEncounterReporter.start();
+        void this.saviEngagementReporter.start();
 
         if (convertNetflixRubyChanged || subtitleHtmlChanged) {
             this.subtitleController.cacheHtml();
@@ -1315,6 +1385,9 @@ export default class Binding {
         this.saviHoverDictionary.stop();
         this.saviGlossController.stop();
         this.saviGlossHover.stop();
+        this.saviEncounterReporter.stop();
+        this.saviEngagementReporter.stop();
+        this.saviInteractionClock.unbind();
         this.saviControlsClearance.stop();
         this.unsubscribeStatisticsSeek?.();
         this.unsubscribeStatisticsSeek = undefined;
