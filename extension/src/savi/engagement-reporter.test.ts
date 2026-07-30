@@ -86,6 +86,49 @@ describe('SaviEngagementReporter', () => {
         expect(h.sent[0].tzOffsetMin).toBe(-new Date().getTimezoneOffset());
     });
 
+    it('drains speech stats and gloss mode onto each flushed block (SV-30 measured WPM)', async () => {
+        let pending: { speakingMs: number; spokenTokenCount: number } | undefined = {
+            speakingMs: 21_000,
+            spokenTokenCount: 55,
+        };
+        const h = harness({
+            speechStats: () => {
+                const out = pending;
+                pending = undefined; // a real accumulator resets on drain
+                return out;
+            },
+            glossMode: () => 'glossed',
+        });
+        await h.reporter.start();
+        h.play(30);
+        h.reporter.flush();
+
+        expect(h.sent).toHaveLength(1);
+        expect(h.sent[0]).toMatchObject({
+            speakingMs: 21_000,
+            spokenTokenCount: 55,
+            glossMode: 'glossed',
+        });
+
+        // Second block: nothing accrued → the fields are simply absent, so the
+        // daemon stores NULLs rather than fake zeros.
+        h.play(30);
+        h.reporter.flush();
+        expect(h.sent).toHaveLength(2);
+        expect(h.sent[1].speakingMs).toBeUndefined();
+        expect(h.sent[1].spokenTokenCount).toBeUndefined();
+    });
+
+    it('omits speech fields entirely when no deps are wired', async () => {
+        const h = harness();
+        await h.reporter.start();
+        h.play(10);
+        h.reporter.flush();
+
+        expect(h.sent[0].speakingMs).toBeUndefined();
+        expect(h.sent[0].glossMode).toBeUndefined();
+    });
+
     it('reports a backgrounded video as listen, not watch', async () => {
         // SV-21's core distinction: only the audio is reaching the user.
         const h = harness();

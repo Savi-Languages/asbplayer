@@ -485,6 +485,9 @@ export default class SaviCommandHandler implements CommandHandler {
                 startedAtMs: message.startedAtMs,
                 endedAtMs: message.endedAtMs,
                 tzOffsetMin: message.tzOffsetMin,
+                speakingMs: message.speakingMs,
+                spokenTokenCount: message.spokenTokenCount,
+                glossMode: message.glossMode,
             });
             return { ok: true };
         } catch (e) {

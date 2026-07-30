@@ -270,6 +270,14 @@ export interface SaviEngagementSessionMessage {
     /** Device UTC offset in minutes EAST of UTC at capture time. Cannot be
      *  reconstructed later — without it, relocating re-buckets history. */
     readonly tzOffsetMin: number;
+    /** SV-30 measured WPM: overlap-merged ms of the cues that played during
+     *  this block + their raw whitespace tokens. Both or neither — the daemon
+     *  drops a lone half. Absent when nothing was measured. */
+    readonly speakingMs?: number;
+    readonly spokenTokenCount?: number;
+    /** The session's gloss environment ('bare' | 'glossed'); absent when
+     *  unknown. */
+    readonly glossMode?: 'bare' | 'glossed';
 }
 
 export interface SaviWatchedLineResponse {

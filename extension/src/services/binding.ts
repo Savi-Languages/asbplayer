@@ -103,6 +103,7 @@ import { SaviGlossHover } from '../savi/gloss-hover';
 import { SaviControlsClearance } from '../savi/controls-clearance';
 import { SaviEncounterReporter } from '../savi/encounter-reporter';
 import { SaviEngagementReporter } from '../savi/engagement-reporter';
+import { SpeechAccumulator } from '../savi/speech-stats';
 import { SaviInteractionClock } from '../savi/interaction-clock';
 import { getCachedRoamingSettings } from '../savi/cloud-settings';
 import { deriveEpisodeId } from '../savi/episode';
@@ -186,6 +187,7 @@ export default class Binding {
     readonly saviHoverDictionary: SaviHoverDictionary;
     readonly saviGlossController: SaviGlossController;
     readonly saviEncounterReporter: SaviEncounterReporter;
+    readonly saviSpeechStats = new SpeechAccumulator();
     readonly saviEngagementReporter: SaviEngagementReporter;
     readonly saviInteractionClock: SaviInteractionClock;
     readonly saviGlossHover: SaviGlossHover;
@@ -317,7 +319,12 @@ export default class Binding {
             glossedEntries: (text, track) => this.saviGlossController.glossedEntriesFor(text, track),
             send: (message) => browser.runtime.sendMessage({ sender: 'savi-video', message }),
         });
-        this.subtitleController.onSaviStartedShowing = (subtitle) => this.saviEncounterReporter.report(subtitle);
+        this.subtitleController.onSaviStartedShowing = (subtitle) => {
+            this.saviEncounterReporter.report(subtitle);
+            // Measured WPM (SV-30): the same shown-cue stream, accrued into the
+            // next engagement block's speech stats.
+            this.saviSpeechStats.addShownSubtitle(subtitle);
+        };
         // Engaged learning time (SV-21). Ticked from the heartbeat below
         // rather than from video events, because the capture controller's
         // video listeners exist ONLY while a capture is recording — and
@@ -329,6 +336,11 @@ export default class Binding {
             targetLanguage: async () => (await getCachedRoamingSettings()).targetLanguage,
             episodeId: () => deriveEpisodeId(window.location.href, document.title),
             lastInteractionAt: () => this.saviInteractionClock.lastInteractionAt,
+            speechStats: () => this.saviSpeechStats.drain(),
+            // Session-level environment: auto-gloss labels active for the
+            // target language or not. Which words actually got labels is the
+            // per-token story the encounters already tell.
+            glossMode: () => (this.saviGlossController.glossable ? 'glossed' : 'bare'),
             send: (message) => browser.runtime.sendMessage({ sender: 'savi-video', message }),
         });
         // Lift the subtitles above the streaming player's control bar while it is

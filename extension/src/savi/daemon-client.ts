@@ -283,6 +283,9 @@ export const postEngagementSession = async (
         startedAtMs: number;
         endedAtMs: number;
         tzOffsetMin: number;
+        speakingMs?: number;
+        spokenTokenCount?: number;
+        glossMode?: 'bare' | 'glossed';
     }
 ): Promise<void> => {
     await request(config, '/v2/events/session', jsonInit(session));
