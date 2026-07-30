@@ -1,14 +1,12 @@
 // A small floating "Record" control overlaid on the video for savi capture.
-// It only toggles capture and reflects its state — starting/stopping (and the
-// browser audio permission a manual start needs) is the capture controller's
-// job. Appended to document.body; styled by video.css (.savi-record-button).
+// It only toggles capture and reflects its state — starting/stopping is the
+// capture controller's job. Appended to document.body; styled by video.css
+// (.savi-record-button).
 //
-// Note: clicking an in-page button does NOT grant the per-tab audio permission
-// (the browser only grants that for action/command/context-menu gestures), so
-// the first start of a page load still needs the Ctrl+Shift+S shortcut or the
-// toolbar icon. When a click can't start, the controller calls flashHint() to
-// say so on the button itself. Once the permission is in place, the button
-// starts/stops directly.
+// Since SV-18 the daemon taps browser audio itself (no tabCapture), so a
+// plain in-page click starts/stops directly — no permission gesture needed.
+// When a start can't proceed (daemon unreachable, no subtitles), the
+// controller calls flashHint() to say so on the button itself.
 
 export type RecordButtonState = 'idle' | 'recording' | 'alert';
 
@@ -47,13 +45,13 @@ export class SaviRecordButton {
         // stops it; alert shouts that a playing video is NOT being recorded
         // (e.g. a reload dropped it) and how to resume.
         let label = 'Start recording';
-        let title = 'Start recording this tab for savi (first start of a page load needs Ctrl+Shift+S)';
+        let title = 'Start capturing this episode for savi';
         if (state === 'recording') {
             label = 'Recording — Stop';
-            title = 'Recording this tab for savi — click to stop';
+            title = 'Capturing this episode for savi — click to stop';
         } else if (state === 'alert') {
             label = '● NOT RECORDING';
-            title = 'Not recording — press Ctrl+Shift+S (or click the savi toolbar icon) to resume';
+            title = 'Not recording — click to resume (or press Ctrl+Shift+S)';
         }
         this._label.textContent = label;
         this._button.title = title;

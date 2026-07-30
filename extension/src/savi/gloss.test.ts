@@ -1,6 +1,7 @@
 import {
     buildGlossHtml,
     glossableLemmas,
+    glossedLemmasFromHtml,
     isContentWord,
     isGlossableLanguage,
     isReasonableGloss,
@@ -137,5 +138,20 @@ describe('buildGlossHtml', () => {
         expect(html).toContain('&lt;b&gt;cat&lt;/b&gt;'); // gloss escaped, not injected as markup
         expect(html).not.toContain('<b>');
         expect(html).toContain(' &amp; '); // the '&' gap is escaped
+    });
+});
+
+describe('glossedLemmasFromHtml', () => {
+    it('extracts exactly the words the settled HTML wraps in gloss ruby', () => {
+        const segments = segmentLine('Quiero un gato bonito, gato mío');
+        const html = buildGlossHtml(segments, (lemma) =>
+            lemma === 'gato' ? 'cat' : lemma === 'bonito' ? 'pretty' : undefined
+        );
+        expect(glossedLemmasFromHtml(html)).toEqual(['gato', 'bonito']); // deduped, lowercased
+    });
+
+    it('is empty for plain (un-glossed) lines', () => {
+        expect(glossedLemmasFromHtml('')).toEqual([]);
+        expect(glossedLemmasFromHtml('nada que ver aquí')).toEqual([]);
     });
 });

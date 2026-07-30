@@ -154,6 +154,10 @@ export default class SubtitleController {
     // so the hover feature can hold the line if the cursor is on it. Separate from
     // autoPauseContext (which the playback modes own).
     onSaviWillStopShowing?: (subtitle: SubtitleModel) => void;
+    // savi encounter recording (SV-18): fired once as a line starts showing, so
+    // watch-time exposure can be counted. Separate from autoPauseContext for the
+    // same reason as above.
+    onSaviStartedShowing?: (subtitle: SubtitleModel) => void;
 
     constructor(context: Binding, dictionary: DictionaryProvider, settings: SettingsProvider) {
         this.context = context;
@@ -512,6 +516,7 @@ export default class SubtitleController {
 
             if (slice.startedShowing && this._trackEnabled(slice.startedShowing)) {
                 this.autoPauseContext.startedShowing(slice.startedShowing);
+                this.onSaviStartedShowing?.(slice.startedShowing);
             }
 
             if (seekableSlice.nextToShow && seekableSlice.nextToShow.length > 0) {

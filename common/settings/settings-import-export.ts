@@ -685,6 +685,12 @@ const settingsSchema = {
         saviCloudUrl: {
             type: 'string',
         },
+        saviEncounterRecording: {
+            type: 'boolean',
+        },
+        saviAudioRecording: {
+            type: 'boolean',
+        },
         pauseOnHoverMode: {
             type: 'number',
         },

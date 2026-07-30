@@ -77,10 +77,9 @@ import BrowserFeaturesHandler from '@/handlers/asbplayerv2/browser-features-hand
 import OpenStatisticsHandler from '@/handlers/video/open-statistics-handler';
 import StatisticsOverlayForwarderHandler from '@/handlers/statistics-overlay/statistics-overlay-forwarder-handler';
 import OpenStatisticsOverlayHandler from '@/handlers/open-statistics-overlay-handler';
-import SaviCommandHandler from '@/savi/background-handler';
+import SaviCommandHandler, { finishCaptureForClosedTab } from '@/savi/background-handler';
 import { bindSaviAccountRefresh } from '@/savi/account';
 import { SaviCommand } from '@/savi/messages';
-import { clearRecordingIntent } from '@/savi/recording-intent';
 
 export default defineBackground(() => {
     if (!isFirefoxBuild) {
@@ -91,13 +90,13 @@ export default defineBackground(() => {
     // never block on a token refresh.
     bindSaviAccountRefresh();
 
-    // Recording-intent markers live in storage.session keyed by tabId; clear a
-    // tab's marker when it closes so a reused tabId never inherits stale intent.
-    browser.tabs.onRemoved.addListener((tabId) => {
-        clearRecordingIntent(tabId).catch(() => {});
-    });
-
     const settings = new SettingsProvider(new ExtensionSettingsStorage());
+
+    // SV-18: when the captured tab closes, finish the in-flight session so the
+    // episode-so-far reaches the library instead of idling in the daemon.
+    browser.tabs.onRemoved.addListener((tabId) => {
+        finishCaptureForClosedTab(tabId, settings).catch(() => {});
+    });
 
     const startListener = async () => {
         primeLocalization(await settings.getSingle('language'));

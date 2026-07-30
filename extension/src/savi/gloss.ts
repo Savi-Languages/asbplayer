@@ -170,6 +170,23 @@ export function buildGlossHtml(
     return glossed ? html : '';
 }
 
+/** The lowercased words a settled gloss-HTML line actually wraps in gloss ruby
+ *  — the exact render truth for "which words carried a label". Safe to extract
+ *  with a pattern because WE generated the markup and word segments are pure
+ *  letter runs (no entities possible inside them). De-duplicated. */
+export function glossedLemmasFromHtml(html: string): string[] {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const match of html.matchAll(/<ruby class="asb-gloss">([^<]+)<rt>/g)) {
+        const lemma = match[1].toLowerCase();
+        if (!seen.has(lemma)) {
+            seen.add(lemma);
+            out.push(lemma);
+        }
+    }
+    return out;
+}
+
 // A gloss LABEL must be short — a word or a short phrase. A long, sentence-like
 // response is a misbehaving LLM fallback (rambling about senses/alternatives),
 // not a usable label; the caller drops it rather than render a paragraph.
@@ -345,6 +362,20 @@ export class SaviGlossController implements GlossProvider {
      *  space-delimited target language). On-demand hover glossing gates on this. */
     get glossable(): boolean {
         return this._glossable;
+    }
+
+    /** The lowercased words of `text` currently DISPLAYED with a gloss label
+     *  (from the settled line HTML — exact render truth). Empty when the line
+     *  hasn't settled yet, nothing was glossed, glossing is off, or the track
+     *  isn't the primary one. The encounter reporter samples this at
+     *  line-start; a gloss landing later counts as bare exposure, which
+     *  matches what the user saw at that moment. */
+    glossedLemmasFor(text: string, track?: number): string[] {
+        if (!this._glossable || (track ?? PRIMARY_TRACK) !== PRIMARY_TRACK) {
+            return [];
+        }
+        const settled = this._lineHtml.get(text);
+        return settled ? glossedLemmasFromHtml(settled) : [];
     }
 
     /** The target (learning) language, for the hover module's context. */
