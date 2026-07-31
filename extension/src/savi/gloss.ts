@@ -414,6 +414,23 @@ export class SaviGlossController implements GlossProvider {
     // Rate gate: the earliest time the next dispatch may start (min-interval spacing).
     private _nextDispatchMs = 0;
 
+    /** Why a line got no labels.
+     *
+     *  EVERY reason glossing produces nothing looks identical on screen —
+     *  plain subtitles, no error. Track mismatch, no candidate words, a failed
+     *  call, and "you already know every word here" are indistinguishable, and
+     *  the last one is the common case, so a genuinely broken pipeline reads as
+     *  normal operation. That is the same shape as the fallback that hid the
+     *  surface-vs-lemma bug for so long, and it cost three rounds of
+     *  archaeology to re-learn.
+     *
+     *  Filter the service-worker console on `savi: gloss` to see the reason.
+     *  (The line's own text is deliberately not logged — it is the user's
+     *  viewing history.) */
+    private _why(reason: string): void {
+        console.debug(`savi: gloss — ${reason}`);
+    }
+
     constructor(
         settings: Pick<SettingsProvider, 'get'>,
         onGlossReady: (text: string) => void,
@@ -434,6 +451,11 @@ export class SaviGlossController implements GlossProvider {
             const { targetLanguage } = await getCachedRoamingSettings();
             this._targetLang = targetLanguage;
             this._glossable = saviGlossing && targetLanguage.length > 0 && isGlossableLanguage(targetLanguage);
+            if (!this._glossable) {
+                this._why(
+                    `off — saviGlossing=${saviGlossing}, targetLanguage=${JSON.stringify(targetLanguage)}`
+                );
+            }
         } catch {
             this._glossable = false;
         }
@@ -463,7 +485,15 @@ export class SaviGlossController implements GlossProvider {
     }
 
     glossHtmlFor(text: string, track?: number): string | undefined {
-        if (!this._glossable || (track ?? PRIMARY_TRACK) !== PRIMARY_TRACK) {
+        if (!this._glossable) {
+            return undefined; // already explained once, at start()
+        }
+        if ((track ?? PRIMARY_TRACK) !== PRIMARY_TRACK) {
+            // Only the target-language track is glossed. Worth saying out loud:
+            // hover glossing has NO track gate, so a subtitle in another slot
+            // gives working hover and dead inline labels — which reads as a
+            // broken feature rather than a configuration.
+            this._why(`skipped — track ${track} is not the primary track`);
             return undefined;
         }
         if (text.trim().length === 0) {
@@ -573,6 +603,7 @@ export class SaviGlossController implements GlossProvider {
             const segments = segmentLine(text);
             const candidates = glossCandidates(segments);
             if (candidates.length === 0) {
+                this._why('no candidates — every word was punctuation, a function word, or a name');
                 this._lineHtml.set(text, ''); // nothing to ask about → settle empty, no retry
                 return;
             }
@@ -639,7 +670,22 @@ export class SaviGlossController implements GlossProvider {
                 TRANSLATE_TIMEOUT_MS
             );
             if (!response?.words) {
+                // Signed out, cloud unreachable, or a deployment predating
+                // /v2/gloss. Distinct from "you know these words" — that case
+                // returns decisions, all skipped.
+                this._why(`call returned no decisions for ${words.length} word(s)`);
                 return new Map();
+            }
+            // The common, healthy reason for a bare line: the learner already
+            // knows every word on it. Said explicitly so it can never again be
+            // confused with a broken pipeline.
+            const skipped = response.words.filter((w) => w.skip);
+            if (skipped.length === response.words.length) {
+                this._why(
+                    `all ${skipped.length} word(s) skipped — ${skipped
+                        .map((w) => `${w.word}:${w.skip}`)
+                        .join(', ')}`
+                );
             }
             const labels = labelsFrom(response.words);
             for (const [word, gloss] of labels) {
