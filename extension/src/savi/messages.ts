@@ -384,6 +384,14 @@ export type SaviSegmentOp =
 
 // ── background → content script ─────────────────────────────────────────
 
+/** Show a savi notice on the page. Sent to the TOP FRAME ONLY (`frameId: 0`) —
+ *  a start request is broadcast to every frame, so broadcasting the notice too
+ *  would stack one toast per frame. */
+export interface SaviNotifyToVideoMessage {
+    readonly command: 'savi-notify';
+    readonly text: string;
+}
+
 export interface SaviCaptureEndedToVideoMessage {
     readonly command: 'savi-capture-ended';
     readonly src: string;

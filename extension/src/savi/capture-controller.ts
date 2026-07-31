@@ -159,6 +159,10 @@ export class SaviCaptureController {
                     sendResponse({ requested: true });
                     return true;
                 }
+            } else if (request.message.command === 'savi-notify') {
+                // Sent to the top frame only, when a start request reached no
+                // frame that could act on it (see savi/request-start.ts).
+                this._host.notify(request.message.text);
             } else if (request.message.command === 'savi-capture-ended') {
                 // Arrives for explicit stops too (the finish result travels
                 // out-of-band; see SaviStopCaptureResponse), so don't gate

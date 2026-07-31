@@ -80,6 +80,31 @@ import OpenStatisticsOverlayHandler from '@/handlers/open-statistics-overlay-han
 import SaviCommandHandler, { finishCaptureForClosedTab } from '@/savi/background-handler';
 import { bindSaviAccountRefresh } from '@/savi/account';
 import { SaviCommand } from '@/savi/messages';
+import { requestStartWithFeedback } from '@/savi/request-start';
+
+/** Ask a tab to start capturing, and say so on the page when no frame could take
+ *  it. `savi-request-start` is broadcast to every frame and only the frame with
+ *  a loaded subtitle track answers, so "no response" means nothing could act —
+ *  which used to be a completely silent no-op. See savi/request-start.ts. */
+const saviRequestStart = (tabId: number) =>
+    requestStartWithFeedback(tabId, {
+        sendToTab: (id) =>
+            browser.tabs.sendMessage(id, {
+                sender: 'savi-extension-to-video',
+                message: { command: 'savi-request-start' },
+            } as SaviCommand<{ command: 'savi-request-start' }>),
+        // frameId 0 = top frame only. The request is broadcast tab-wide; the
+        // notice must not be, or a page with N frames stacks N toasts.
+        notifyTopFrame: (id, text) =>
+            browser.tabs.sendMessage(
+                id,
+                {
+                    sender: 'savi-extension-to-video',
+                    message: { command: 'savi-notify', text },
+                } as SaviCommand<{ command: 'savi-notify'; text: string }>,
+                { frameId: 0 }
+            ),
+    });
 
 export default defineBackground(() => {
     if (!isFirefoxBuild) {
@@ -283,11 +308,7 @@ export default defineBackground(() => {
             // The click just granted activeTab for this tab; ask the savi
             // capture controller to start (tabCapture will succeed now).
             if (tab?.id !== undefined) {
-                const startCommand: SaviCommand<{ command: 'savi-request-start' }> = {
-                    sender: 'savi-extension-to-video',
-                    message: { command: 'savi-request-start' },
-                };
-                browser.tabs.sendMessage(tab.id, startCommand).catch(() => {});
+                saviRequestStart(tab.id);
             }
             return;
         }
@@ -472,11 +493,7 @@ export default defineBackground(() => {
                     // this same path — either gesture grants the audio permission.
                     const tabId = tabs[0]?.id;
                     if (tabId !== undefined) {
-                        const startCommand: SaviCommand<{ command: 'savi-request-start' }> = {
-                            sender: 'savi-extension-to-video',
-                            message: { command: 'savi-request-start' },
-                        };
-                        browser.tabs.sendMessage(tabId, startCommand).catch(() => {});
+                        saviRequestStart(tabId);
                     }
                     break;
                 }
