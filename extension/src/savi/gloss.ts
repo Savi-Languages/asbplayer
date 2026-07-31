@@ -217,6 +217,10 @@ export function glossCandidates(segments: GlossSegment[]): string[] {
     return out;
 }
 
+/** The coarse reason a line went bare, used to suppress repeats in the debug
+ *  log. Not user-visible. */
+type WhyKind = 'off' | 'track' | 'no-candidates' | 'call-failed' | 'all-skipped';
+
 /** Why a line's words were skipped, as counts BY REASON — never word by word.
  *
  *  The candidates are exactly the line's content words, so listing them would
@@ -436,6 +440,12 @@ export class SaviGlossController implements GlossProvider {
     // Rate gate: the earliest time the next dispatch may start (min-interval spacing).
     private _nextDispatchMs = 0;
 
+    /** The kind of reason a line went bare — the dedupe key for [`_why`].
+     *  Deliberately coarse: counts vary line to line, and re-logging because
+     *  "known: 3" became "known: 4" would defeat the whole point. */
+    private _lastWhy: WhyKind | undefined;
+    private _whyRepeats = 0;
+
     /** Why a line got no labels.
      *
      *  EVERY reason glossing produces nothing looks identical on screen —
@@ -447,9 +457,23 @@ export class SaviGlossController implements GlossProvider {
      *  archaeology to re-learn.
      *
      *  Filter the service-worker console on `savi: gloss` to see the reason.
-     *  (The line's own text is deliberately not logged — it is the user's
-     *  viewing history.) */
-    private _why(reason: string): void {
+     *
+     *  Logged only when the reason CHANGES, because the healthy case — "you
+     *  already know every word here" — is the common one, and at ~900 subtitle
+     *  lines an episode a per-line log would both burn work nobody asked for
+     *  and drown the rare reason in the frequent one. Steady state is silent;
+     *  a transition prints the new reason and how long the previous ran.
+     *  `console.debug` keeps it at Verbose level, hidden unless asked for. */
+    private _why(kind: WhyKind, reason: string): void {
+        if (kind === this._lastWhy) {
+            this._whyRepeats += 1; // steady state — say nothing
+            return;
+        }
+        if (this._whyRepeats > 0) {
+            console.debug(`savi: gloss — (previous ×${this._whyRepeats + 1})`);
+        }
+        this._lastWhy = kind;
+        this._whyRepeats = 0;
         console.debug(`savi: gloss — ${reason}`);
     }
 
@@ -475,6 +499,7 @@ export class SaviGlossController implements GlossProvider {
             this._glossable = saviGlossing && targetLanguage.length > 0 && isGlossableLanguage(targetLanguage);
             if (!this._glossable) {
                 this._why(
+                    'off',
                     `off — saviGlossing=${saviGlossing}, targetLanguage=${JSON.stringify(targetLanguage)}`
                 );
             }
@@ -515,7 +540,7 @@ export class SaviGlossController implements GlossProvider {
             // hover glossing has NO track gate, so a subtitle in another slot
             // gives working hover and dead inline labels — which reads as a
             // broken feature rather than a configuration.
-            this._why(`skipped — track ${track} is not the primary track`);
+            this._why('track', `skipped — track ${track} is not the primary track`);
             return undefined;
         }
         if (text.trim().length === 0) {
@@ -625,7 +650,10 @@ export class SaviGlossController implements GlossProvider {
             const segments = segmentLine(text);
             const candidates = glossCandidates(segments);
             if (candidates.length === 0) {
-                this._why('no candidates — every word was punctuation, a function word, or a name');
+                this._why(
+                    'no-candidates',
+                    'no candidates — every word was punctuation, a function word, or a name'
+                );
                 this._lineHtml.set(text, ''); // nothing to ask about → settle empty, no retry
                 return;
             }
@@ -695,7 +723,7 @@ export class SaviGlossController implements GlossProvider {
                 // Signed out, cloud unreachable, or a deployment predating
                 // /v2/gloss. Distinct from "you know these words" — that case
                 // returns decisions, all skipped.
-                this._why(`call returned no decisions for ${words.length} word(s)`);
+                this._why('call-failed', `call returned no decisions for ${words.length} word(s)`);
                 return new Map();
             }
             // The common, healthy reason for a bare line: the learner already
@@ -710,7 +738,10 @@ export class SaviGlossController implements GlossProvider {
             // suppressed or broken?") without carrying any of the content.
             const skipped = response.words.filter((w) => w.skip);
             if (skipped.length === response.words.length) {
-                this._why(`all ${skipped.length} word(s) skipped — ${skipSummary(response.words)}`);
+                this._why(
+                    'all-skipped',
+                    `all ${skipped.length} word(s) skipped — ${skipSummary(response.words)}`
+                );
             }
             const labels = labelsFrom(response.words);
             for (const [word, gloss] of labels) {

@@ -9,6 +9,7 @@ import {
     isReasonableGloss,
     labelsFrom,
     skipSummary,
+    SaviGlossController,
     segmentLine,
 } from './gloss';
 
@@ -312,5 +313,42 @@ describe('skipSummary', () => {
         ]);
 
         expect(summary).toBe('known: 1');
+    });
+});
+
+describe('SaviGlossController debug logging', () => {
+    // The healthy case — "you already know every word here" — is the COMMON
+    // one. At ~900 subtitle lines an episode, logging it per line would burn
+    // work nobody asked for and bury the rare reason under the frequent one,
+    // which is the opposite of what the log is for.
+    const settings = { get: async () => ({ saviGlossing: false }) as any };
+
+    it('says a reason once, then goes quiet while it holds', async () => {
+        const debug = jest.spyOn(console, 'debug').mockImplementation(() => {});
+        const controller = new SaviGlossController(settings, () => {});
+        const why = (controller as any)._why.bind(controller);
+
+        why('all-skipped', 'all 4 word(s) skipped — known: 4');
+        why('all-skipped', 'all 3 word(s) skipped — known: 3');
+        why('all-skipped', 'all 5 word(s) skipped — known: 5');
+
+        expect(debug).toHaveBeenCalledTimes(1);
+        debug.mockRestore();
+    });
+
+    it('speaks up when the reason changes, and says how long the last one ran', async () => {
+        const debug = jest.spyOn(console, 'debug').mockImplementation(() => {});
+        const controller = new SaviGlossController(settings, () => {});
+        const why = (controller as any)._why.bind(controller);
+
+        why('all-skipped', 'all 4 word(s) skipped — known: 4');
+        why('all-skipped', 'all 3 word(s) skipped — known: 3');
+        why('call-failed', 'call returned no decisions for 2 word(s)');
+
+        const lines = debug.mock.calls.map((c) => String(c[0]));
+        expect(lines).toHaveLength(3);
+        expect(lines[1]).toContain('previous ×2'); // the run that just ended
+        expect(lines[2]).toContain('call returned no decisions');
+        debug.mockRestore();
     });
 });
