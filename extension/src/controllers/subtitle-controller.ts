@@ -158,6 +158,13 @@ export default class SubtitleController {
     // watch-time exposure can be counted. Separate from autoPauseContext for the
     // same reason as above.
     onSaviStartedShowing?: (subtitle: SubtitleModel) => void;
+    // Edge-trigger for onSaviStartedShowing (SV-28). subtitlesAt() reports
+    // startedShowing on EVERY 100 ms poll tick inside showingCheckRadiusMs of a
+    // line's start — and on every tick indefinitely while playback is paused
+    // inside that window. The playback modes are shielded from that by
+    // autoPauseContext's start-equality dedup; firing the savi hook from the
+    // raw signal double-counted every line and runaway-counted paused ones.
+    private _saviStartedShowingContext: AutoPauseContext = new AutoPauseContext();
 
     constructor(context: Binding, dictionary: DictionaryProvider, settings: SettingsProvider) {
         this.context = context;
@@ -182,6 +189,7 @@ export default class SubtitleController {
         this.convertNetflixRuby = false;
         this.subtitleHtml = SubtitleHtml.remove;
         this.refreshCurrentSubtitle = false;
+        this._saviStartedShowingContext.onStartedShowing = (subtitle) => this.onSaviStartedShowing?.(subtitle);
         const { subtitlesElementOverlay, topSubtitlesElementOverlay, notificationElementOverlay } = this._overlays();
         this.bottomSubtitlesElementOverlay = subtitlesElementOverlay;
         this.topSubtitlesElementOverlay = topSubtitlesElementOverlay;
@@ -213,6 +221,7 @@ export default class SubtitleController {
             subtitles.filter((s) => isTrackSeekable(this._seekableTracks, s.track))
         );
         this.autoPauseContext.clear();
+        this._saviStartedShowingContext.clear();
     }
 
     set seekableTracks(seekableTracks: SeekableTracks) {
@@ -516,7 +525,7 @@ export default class SubtitleController {
 
             if (slice.startedShowing && this._trackEnabled(slice.startedShowing)) {
                 this.autoPauseContext.startedShowing(slice.startedShowing);
-                this.onSaviStartedShowing?.(slice.startedShowing);
+                this._saviStartedShowingContext.startedShowing(slice.startedShowing);
             }
 
             if (seekableSlice.nextToShow && seekableSlice.nextToShow.length > 0) {
