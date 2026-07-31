@@ -8,6 +8,7 @@ import {
     isGlossableLanguage,
     isReasonableGloss,
     labelsFrom,
+    skipSummary,
     segmentLine,
 } from './gloss';
 
@@ -272,5 +273,44 @@ describe('labelsFrom', () => {
         const labels = labelsFrom([{ word: 'sabía', lemma: 'saber', gloss: 'knew' }]);
 
         expect(labels.get('Sabía'.toLowerCase())).toBe('knew');
+    });
+});
+
+describe('skipSummary', () => {
+    // The candidates ARE the line's content words, so a per-word log would
+    // reconstruct what the user is watching — the transcript-snippet tier hard
+    // constraint #2 keeps independently toggleable. The first version of this
+    // log emitted every word while its commit message claimed it did not, so
+    // the property is pinned here rather than trusted to a comment.
+    it('never carries the words themselves, only reasons and counts', () => {
+        const summary = skipSummary([
+            { word: 'supieras', lemma: 'saber', skip: 'known' },
+            { word: 'pareces', lemma: 'parecer', skip: 'known' },
+            { word: 'estuvieron', lemma: 'estar', skip: 'function-word' },
+        ]);
+
+        for (const word of ['supieras', 'pareces', 'estuvieron', 'saber', 'parecer', 'estar']) {
+            expect(summary).not.toContain(word);
+        }
+    });
+
+    it('still answers the diagnostic question: which reason, and how many', () => {
+        const summary = skipSummary([
+            { word: 'a', skip: 'known' },
+            { word: 'b', skip: 'known' },
+            { word: 'c', skip: 'function-word' },
+        ]);
+
+        expect(summary).toContain('known: 2');
+        expect(summary).toContain('function-word: 1');
+    });
+
+    it('ignores words that were NOT skipped — they got labels, not reasons', () => {
+        const summary = skipSummary([
+            { word: 'nube', lemma: 'nube', gloss: 'cloud' },
+            { word: 'saber', lemma: 'saber', skip: 'known' },
+        ]);
+
+        expect(summary).toBe('known: 1');
     });
 });

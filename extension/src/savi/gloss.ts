@@ -217,6 +217,28 @@ export function glossCandidates(segments: GlossSegment[]): string[] {
     return out;
 }
 
+/** Why a line's words were skipped, as counts BY REASON — never word by word.
+ *
+ *  The candidates are exactly the line's content words, so listing them would
+ *  reconstruct what the user is watching. Hard constraint #2 tiers transcript
+ *  text separately from aggregates and keeps snippets independently
+ *  toggleable; a debug log that emits them by default sits on the wrong side
+ *  of that line, however local the console feels.
+ *
+ *  Counts answer the only question the log exists to answer — "was this line
+ *  suppressed, or is the pipeline broken?" — and carry no content. Exported so
+ *  the property is TESTED rather than asserted in a comment (the first version
+ *  of this logged every word while its commit message claimed it did not). */
+export function skipSummary(decisions: readonly GlossDecision[]): string {
+    const byReason = new Map<string, number>();
+    for (const d of decisions) {
+        if (d.skip) {
+            byReason.set(d.skip, (byReason.get(d.skip) ?? 0) + 1);
+        }
+    }
+    return [...byReason].map(([reason, count]) => `${reason}: ${count}`).join(', ');
+}
+
 /** Fold a `/v2/gloss` response into the surface → label map [`buildGlossHtml`]
  *  wants. Skipped words are absent (no label), as are rambling labels — an LLM
  *  fallback that returns a paragraph of senses must not be painted over a word. */
@@ -679,13 +701,16 @@ export class SaviGlossController implements GlossProvider {
             // The common, healthy reason for a bare line: the learner already
             // knows every word on it. Said explicitly so it can never again be
             // confused with a broken pipeline.
+            //
+            // Counted BY REASON, never word by word. The candidates are exactly
+            // the line's content words, so listing them would reconstruct what
+            // the user is watching — the transcript-snippet tier that hard
+            // constraint #2 keeps independently toggleable rather than emitting
+            // by default. "known: 4" answers the diagnostic question ("was it
+            // suppressed or broken?") without carrying any of the content.
             const skipped = response.words.filter((w) => w.skip);
             if (skipped.length === response.words.length) {
-                this._why(
-                    `all ${skipped.length} word(s) skipped — ${skipped
-                        .map((w) => `${w.word}:${w.skip}`)
-                        .join(', ')}`
-                );
+                this._why(`all ${skipped.length} word(s) skipped — ${skipSummary(response.words)}`);
             }
             const labels = labelsFrom(response.words);
             for (const [word, gloss] of labels) {
