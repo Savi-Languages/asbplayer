@@ -7,6 +7,8 @@
 // element is wired up.
 type VideoSource = () => HTMLMediaElement;
 
+import { VideoAnchor } from './anchor';
+
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5];
 
 export class SaviSpeedControl {
@@ -15,14 +17,21 @@ export class SaviSpeedControl {
     private _root: HTMLDivElement | null = null;
     private readonly _buttons = new Map<number, HTMLButtonElement>();
     private readonly _onRateChange = () => this._reflect();
+    private _anchor: VideoAnchor | null = null;
 
     constructor(getVideo: VideoSource) {
         this._getVideo = getVideo;
     }
 
     show() {
-        this._ensure().style.display = 'inline-flex';
+        const root = this._ensure();
+        root.style.display = 'inline-flex';
         this._reflect();
+        // Anchor after display is set: a hidden element measures 0x0.
+        if (this._anchor === null) {
+            this._anchor = new VideoAnchor(root, this._getVideo, 'top-center', 18);
+        }
+        this._anchor.schedule();
     }
 
     hide() {
@@ -32,6 +41,8 @@ export class SaviSpeedControl {
     }
 
     destroy() {
+        this._anchor?.destroy();
+        this._anchor = null;
         this._video?.removeEventListener('ratechange', this._onRateChange);
         this._root?.remove();
         this._root = null;

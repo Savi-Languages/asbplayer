@@ -85,7 +85,10 @@ export const sendWithRetry = async (
 export class SaviCaptureController {
     private readonly _host: SaviCaptureHost;
     private readonly _nativeSubtitleHider = new NativeSubtitleHider();
-    private readonly _recordButton = new SaviRecordButton(() => this._toggleCapture());
+    private readonly _recordButton = new SaviRecordButton(
+        () => this._toggleCapture(),
+        () => this._host.video
+    );
     private readonly _replayButton = new SaviReplayButton(() => this._replayCurrentLine());
     private readonly _speedControl = new SaviSpeedControl(() => this._host.video);
     // "You're not recording" guard: loud button + banner + chime + re-nag, raised
@@ -237,6 +240,11 @@ export class SaviCaptureController {
                     // and auto-start for the no-friction case — unless the user
                     // deliberately stopped this episode earlier in the session.
                     this._recordButton.show();
+                    // The speed selector rides with the Record control: both are
+                    // capture affordances, and SAVI.md documents them together.
+                    // (It was constructed and hidden but never shown, so the
+                    // documented 0.5x-1.5x picker could not appear at all.)
+                    this._speedControl.show();
                     const { episodeId } = this._pageMetadata();
                     // No stable id yet (Netflix mid-navigation) — the next
                     // heartbeat will have one. Starting now would mint a
@@ -251,6 +259,7 @@ export class SaviCaptureController {
                     }
                 } else {
                     this._recordButton.hide();
+                    this._speedControl.hide();
                 }
             });
     }
@@ -274,8 +283,7 @@ export class SaviCaptureController {
         const onTrack0 = all.filter((s) => s.track === 0);
         const subs = onTrack0.length > 0 ? onTrack0 : all;
         const current =
-            [...subs].reverse().find((s) => s.start <= t && t < s.end) ??
-            [...subs].reverse().find((s) => s.start <= t);
+            [...subs].reverse().find((s) => s.start <= t && t < s.end) ?? [...subs].reverse().find((s) => s.start <= t);
         if (!current) {
             return;
         }

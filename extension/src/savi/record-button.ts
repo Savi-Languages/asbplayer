@@ -8,28 +8,48 @@
 // When a start can't proceed (daemon unreachable, no subtitles), the
 // controller calls flashHint() to say so on the button itself.
 
+import { VideoAnchor } from './anchor';
+
 export type RecordButtonState = 'idle' | 'recording' | 'alert';
+
+type VideoSource = () => Element | null | undefined;
 
 export class SaviRecordButton {
     private readonly _onToggle: () => void;
+    private readonly _getVideo: VideoSource | undefined;
     private _button: HTMLButtonElement | null = null;
     private _label: HTMLSpanElement | null = null;
     private _state: RecordButtonState = 'idle';
     private _hintTimer: ReturnType<typeof setTimeout> | undefined;
+    private _anchor: VideoAnchor | null = null;
 
-    constructor(onToggle: () => void) {
+    // `getVideo` is optional so existing callers/tests keep working; without it
+    // the button falls back to the stylesheet's viewport corner.
+    constructor(onToggle: () => void, getVideo?: VideoSource) {
         this._onToggle = onToggle;
+        this._getVideo = getVideo;
     }
 
     /** Make the control visible, creating it on first call. */
     show() {
-        this._ensure().style.display = 'inline-flex';
+        const button = this._ensure();
+        button.style.display = 'inline-flex';
+        // Anchor after display is set: a hidden element measures 0x0.
+        if (this._anchor === null && this._getVideo !== undefined) {
+            this._anchor = new VideoAnchor(button, this._getVideo, 'top-right', 18);
+        }
+        this._anchor?.schedule();
     }
 
     hide() {
         if (this._button) {
             this._button.style.display = 'none';
         }
+    }
+
+    /** Re-measure against the video (player resized, theater/fullscreen). */
+    reposition() {
+        this._anchor?.schedule();
     }
 
     setState(state: RecordButtonState) {
@@ -75,6 +95,8 @@ export class SaviRecordButton {
 
     destroy() {
         clearTimeout(this._hintTimer);
+        this._anchor?.destroy();
+        this._anchor = null;
         this._button?.remove();
         this._button = null;
         this._label = null;
