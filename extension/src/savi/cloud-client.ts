@@ -87,6 +87,49 @@ export const translate = async (
     return (await response.json()) as TranslateResult;
 };
 
+/** One word's glossing verdict from the cloud (mirrors savi-cloud's
+ *  `GlossWord`; `skip` is serde kebab-case). */
+export interface GlossDecision {
+    readonly word: string;
+    readonly lemma?: string;
+    readonly skip?: 'known' | 'function-word' | 'untokenized';
+    readonly proficiency?: number;
+    readonly gloss?: string;
+}
+
+export interface GlossLineResult {
+    readonly words: readonly GlossDecision[];
+    readonly threshold: number;
+}
+
+/** Decide + label one subtitle line (POST /v2/gloss) — SV-40.
+ *
+ *  The decision belongs on the server because the LEMMATIZER is there: the
+ *  extension only ever sees surfaces, so it can never tell that `sabía` is the
+ *  `saber` the learner already knows. Throws when signed out or on a non-2xx
+ *  response; the caller leaves the line unglossed rather than guessing. */
+export const glossLine = async (
+    cloudUrl: string,
+    lang: string,
+    glossLang: string,
+    line: string,
+    words: readonly string[]
+): Promise<GlossLineResult> => {
+    const token = await currentAccessToken();
+    if (!token) {
+        throw new Error('sign in to use glossing');
+    }
+    const response = await fetchWithTimeout(`${resolveCloudBase(cloudUrl)}/v2/gloss`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lang, glossLang, line, words }),
+    });
+    if (!response.ok) {
+        throw new Error(`cloud gloss failed: HTTP ${response.status}`);
+    }
+    return (await response.json()) as GlossLineResult;
+};
+
 /** A word's learning bucket, mirroring savi-core's `Bucket` (serde snake_case). */
 export type WordBucket = 'new' | 'word_box' | 'known';
 

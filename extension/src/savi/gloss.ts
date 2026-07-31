@@ -19,15 +19,12 @@
 import {
     GlossedWordEntry,
     SaviCommand,
+    SaviGlossLineMessage,
+    SaviGlossLineResponse,
     SaviGlossTranslateMessage,
     SaviGlossTranslateResponse,
-    SaviWordBucketsMessage,
-    SaviWordBucketsResponse,
-    SaviWordProficiencyMessage,
-    SaviWordProficiencyResponse,
 } from './messages';
 import { getCachedRoamingSettings } from './cloud-settings';
-import type { WordBucket } from './cloud-client';
 import type { SettingsProvider } from '@project/common/settings';
 
 // The language to gloss INTO (the user's known language). English for the two
@@ -187,8 +184,63 @@ export function segmentLine(text: string): GlossSegment[] {
     return segments;
 }
 
+/** One word's verdict from `POST /v2/gloss` — the server lemmatized it and
+ *  decided. `skip` absent ⇒ render `gloss` above it. */
+export interface GlossDecision {
+    /** The surface we sent, echoed back (lowercased on our side). */
+    readonly word: string;
+    /** The dictionary form it resolved to — server-side truth, unavailable here. */
+    readonly lemma?: string;
+    readonly skip?: 'known' | 'function-word' | 'untokenized';
+    readonly proficiency?: number;
+    readonly gloss?: string;
+}
+
+/** The surfaces of a line worth asking the server about: content words, in
+ *  order, de-duplicated, lowercased.
+ *
+ *  This is a cheap PRE-filter, not the decision — the server makes that, and it
+ *  is the only side that can, since it owns the lemmatizer. All this avoids is
+ *  shipping punctuation, one-letter tokens, obvious structural words and
+ *  proper nouns across the wire. Being too generous here costs a little
+ *  payload; being too STRICT silently un-glosses a word forever, so when in
+ *  doubt, send it. */
+export function glossCandidates(segments: GlossSegment[]): string[] {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const seg of segments) {
+        if (seg.word && seg.content && seg.lemma && !seen.has(seg.lemma)) {
+            seen.add(seg.lemma);
+            out.push(seg.lemma);
+        }
+    }
+    return out;
+}
+
+/** Fold a `/v2/gloss` response into the surface → label map [`buildGlossHtml`]
+ *  wants. Skipped words are absent (no label), as are rambling labels — an LLM
+ *  fallback that returns a paragraph of senses must not be painted over a word. */
+export function labelsFrom(decisions: readonly GlossDecision[]): Map<string, string> {
+    const labels = new Map<string, string>();
+    for (const d of decisions) {
+        if (d.skip) {
+            continue;
+        }
+        const gloss = d.gloss?.trim();
+        if (gloss && isReasonableGloss(gloss)) {
+            labels.set(d.word.toLowerCase(), gloss);
+        }
+    }
+    return labels;
+}
+
 /** The distinct lemmas of a line that are candidates to gloss: content words
- *  whose lemma is not in `known`. Order-preserving, de-duplicated. */
+ *  whose lemma is not in `known`. Order-preserving, de-duplicated.
+ *
+ *  @deprecated SV-40 — the known-set filter moved to the server, because THIS
+ *  is where the bug lived: `known` is keyed by real lemmas but `seg.lemma` is a
+ *  lowercased surface, so `sabía` never matched a known `saber` and stayed
+ *  labelled forever. Use [`glossCandidates`] + `POST /v2/gloss`. */
 export function glossableLemmas(segments: GlossSegment[], known: ReadonlySet<string>): string[] {
     const seen = new Set<string>();
     const out: string[] = [];
@@ -276,7 +328,7 @@ export function isReasonableGloss(gloss: string): boolean {
 // ── The controller ────────────────────────────────────────────────────────
 
 const sendToBackground = <R>(
-    message: SaviGlossTranslateMessage | SaviWordBucketsMessage | SaviWordProficiencyMessage
+    message: SaviGlossLineMessage | SaviGlossTranslateMessage
 ): Promise<R> => {
     const command: SaviCommand<typeof message> = { sender: 'savi-video', message };
     return browser.runtime.sendMessage(command) as Promise<R>;
@@ -386,14 +438,10 @@ export class SaviGlossController implements GlossProvider {
             this._glossable = false;
         }
         if (this._glossable) {
-            // Start looking ahead IMMEDIATELY and load the known-word set in
-            // parallel. Glossing works with an empty known set (it globs every
-            // content word until the buckets arrive, then narrows), so a slow
-            // /v2/words/{lang}/buckets fetch — which projects over the whole
-            // account history and can take seconds on a large one — must NOT
-            // delay the first labels.
+            // SV-40: nothing to preload. The known-set fetch is gone — every
+            // decision now comes back with its line, which also means the first
+            // labels no longer wait on a whole-history projection.
             this._prefetchTimer = setInterval(() => this._prefetchTick(), PREFETCH_TICK_MS);
-            void this._loadKnown();
         }
     }
 
@@ -476,45 +524,11 @@ export class SaviGlossController implements GlossProvider {
         return this._translate(word.toLowerCase(), lineText, true);
     }
 
-    // Which lemmas to SKIP glossing. SV-20: proficiency-first — the review
-    // engine's per-lemma retrievability dominates the decision (skip when
-    // proficiency ≥ the roaming `review.glossThreshold`, default 0.8). When
-    // the proficiency endpoint is unavailable (old cloud / signed out), fall
-    // back to SV-13's binary buckets (skip `known`). A total failure leaves
-    // _known empty → gloss every content word.
-    private async _loadKnown(): Promise<void> {
-        try {
-            const response = await sendToBackground<SaviWordProficiencyResponse>({
-                command: 'savi-word-proficiency',
-                lang: this._targetLang,
-            });
-            if (response?.proficiency) {
-                const threshold = response.threshold;
-                this._known = new Set(
-                    Object.entries(response.proficiency)
-                        .filter(([, p]) => p >= threshold)
-                        .map(([lemma]) => lemma)
-                );
-                return;
-            }
-        } catch {
-            // fall through to buckets
-        }
-        try {
-            const response = await sendToBackground<SaviWordBucketsResponse>({
-                command: 'savi-word-buckets',
-                lang: this._targetLang,
-            });
-            const buckets = response?.buckets ?? {};
-            this._known = new Set(
-                Object.entries(buckets)
-                    .filter(([, bucket]) => (bucket as WordBucket) === 'known')
-                    .map(([lemma]) => lemma)
-            );
-        } catch {
-            this._known = new Set();
-        }
-    }
+    // (SV-40 removed `_loadKnown`. It fetched every known LEMMA once per bind
+    // and filtered locally by lowercased SURFACE — a comparison that could
+    // never match a conjugation, so `sabía` stayed labelled no matter how well
+    // the learner knew `saber`. The decision now travels with each line, made
+    // by the only party that owns a lemmatizer. See `_glossLine`.)
 
     // Translate cues starting within the lookahead window so they're cached before
     // they show (hides the per-word DeepL latency). Runs off a timer; no-ops while
@@ -557,20 +571,14 @@ export class SaviGlossController implements GlossProvider {
         this._inFlight.add(text);
         try {
             const segments = segmentLine(text);
-            const lemmas = glossableLemmas(segments, this._known);
-            if (lemmas.length === 0) {
-                this._lineHtml.set(text, ''); // nothing glossable → settle empty, no retry
+            const candidates = glossCandidates(segments);
+            if (candidates.length === 0) {
+                this._lineHtml.set(text, ''); // nothing to ask about → settle empty, no retry
                 return;
             }
-            const entries = await Promise.all(
-                lemmas.map(async (lemma) => [lemma, await this._translate(lemma, text, priority)] as const)
-            );
-            const glosses = new Map<string, string>();
-            for (const [lemma, gloss] of entries) {
-                if (gloss) {
-                    glosses.set(lemma, gloss);
-                }
-            }
+            // ONE round trip for the whole line: the server lemmatizes, decides
+            // against the learner's proficiency, and labels the survivors.
+            const glosses = await this._glossLine(text, candidates, priority);
             if (glosses.size === 0) {
                 // Every translation failed — almost always transient (rate limit /
                 // provider hiccup). Don't settle '' permanently; allow a bounded
@@ -593,6 +601,55 @@ export class SaviGlossController implements GlossProvider {
             }
         } finally {
             this._inFlight.delete(text);
+        }
+    }
+
+    /** Ask the cloud to decide + label one line. Returns surface → label for
+     *  the words that should be glossed; empty when the call failed (the caller
+     *  then retries a bounded number of times, then settles plain).
+     *
+     *  A failure must NOT fall back to "gloss every candidate". The old client
+     *  did exactly that when its known-set fetch failed, and combined with the
+     *  surface-vs-lemma bug the fallback was indistinguishable from working
+     *  normally — which is a large part of why this shipped unnoticed. */
+    private async _glossLine(
+        line: string,
+        words: string[],
+        priority: boolean
+    ): Promise<Map<string, string>> {
+        const cached = words
+            .map((w) => [w, this._wordGloss.get(`${w} ${line}`)] as const)
+            .filter(([, g]) => g !== undefined) as [string, string][];
+        if (cached.length === words.length) {
+            return new Map(cached); // fully served from the per-line cache
+        }
+        if (!priority) {
+            await this._rateGate();
+        }
+        await this._acquire(priority);
+        try {
+            const response = await withTimeout(
+                sendToBackground<SaviGlossLineResponse>({
+                    command: 'savi-gloss-line',
+                    lang: this._targetLang,
+                    glossLang: GLOSS_LANGUAGE,
+                    line,
+                    words,
+                }),
+                TRANSLATE_TIMEOUT_MS
+            );
+            if (!response?.words) {
+                return new Map();
+            }
+            const labels = labelsFrom(response.words);
+            for (const [word, gloss] of labels) {
+                this._wordGloss.set(`${word} ${line}`, gloss);
+            }
+            return labels;
+        } catch {
+            return new Map();
+        } finally {
+            this._release();
         }
     }
 

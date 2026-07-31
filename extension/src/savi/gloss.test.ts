@@ -1,11 +1,13 @@
 import {
     buildGlossHtml,
+    glossCandidates,
     glossableLemmas,
     glossedEntriesFromHtml,
     glossedLemmasFromHtml,
     isContentWord,
     isGlossableLanguage,
     isReasonableGloss,
+    labelsFrom,
     segmentLine,
 } from './gloss';
 
@@ -224,5 +226,51 @@ describe('glossable ⊆ reviewable', () => {
         for (const word of ['voy', 'fuimos', 'corriendo', 'llevar']) {
             expect(isContentWord(word)).toBe(true);
         }
+    });
+});
+
+// ── SV-40: the server decides, the client renders ──────────────────────────
+
+describe('glossCandidates', () => {
+    it('sends distinct content surfaces, dropping punctuation and proper nouns', () => {
+        const segments = segmentLine('Yo no sabía nada, Elena. ¿Sabía algo?');
+        // `sabía` twice → sent once; `Elena` mid-sentence → a proper noun;
+        // `no` → a structural function word the server needn't be asked about.
+        expect(glossCandidates(segments)).toEqual(['sabía', 'nada', 'algo']);
+    });
+});
+
+describe('labelsFrom', () => {
+    // The regression this whole endpoint exists for: a conjugation of a known
+    // lemma must come back skipped, and therefore carry NO label — even though
+    // its surface has never been seen before.
+    it('labels only the words the server did not skip', () => {
+        // The skipped words carry a label ON PURPOSE: `skip` must be what
+        // excludes them, not the incidental absence of a gloss. Without this,
+        // the test passes even for an implementation that ignores `skip`.
+        const labels = labelsFrom([
+            { word: 'sabía', lemma: 'saber', skip: 'known', proficiency: 0.97, gloss: 'knew' },
+            { word: 'nada', lemma: 'nada', proficiency: 0.12, gloss: 'nothing' },
+            { word: 'estuvieron', lemma: 'estar', skip: 'function-word', gloss: 'they were' },
+        ]);
+
+        expect(labels.get('sabía')).toBeUndefined();
+        expect(labels.get('estuvieron')).toBeUndefined();
+        expect(labels.get('nada')).toBe('nothing');
+    });
+
+    it('drops an LLM ramble rather than rendering a paragraph over a word', () => {
+        const rambling = 'This word has several senses: (1) nothing, (2) not at all, (3) swim.';
+        const labels = labelsFrom([{ word: 'nada', lemma: 'nada', gloss: rambling }]);
+
+        expect(labels.get('nada')).toBeUndefined();
+    });
+
+    it('matches the server echo case-insensitively', () => {
+        // The client sends lowercased surfaces but renders the original text,
+        // so the join must survive a capitalised sentence-initial word.
+        const labels = labelsFrom([{ word: 'sabía', lemma: 'saber', gloss: 'knew' }]);
+
+        expect(labels.get('Sabía'.toLowerCase())).toBe('knew');
     });
 });
