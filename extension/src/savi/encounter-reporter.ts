@@ -57,6 +57,15 @@ export interface EncounterReporterDeps {
     glossedEntries: (text: string, track?: number) => GlossedWordEntry[];
     /** Deliver the message to the background (browser.runtime.sendMessage). */
     send: (message: SaviWatchedLineMessage) => Promise<unknown>;
+    /** A watched line could not be delivered — almost always the daemon being
+     *  off, since it is the outbox. `consecutive` counts unbroken failures.
+     *
+     *  Fire-and-forget is right for ONE line, but a dead daemon silently eats
+     *  an entire episode of exposure, and the user finds out days later when
+     *  the words never appear. The host wires this to a visible banner. */
+    onDeliveryFailure?: (consecutive: number) => void;
+    /** Delivery worked again after at least one failure — clear the banner. */
+    onDeliveryRecovered?: () => void;
     now?: () => number;
 }
 
@@ -68,6 +77,9 @@ export class SaviEncounterReporter {
     // exception and finalize slightly early (accepted). Keyed by start+text so
     // a seek-back re-show opens a fresh encounter.
     private _pending: PendingLine[] = [];
+    /** Unbroken delivery failures. Drives the "your daemon is off" banner —
+     *  reset by the first success, so a one-off hiccup doesn't nag. */
+    private _consecutiveFailures = 0;
 
     constructor(deps: EncounterReporterDeps) {
         this._deps = deps;
@@ -164,6 +176,20 @@ export class SaviEncounterReporter {
                 glossedWords: this._deps.glossedEntries(line.text, line.track),
                 hoverGlossedWords: [...line.hovered].map(([word, gloss]) => ({ word, gloss })),
             })
-            .catch((e) => console.debug('savi: watched-line dropped', e));
+            .then(() => this._noteDelivered())
+            .catch((e) => this._noteFailure(e));
+    }
+
+    private _noteDelivered(): void {
+        if (this._consecutiveFailures > 0) {
+            this._consecutiveFailures = 0;
+            this._deps.onDeliveryRecovered?.();
+        }
+    }
+
+    private _noteFailure(e: unknown): void {
+        this._consecutiveFailures += 1;
+        console.debug('savi: watched-line dropped', e);
+        this._deps.onDeliveryFailure?.(this._consecutiveFailures);
     }
 }

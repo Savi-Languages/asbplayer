@@ -102,6 +102,7 @@ import { SaviGlossController } from '../savi/gloss';
 import { SaviGlossHover } from '../savi/gloss-hover';
 import { SaviControlsClearance } from '../savi/controls-clearance';
 import { SaviEncounterReporter } from '../savi/encounter-reporter';
+import { SaviRecordingGuardBanner } from '../savi/recording-guard-banner';
 import { SaviEngagementReporter } from '../savi/engagement-reporter';
 import { SpeechAccumulator } from '../savi/speech-stats';
 import { SaviInteractionClock } from '../savi/interaction-clock';
@@ -187,6 +188,11 @@ export default class Binding {
     readonly saviHoverDictionary: SaviHoverDictionary;
     readonly saviGlossController: SaviGlossController;
     readonly saviEncounterReporter: SaviEncounterReporter;
+    /** Warns that watched lines aren't reaching the daemon (SV-40). Its own
+     *  instance rather than the capture controller's guard: encounter
+     *  reporting runs whether or not audio capture is on, so the two signals
+     *  are independent and must not clear each other. */
+    readonly saviDaemonBanner = new SaviRecordingGuardBanner();
     readonly saviSpeechStats = new SpeechAccumulator();
     readonly saviEngagementReporter: SaviEngagementReporter;
     readonly saviInteractionClock: SaviInteractionClock;
@@ -318,6 +324,16 @@ export default class Binding {
             // shown label text (SV-20).
             glossedEntries: (text, track) => this.saviGlossController.glossedEntriesFor(text, track),
             send: (message) => browser.runtime.sendMessage({ sender: 'savi-video', message }),
+            // SV-40: a dead daemon must be LOUD. It is the outbox, so a failed
+            // send is exposure permanently lost — and it used to vanish into a
+            // console.debug, so an entire episode could go uncounted because
+            // the desktop app simply wasn't open. Reuses the guard banner.
+            onDeliveryFailure: (consecutive) => {
+                if (consecutive === 1) {
+                    this.saviDaemonBanner.show('daemon-unreachable', () => {});
+                }
+            },
+            onDeliveryRecovered: () => this.saviDaemonBanner.hide(),
         });
         this.subtitleController.onSaviStartedShowing = (subtitle) => {
             this.saviEncounterReporter.report(subtitle);
@@ -1398,6 +1414,7 @@ export default class Binding {
         this.saviGlossController.stop();
         this.saviGlossHover.stop();
         this.saviEncounterReporter.stop();
+        this.saviDaemonBanner.destroy();
         this.saviEngagementReporter.stop();
         this.saviInteractionClock.unbind();
         this.saviControlsClearance.stop();
