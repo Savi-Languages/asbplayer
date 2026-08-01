@@ -488,8 +488,17 @@ export class SaviGlossController implements GlossProvider {
     }
 
     /** Read the enabled flag + target language, prefetch the known-word set, and
-     *  start looking ahead. Called from the binding's bind(); safe to call again. */
+     *  start looking ahead. Called from the binding's bind(); safe to call again.
+     *
+     *  "Safe to call again" was a claim, not a property. `_reset()` cleared the
+     *  in-flight set while requests were still out, and the prefetch interval
+     *  below was assigned WITHOUT clearing an existing one — so a second call
+     *  leaked a timer that ticked forever and left the duplicate suppression
+     *  looking at an empty set. Result: the same line requested twice,
+     *  back-to-back, with identical payloads. Gloss calls are billed per
+     *  character downstream, so a duplicate is not merely untidy. */
     async start(): Promise<void> {
+        this._stopPrefetch();
         this._reset();
         try {
             const { saviGlossing } = await this._settings.get(['saviGlossing']);
@@ -514,11 +523,18 @@ export class SaviGlossController implements GlossProvider {
         }
     }
 
-    stop(): void {
+    /** Clear the prefetch interval if one is running. Idempotent, and the only
+     *  place the timer is torn down — assigning over a live interval leaks it,
+     *  because the handle is the only reference anyone holds. */
+    private _stopPrefetch(): void {
         if (this._prefetchTimer !== undefined) {
             clearInterval(this._prefetchTimer);
             this._prefetchTimer = undefined;
         }
+    }
+
+    stop(): void {
+        this._stopPrefetch();
         this._reset();
         this._glossable = false;
     }

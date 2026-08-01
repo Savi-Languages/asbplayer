@@ -13,6 +13,14 @@ import {
     segmentLine,
 } from './gloss';
 
+// The only thing `gloss.ts` pulls from cloud-settings, and the one piece of
+// `start()` that needs a signed-in browser. Stubbed so the lifecycle tests
+// below can reach the code after the early return; every other test in this
+// file runs with glossing off and never touches it.
+jest.mock('./cloud-settings', () => ({
+    getCachedRoamingSettings: async () => ({ targetLanguage: 'es' }),
+}));
+
 describe('isGlossableLanguage', () => {
     it('accepts space-delimited (Latin-script) languages by primary subtag', () => {
         expect(isGlossableLanguage('es')).toBe(true);
@@ -350,5 +358,46 @@ describe('SaviGlossController debug logging', () => {
         expect(lines[1]).toContain('previous ×2'); // the run that just ended
         expect(lines[2]).toContain('call returned no decisions');
         debug.mockRestore();
+    });
+});
+
+// ── the duplicate-request bug ───────────────────────────────────────────────
+
+describe('SaviGlossController.start is re-entrant', () => {
+    // The founder saw the same line requested twice, back to back, with
+    // identical payloads:
+    //
+    //   { line: "Hablando de milagros, Rubén, vení,", words: [...] }
+    //   { line: "Hablando de milagros, Rubén, vení,", words: [...] }
+    //
+    // `start()` documented itself as "safe to call again" and was not: it
+    // assigned a fresh prefetch interval over a live one — leaking the old
+    // handle, which is the only reference anyone holds — so two tickers ran
+    // forever. `_reset()` cleared the in-flight set at the same moment, so the
+    // duplicate suppression had nothing left to suppress against.
+    //
+    // Gloss calls are billed per character downstream, so a duplicate costs
+    // money, not just tidiness.
+    const settings = { get: async () => ({ saviGlossing: true }) as any };
+
+    it('does not leak a prefetch interval when started twice', async () => {
+        jest.useFakeTimers();
+        try {
+            const controller = new SaviGlossController(settings, () => {});
+            const ticks: number[] = [];
+            (controller as any)._prefetchTick = () => ticks.push(1);
+
+            await controller.start();
+            await controller.start();
+
+            const running = jest.getTimerCount();
+            expect(running).toBe(1); // two starts, ONE ticker
+
+            // And stopping really stops: a leaked handle would keep firing.
+            controller.stop();
+            expect(jest.getTimerCount()).toBe(0);
+        } finally {
+            jest.useRealTimers();
+        }
     });
 });
