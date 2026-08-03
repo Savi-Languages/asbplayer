@@ -284,6 +284,7 @@ export const defaultSettings: AsbplayerSettings = {
     saviAiSegmentation: true,
     saviAutoLoadSubtitles: true,
     saviGlossing: true,
+    saviHoldSubtitleMs: 2000,
     saviHoverGloss: true,
     saviCloudUrl: 'https://savi.tianxiaocao.com',
     saviEncounterRecording: true,

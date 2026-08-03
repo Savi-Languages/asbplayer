@@ -201,6 +201,19 @@ const SaviSettingsTab: React.FC<Props> = ({
                 label={'Hover a word for its translation, and hold the line at its end while hovering'}
                 labelPlacement="start"
             />
+            <CommitOnBlurTextField
+                label={'Hold subtitles past their cue end (ms)'}
+                value={String(settings.saviHoldSubtitleMs)}
+                type="number"
+                onCommit={(value) => {
+                    const ms = Number(value);
+                    onSettingChanged('saviHoldSubtitleMs', Number.isFinite(ms) && ms >= 0 ? ms : 0);
+                }}
+                helperText={
+                    'Auto-timed tracks often end a line before the speaker stops. This keeps it on ' +
+                    'screen through the silence — never past the next line. 0 disables.'
+                }
+            />
             {roamingSupported && (
                 <CommitOnBlurTextField
                     label={'Target language'}

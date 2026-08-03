@@ -26,6 +26,7 @@ import {
     tokenAnnotationStyleValues,
 } from '@project/common/settings';
 import { SubtitleCollection, SubtitleCollectionOptions, SubtitleSlice } from '@project/common/subtitle-collection';
+import { DEFAULT_HOLD_MS, subtitlesToDisplay } from '@/savi/hold-subtitle';
 import {
     renderRichTextOntoSubtitles,
     getAnnotationsHtml,
@@ -108,6 +109,10 @@ export default class SubtitleController {
     private subtitlesInterval?: NodeJS.Timeout;
     private showingLoadedMessage: boolean;
     private subtitleSettings?: SubtitleSettings;
+    /** Display-only hold past a cue's end, in ms (see savi/hold-subtitle.ts).
+     *  Pushed from settings by the binding; defaulted so the render loop is
+     *  never reading undefined before the first settings refresh. */
+    saviHoldSubtitleMs: number = DEFAULT_HOLD_MS;
     private subtitleStyles?: string[];
     private subtitleClasses?: string[];
     private notificationElementOverlayHideTimeout?: NodeJS.Timeout;
@@ -505,7 +510,7 @@ export default class SubtitleController {
             const slice = this.subtitleAnnotations.subtitlesAt(this.context.video.currentTime * 1000);
             const seekableSlice = this.seekableSubtitleCollection.subtitlesAt(this.context.video.currentTime * 1000);
 
-            const showingSubtitles = this._findShowingSubtitles(slice);
+            const showingSubtitles = this._findShowingSubtitles(slice, this.context.video.currentTime * 1000);
 
             this.onSeekableSlice?.(seekableSlice);
 
@@ -618,8 +623,15 @@ export default class SubtitleController {
         }
     }
 
-    private _findShowingSubtitles(slice: SubtitleSlice<IndexedSubtitleModel>): IndexedSubtitleModel[] {
-        return slice.showing.filter((s) => this._trackEnabled(s)).sort((s1, s2) => s1.track - s2.track);
+    private _findShowingSubtitles(
+        slice: SubtitleSlice<IndexedSubtitleModel>,
+        timestampMs: number
+    ): IndexedSubtitleModel[] {
+        // Display-only hold over the silence a cue leaves behind — the cue's
+        // real start/end are untouched, so mining, condensing and ear-time all
+        // still use true timings. See savi/hold-subtitle.ts.
+        const displayed = subtitlesToDisplay(slice, timestampMs, this.saviHoldSubtitleMs);
+        return displayed.filter((s) => this._trackEnabled(s)).sort((s1, s2) => s1.track - s2.track);
     }
 
     private _trackEnabled(subtitle: SubtitleModel) {
@@ -666,7 +678,13 @@ export default class SubtitleController {
         });
     }
 
-    private _buildTextHtml(text: string, track?: number, richText?: string, richTextOnHover?: string, glossable = true) {
+    private _buildTextHtml(
+        text: string,
+        track?: number,
+        richText?: string,
+        richTextOnHover?: string,
+        glossable = true
+    ) {
         // savi glossing (SV-12/13): the gloss-ruby HTML for this line takes the
         // richText slot (Spanish tracks have no Yomitan richText anyway). Undefined
         // until the async translations land — then a re-render picks it up. Kicks
