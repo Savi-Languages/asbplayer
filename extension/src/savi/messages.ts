@@ -85,6 +85,15 @@ export interface SaviPlaybackStateResponse {
     /** The daemon no longer knows this session (orphan-sweep auto-finish or a
      *  daemon restart) — bookkeeping was cleared; the capture should restart. */
     readonly sessionGone?: boolean;
+    /** The segmentId the recorder actually has open, `null` when nothing is.
+     *
+     *  `undefined` means the daemon predates this field (< 0.44.4) — infer
+     *  nothing from it. Without this the client cannot tell that a segment it
+     *  keeps re-asserting was closed underneath it (the daemon's liveness
+     *  timeout, or a refused re-open of an already-closed segment), so nothing
+     *  is recorded again until the next pause or seek — which while watching
+     *  can be many minutes away. */
+    readonly openSegment?: string | null;
 }
 
 // ── popup → background ──────────────────────────────────────────────────

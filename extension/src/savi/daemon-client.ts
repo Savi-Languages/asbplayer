@@ -209,7 +209,7 @@ export const browserHintFromUserAgent = (ua: string): string | undefined => {
 export const postPlaybackState = async (
     config: SaviDaemonConfig,
     { captureId, seq, ops }: { captureId: string; seq: number; ops: unknown[] }
-): Promise<{ ok: boolean; audio?: string; sessionGone?: boolean }> => {
+): Promise<{ ok: boolean; audio?: string; sessionGone?: boolean; openSegment?: string | null }> => {
     const body = await request(config, '/v2/capture/playback-state', jsonInit({ captureId, seq, ops }));
     return {
         ok: body.ok === true,
@@ -217,6 +217,16 @@ export const postPlaybackState = async (
         // The daemon finished this session behind our back (orphan sweep /
         // restart) — the caller should drop its bookkeeping and restart.
         sessionGone: body.sessionGone === true,
+        // Distinguish "nothing open" (null) from "this daemon doesn't report it"
+        // (key absent → undefined). A pre-0.44.4 daemon's silence must not read
+        // as "your segment is closed", or the client recuts on every keepalive
+        // and shreds the capture into 5-second files.
+        openSegment:
+            body === null || typeof body !== 'object' || !('openSegment' in body)
+                ? undefined
+                : typeof body.openSegment === 'string'
+                  ? body.openSegment
+                  : null,
     };
 };
 

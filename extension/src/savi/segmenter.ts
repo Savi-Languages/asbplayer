@@ -134,6 +134,29 @@ export class Segmenter {
         return [];
     }
 
+    // Re-anchor: end the current segment and open a fresh one (new id) at the
+    // CURRENT media time. Playback itself is unbroken — this exists for reasons
+    // outside the media element:
+    //
+    //  - the daemon reported a different segment open (or none). It closed ours
+    //    underneath us — its liveness timeout decided we were gone, or it
+    //    refused to re-open a segment it had already closed. Re-asserting the
+    //    same id cannot recover: only a NEW id, stamped at the live playhead,
+    //    starts recording again.
+    //  - the segment has simply run long. A media-time cap bounds how much any
+    //    single undetected divergence can cost, and re-anchors the audio→media
+    //    mapping instead of extrapolating it across the whole episode.
+    //
+    // No-op while not recording: there is nothing to re-anchor, and the next
+    // play() samples a fresh position anyway.
+    recut(mediaTimeMs: number): SegmenterOutput[] {
+        if (!this._active || !this._recording) {
+            return [];
+        }
+
+        return [...this._endSegmentIfRecording(), ...this._maybeStartSegment(mediaTimeMs)];
+    }
+
     // Capture is finishing (ended / explicit stop / navigation).
     finish(): SegmenterOutput[] {
         if (!this._active) {

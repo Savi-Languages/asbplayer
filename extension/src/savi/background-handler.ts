@@ -740,7 +740,7 @@ export default class SaviCommandHandler implements CommandHandler {
                     browser.tabs.sendMessage(session.tabId, command).catch(() => {});
                     return { ok: false, sessionGone: true };
                 }
-                return { ok: result.ok, audio: result.audio };
+                return { ok: result.ok, audio: result.audio, openSegment: result.openSegment };
             };
 
             try {

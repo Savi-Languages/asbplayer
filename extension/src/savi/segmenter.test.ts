@@ -201,3 +201,58 @@ describe('currentSegment (keepalive support)', () => {
         expect(second.mediaTimeMs).toBe(5_000);
     });
 });
+
+describe('recut (re-anchoring)', () => {
+    it('ends the current segment and opens a fresh one at the live playhead', () => {
+        // Used when the daemon reports a DIFFERENT segment open than ours: it
+        // closed ours underneath us (liveness timeout, or a refused re-open of
+        // an already-closed segment). Re-asserting the same id cannot recover
+        // from either — only a new id at the current position does.
+        const s = new Segmenter();
+        s.begin(0, 1, false);
+        const before = s.currentSegment!;
+
+        const outputs = s.recut(310_000);
+        expect(outputs).toEqual([
+            { type: 'segment-end' },
+            { type: 'segment-start', segment: { segmentId: 's1', mediaTimeMs: 310_000, rate: 1 } },
+        ]);
+
+        const after = s.currentSegment!;
+        expect(after.segmentId).not.toBe(before.segmentId);
+        expect(after.mediaTimeMs).toBe(310_000);
+        expect(s.recording).toBe(true);
+    });
+
+    it('keeps the segment rate, so tempo correction is unchanged', () => {
+        const s = new Segmenter();
+        s.begin(0, 1.5, false);
+        expect(s.recut(100_000)[1]).toEqual({
+            type: 'segment-start',
+            segment: { segmentId: 's1', mediaTimeMs: 100_000, rate: 1.5 },
+        });
+    });
+
+    it('is a no-op while paused or before capture begins', () => {
+        // Nothing to re-anchor: the next play() samples a fresh position
+        // anyway. Emitting a start here would open a segment the daemon
+        // records silence into while the video sits paused.
+        const idle = new Segmenter();
+        expect(idle.recut(1_000)).toEqual([]);
+
+        const s = new Segmenter();
+        s.begin(0, 1, false);
+        s.pause();
+        expect(s.recut(1_000)).toEqual([]);
+        expect(s.currentSegment).toBeUndefined();
+    });
+
+    it('refuses to re-anchor at a rate the daemon cannot capture', () => {
+        // Same guard as every other start: a segment outside atempo's 0.5–2.0
+        // range is rejected at finish, poisoning the whole capture.
+        const s = new Segmenter();
+        s.begin(0, 1, false);
+        s.rateChange(1_000, 3);
+        expect(s.recut(2_000)).toEqual([]);
+    });
+});
