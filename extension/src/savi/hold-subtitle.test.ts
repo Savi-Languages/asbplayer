@@ -1,4 +1,10 @@
-import { DEFAULT_HOLD_MS, HOLD_UNTIL_NEXT_CUE, NO_NEXT_CUE_FALLBACK_MS, subtitlesToDisplay } from './hold-subtitle';
+import {
+    DEFAULT_HOLD_MS,
+    HOLD_UNTIL_NEXT_CUE,
+    NO_NEXT_CUE_FALLBACK_MS,
+    nextStartAfter,
+    subtitlesToDisplay,
+} from './hold-subtitle';
 
 const cue = (start: number, end: number, text = 'x', track = 0) => ({ start, end, text, track });
 
@@ -112,5 +118,45 @@ describe('subtitlesToDisplay', () => {
         // without anything showing. Holding then would resurrect an old line.
         const last = cue(4000, 6000);
         expect(subtitlesToDisplay(slice([], [last], undefined), 2000, 2000)).toEqual([]);
+    });
+});
+
+describe('nextStartAfter', () => {
+    const starts = [0, 1000, 5000, 5000, 9000];
+
+    it('finds the first start strictly after the given time', () => {
+        expect(nextStartAfter(starts, 0)).toBe(1000);
+        expect(nextStartAfter(starts, 999)).toBe(1000);
+        expect(nextStartAfter(starts, 1000)).toBe(5000);
+        expect(nextStartAfter(starts, 4999)).toBe(5000);
+    });
+
+    it('skips duplicate starts and returns the next distinct one', () => {
+        expect(nextStartAfter(starts, 5000)).toBe(9000);
+    });
+
+    it('returns undefined past the last cue', () => {
+        expect(nextStartAfter(starts, 9000)).toBeUndefined();
+        expect(nextStartAfter(starts, 99999)).toBeUndefined();
+        expect(nextStartAfter([], 0)).toBeUndefined();
+    });
+});
+
+describe('subtitlesToDisplay with an explicit next start', () => {
+    it('prefers the caller-resolved next start over the slice', () => {
+        // The bug this fixes: slice.nextToShow came back EMPTY during real
+        // gaps, so the clamp never fired and holds silently fell through to
+        // the 5s no-next-cue fallback. The caller resolves it instead.
+        const last = cue(273480, 277600);
+        const emptySlice = slice([], [last], []);
+        // 9.04s gap — a fallback-bounded hold would have died at 282600.
+        expect(subtitlesToDisplay(emptySlice, 284000, HOLD_UNTIL_NEXT_CUE, 286640)).toEqual([last]);
+        expect(subtitlesToDisplay(emptySlice, 286640, HOLD_UNTIL_NEXT_CUE, 286640)).toEqual([]);
+    });
+
+    it('falls back to the 5s bound only when the caller has no next start', () => {
+        const last = cue(1000, 3000);
+        expect(subtitlesToDisplay(slice([], [last], []), 7999, HOLD_UNTIL_NEXT_CUE, undefined)).toEqual([last]);
+        expect(subtitlesToDisplay(slice([], [last], []), 8001, HOLD_UNTIL_NEXT_CUE, undefined)).toEqual([]);
     });
 });

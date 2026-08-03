@@ -51,13 +51,17 @@ export const NO_NEXT_CUE_FALLBACK_MS = 5000;
  * `holdMs` semantics:
  *   - `HOLD_UNTIL_NEXT_CUE` (-1, the default): hold until the next cue is due,
  *     falling back to `NO_NEXT_CUE_FALLBACK_MS` when nothing follows.
+ *
+ * `nextStartMsOverride` is the start of the next cue when the caller can
+ * resolve it (preferred — see the note on `slice.nextToShow` below).
  *   - `0`: disabled — the pre-existing behaviour.
  *   - `> 0`: hold at most that many ms past the cue's end.
  */
 export function subtitlesToDisplay<T extends SubtitleModel>(
     slice: SubtitleSlice<T>,
     timestampMs: number,
-    holdMs: number
+    holdMs: number,
+    nextStartMsOverride?: number
 ): T[] {
     if (slice.showing.length > 0) {
         return slice.showing;
@@ -86,7 +90,13 @@ export function subtitlesToDisplay<T extends SubtitleModel>(
     }
 
     // Never bleed into the next cue — this is what bounds hold-until-next.
-    const nextStart = smallestStart(slice.nextToShow);
+    //
+    // `slice.nextToShow` is NOT reliable here: measured live, it comes back
+    // empty during exactly the gaps this feature exists for, so the clamp never
+    // fired and every hold silently fell through to the no-next-cue fallback.
+    // The caller therefore resolves the next start from the subtitle list and
+    // passes it in; the slice is only a fallback for callers that don't.
+    const nextStart = nextStartMsOverride ?? smallestStart(slice.nextToShow);
 
     if (nextStart !== undefined && timestampMs >= nextStart) {
         return [];
@@ -107,4 +117,29 @@ function smallestStart<T extends SubtitleModel>(subtitles: T[] | undefined): num
     }
 
     return Math.min(...subtitles.map((s) => s.start));
+}
+
+/**
+ * The start of the first cue beginning strictly after `afterMs`, or `undefined`
+ * past the last cue.
+ *
+ * `starts` must be sorted ascending — build it once when the subtitle list is
+ * set, not per frame. Binary search because the render loop calls this on every
+ * tick during a gap, and tracks run to thousands of cues.
+ */
+export function nextStartAfter(starts: number[], afterMs: number): number | undefined {
+    let lo = 0;
+    let hi = starts.length;
+
+    while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+
+        if (starts[mid] > afterMs) {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+
+    return lo < starts.length ? starts[lo] : undefined;
 }
