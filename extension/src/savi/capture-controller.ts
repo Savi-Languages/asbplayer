@@ -17,7 +17,13 @@ import { SettingsProvider } from '@project/common/settings';
 import { daemonToken } from './account';
 import { Segmenter, SegmenterOutput } from './segmenter';
 import { serializeToSrt, SerializableSubtitle } from './subtitle-serializer';
-import { deriveEpisodeId, deriveShowAndTitle, deriveShowAndTitleFromBasename } from './episode';
+import {
+    deriveEpisodeId,
+    deriveShowAndTitle,
+    deriveShowAndTitleFromBasename,
+    youtubeShowAndTitle,
+    youtubeShowId,
+} from './episode';
 import { NativeSubtitleHider, nativeSubtitleSelectorForHost } from './native-subtitle-hider';
 import { SaviRecordButton } from './record-button';
 import { SaviReplayButton } from './replay-button';
@@ -371,7 +377,7 @@ export class SaviCaptureController {
                     command: 'savi-start-capture',
                     episodeId,
                     show,
-                    showId: this._showId,
+                    showId: this._showId ?? this._youtubeShowId(),
                     title,
                     lang,
                     subtitles: serializeToSrt(subtitles),
@@ -464,7 +470,56 @@ export class SaviCaptureController {
             return fromBasename;
         }
 
+        // YouTube has no series/episode structure, so the basename path yields
+        // nothing and document.title alone gives no `show` — every capture then
+        // lands in "Unknown Show". The channel is the natural grouping.
+        const owner = this._readYoutubeOwner();
+
+        if (owner !== undefined) {
+            const fromOwner = youtubeShowAndTitle(owner.channelName, owner.videoTitle || documentTitle);
+
+            if (fromOwner.show !== undefined && fromOwner.title.trim().length > 0) {
+                return fromOwner;
+            }
+        }
+
         return deriveShowAndTitle(url, documentTitle, this._readNetflixOverlay());
+    }
+
+    /** Channel name + video title + channel href from a YouTube watch page, or
+     *  undefined off YouTube / before the owner link renders. Never throws —
+     *  a DOM change must degrade to the old behaviour, not break capture. */
+    private _readYoutubeOwner(): { channelName: string; videoTitle: string; href: string } | undefined {
+        try {
+            if (!/(^|\.)youtube\.com$/i.test(window.location.host)) {
+                return undefined;
+            }
+
+            const anchor =
+                document.querySelector('ytd-video-owner-renderer ytd-channel-name a') ??
+                document.querySelector('#owner #channel-name a') ??
+                document.querySelector('ytd-channel-name a');
+
+            if (anchor === null) {
+                return undefined;
+            }
+
+            const videoTitle = document.querySelector<HTMLMetaElement>('meta[property="og:title"]')?.content ?? '';
+
+            return {
+                channelName: anchor.textContent ?? '',
+                videoTitle,
+                href: anchor.getAttribute('href') ?? '',
+            };
+        } catch (e) {
+            return undefined;
+        }
+    }
+
+    /** `youtube:<UC… | @handle>` from the owner link, for library grouping. */
+    private _youtubeShowId(): string | undefined {
+        const owner = this._readYoutubeOwner();
+        return owner === undefined ? undefined : youtubeShowId(owner.href);
     }
 
     private _safeSubtitleFileName(): string {
