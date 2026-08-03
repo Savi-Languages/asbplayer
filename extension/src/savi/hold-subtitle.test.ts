@@ -1,4 +1,4 @@
-import { DEFAULT_HOLD_MS, subtitlesToDisplay } from './hold-subtitle';
+import { DEFAULT_HOLD_MS, HOLD_UNTIL_NEXT_CUE, NO_NEXT_CUE_FALLBACK_MS, subtitlesToDisplay } from './hold-subtitle';
 
 const cue = (start: number, end: number, text = 'x', track = 0) => ({ start, end, text, track });
 
@@ -57,10 +57,48 @@ describe('subtitlesToDisplay', () => {
         expect(subtitlesToDisplay(slice([], [target, native], undefined), 5201, 2000)).toEqual([]);
     });
 
-    it('is disabled by a non-positive hold', () => {
+    it('is disabled only by exactly 0', () => {
         const last = cue(1000, 3000);
         expect(subtitlesToDisplay(slice([], [last], undefined), 3100, 0)).toEqual([]);
-        expect(subtitlesToDisplay(slice([], [last], undefined), 3100, -1)).toEqual([]);
+    });
+
+    // ── hold-until-next-cue (the default) ────────────────────────────────
+
+    it('defaults to holding until the next cue', () => {
+        expect(DEFAULT_HOLD_MS).toBe(HOLD_UNTIL_NEXT_CUE);
+    });
+
+    it('holds across a gap far longer than any fixed cap would allow', () => {
+        // The 9.04s gap that motivated the change (cue ends 4:37.60, next at
+        // 4:46.64). A 2s cap left ~7s of blank mid-sentence.
+        const last = cue(273480, 277600, 'long line');
+        const next = [cue(286640, 291680)];
+        for (const t of [278000, 281000, 284000, 286639]) {
+            expect(subtitlesToDisplay(slice([], [last], next), t, HOLD_UNTIL_NEXT_CUE)).toEqual([last]);
+        }
+        // ...and still yields the instant the next cue is due.
+        expect(subtitlesToDisplay(slice([], [last], next), 286640, HOLD_UNTIL_NEXT_CUE)).toEqual([]);
+    });
+
+    it('falls back to a bounded hold when nothing follows', () => {
+        // Past the last cue there is no `nextToShow` to bound against, so an
+        // unbounded hold would park the final line over the outro forever.
+        const last = cue(1000, 3000);
+        const atLimit = 3000 + NO_NEXT_CUE_FALLBACK_MS;
+        expect(subtitlesToDisplay(slice([], [last], undefined), atLimit, HOLD_UNTIL_NEXT_CUE)).toEqual([last]);
+        expect(subtitlesToDisplay(slice([], [last], undefined), atLimit + 1, HOLD_UNTIL_NEXT_CUE)).toEqual([]);
+    });
+
+    it('still refuses to resurrect a line after a backwards seek', () => {
+        const last = cue(4000, 6000);
+        expect(subtitlesToDisplay(slice([], [last], undefined), 2000, HOLD_UNTIL_NEXT_CUE)).toEqual([]);
+    });
+
+    it('a finite cap still works when explicitly configured', () => {
+        const last = cue(1000, 3000);
+        const next = [cue(20000, 22000)];
+        expect(subtitlesToDisplay(slice([], [last], next), 4900, 2000)).toEqual([last]);
+        expect(subtitlesToDisplay(slice([], [last], next), 5100, 2000)).toEqual([]);
     });
 
     it('holds nothing before the first cue', () => {

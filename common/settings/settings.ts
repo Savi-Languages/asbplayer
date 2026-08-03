@@ -816,8 +816,9 @@ export interface SaviSettings {
     // word in the subtitles (SV-12/13). Context-aware DeepL via savi's cloud, so
     // it needs you signed in. Space-delimited languages only (e.g. Spanish).
     readonly saviGlossing: boolean;
-    /** How long (ms) to keep a subtitle on screen past its cue end when the
-     *  next cue hasn't started yet. 0 disables. See savi/hold-subtitle.ts. */
+    /** How long to keep a subtitle on screen past its cue end while the next
+     *  cue hasn't started. -1 (default) holds until the next cue; 0 disables;
+     *  a positive value caps it in ms. See savi/hold-subtitle.ts. */
     readonly saviHoldSubtitleMs: number;
     // On-demand hover glossing: hover a subtitle word to reveal its translation
     // above it (any word, incl. known ones), and hold the line (pause) at its end
