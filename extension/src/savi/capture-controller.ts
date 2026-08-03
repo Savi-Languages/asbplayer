@@ -466,21 +466,28 @@ export class SaviCaptureController {
     // existing DOM/document.title derivation second. Never throws.
     private _resolveShowAndTitle(url: string, documentTitle: string): { show?: string; title: string } {
         const fromBasename = deriveShowAndTitleFromBasename(this._safeSubtitleFileName());
-        if (fromBasename.title.trim().length > 0) {
-            return fromBasename;
-        }
 
-        // YouTube has no series/episode structure, so the basename path yields
-        // nothing and document.title alone gives no `show` — every capture then
-        // lands in "Unknown Show". The channel is the natural grouping.
+        // YouTube first, and BEFORE the basename early-return. YouTube has no
+        // series/episode structure, so the basename yields a usable TITLE but
+        // never a `show` — returning it early is exactly how every capture
+        // ended up in "Unknown Show". The channel is the natural grouping, so
+        // take the channel as the show and keep the best title available.
         const owner = this._readYoutubeOwner();
 
         if (owner !== undefined) {
             const fromOwner = youtubeShowAndTitle(owner.channelName, owner.videoTitle || documentTitle);
 
-            if (fromOwner.show !== undefined && fromOwner.title.trim().length > 0) {
-                return fromOwner;
+            if (fromOwner.show !== undefined) {
+                const title = fromOwner.title.trim() || fromBasename.title.trim();
+
+                if (title.length > 0) {
+                    return { show: fromOwner.show, title };
+                }
             }
+        }
+
+        if (fromBasename.title.trim().length > 0) {
+            return fromBasename;
         }
 
         return deriveShowAndTitle(url, documentTitle, this._readNetflixOverlay());
