@@ -85,6 +85,15 @@ export interface SaviPlaybackStateResponse {
     /** The daemon no longer knows this session (orphan-sweep auto-finish or a
      *  daemon restart) — bookkeeping was cleared; the capture should restart. */
     readonly sessionGone?: boolean;
+    /** The segmentId the recorder actually has open, `null` when nothing is.
+     *
+     *  `undefined` means the daemon predates this field (< 0.44.4) — infer
+     *  nothing from it. Without this the client cannot tell that a segment it
+     *  keeps re-asserting was closed underneath it (the daemon's liveness
+     *  timeout, or a refused re-open of an already-closed segment), so nothing
+     *  is recorded again until the next pause or seek — which while watching
+     *  can be many minutes away. */
+    readonly openSegment?: string | null;
 }
 
 // ── popup → background ──────────────────────────────────────────────────
@@ -270,6 +279,14 @@ export interface SaviEngagementSessionMessage {
     /** Device UTC offset in minutes EAST of UTC at capture time. Cannot be
      *  reconstructed later — without it, relocating re-buckets history. */
     readonly tzOffsetMin: number;
+    /** SV-30 measured WPM: overlap-merged ms of the cues that played during
+     *  this block + their raw whitespace tokens. Both or neither — the daemon
+     *  drops a lone half. Absent when nothing was measured. */
+    readonly speakingMs?: number;
+    readonly spokenTokenCount?: number;
+    /** The session's gloss environment ('bare' | 'glossed'); absent when
+     *  unknown. */
+    readonly glossMode?: 'bare' | 'glossed';
 }
 
 export interface SaviWatchedLineResponse {
@@ -320,6 +337,41 @@ export interface SaviRoamingSettingsResponse {
 // DeepL call is sentence-aware (banco → "bank" vs "bench"). Runs in the
 // background because MV3 blocks cross-origin fetches (to the cloud) from
 // content scripts; the account JWT is added there, never in the message.
+/** SV-40: decide + label a whole subtitle line in one round trip
+ *  (`POST /v2/gloss`). Replaces the old "fetch every known lemma once, then
+ *  filter locally" design, which could not work: the known set is keyed by
+ *  LEMMA and the content script only ever had SURFACES, so every conjugation
+ *  missed the lookup and stayed labelled forever. */
+export interface SaviGlossLineMessage {
+    readonly command: 'savi-gloss-line';
+    /** BCP-47 learning language the line is in, e.g. `es`. */
+    readonly lang: string;
+    /** Language to gloss INTO (the user's known language), e.g. `en`. */
+    readonly glossLang: string;
+    /** The full line — translation context, and what `words` are lemmatized in. */
+    readonly line: string;
+    /** Lowercased surfaces to decide, in display order. */
+    readonly words: readonly string[];
+}
+
+/** One word's verdict. `skip` absent ⇒ render `gloss` above it. */
+export interface SaviGlossDecision {
+    readonly word: string;
+    readonly lemma?: string;
+    readonly skip?: 'known' | 'function-word' | 'untokenized';
+    readonly proficiency?: number;
+    readonly gloss?: string;
+}
+
+export interface SaviGlossLineResponse {
+    /** Undefined when signed out / the cloud is unreachable / the deployment
+     *  predates the endpoint — the caller then leaves the line unglossed
+     *  rather than guessing, since guessing is what caused SV-40. */
+    readonly words?: readonly SaviGlossDecision[];
+    /** The threshold the server applied, for diagnostics. */
+    readonly threshold?: number;
+}
+
 export interface SaviGlossTranslateMessage {
     readonly command: 'savi-gloss-translate';
     readonly word: string;

@@ -15,6 +15,8 @@ import {
     SaviCaptureFrameResponse,
     SaviCaptureState,
     SaviCommand,
+    SaviGlossLineMessage,
+    SaviGlossLineResponse,
     SaviGlossTranslateMessage,
     SaviGlossTranslateResponse,
     SaviWordBucketsMessage,
@@ -54,6 +56,7 @@ import {
     DEFAULT_GLOSS_THRESHOLD,
     glossThreshold as cloudGlossThreshold,
     resolveCloudBase,
+    glossLine as cloudGlossLine,
     translate as cloudTranslate,
     wordBuckets as cloudWordBuckets,
     wordsProficiency as cloudWordsProficiency,
@@ -203,6 +206,11 @@ export default class SaviCommandHandler implements CommandHandler {
                     .then(sendResponse)
                     .catch(() => sendResponse(undefined));
                 return true;
+            case 'savi-gloss-line':
+                this._glossLine(command.message as SaviGlossLineMessage)
+                    .then(sendResponse)
+                    .catch(() => sendResponse({} as SaviGlossLineResponse));
+                return true;
             case 'savi-gloss-translate':
                 this._glossTranslate(command.message as SaviGlossTranslateMessage)
                     .then(sendResponse)
@@ -272,6 +280,28 @@ export default class SaviCommandHandler implements CommandHandler {
         // target language the desktop wrote to localhost actually reaches here.
         const { targetLanguage, openSubtitlesApiKey } = await loadRoamingSettings(resolveCloudBase(saviCloudUrl));
         return { targetLanguage, openSubtitlesApiKey };
+    }
+
+    // Glossing (SV-40): decide + label a whole line in one cloud round trip.
+    // `words` undefined = signed out / unreachable / pre-SV-40 deployment; the
+    // content script then leaves the line plain. It deliberately does NOT fall
+    // back to "gloss everything", which is what the old client did when its
+    // known-set fetch failed — with the surface-vs-lemma bug that fallback was
+    // indistinguishable from normal operation, which is why it went unnoticed.
+    private async _glossLine(message: SaviGlossLineMessage): Promise<SaviGlossLineResponse> {
+        const { saviCloudUrl } = await this._settings.get(['saviCloudUrl']);
+        try {
+            const result = await cloudGlossLine(
+                saviCloudUrl,
+                message.lang,
+                message.glossLang,
+                message.line,
+                message.words
+            );
+            return { words: result.words, threshold: result.threshold };
+        } catch (e) {
+            return {};
+        }
     }
 
     // Glossing (SV-12): translate ONE word into the user's known language, with
@@ -485,6 +515,9 @@ export default class SaviCommandHandler implements CommandHandler {
                 startedAtMs: message.startedAtMs,
                 endedAtMs: message.endedAtMs,
                 tzOffsetMin: message.tzOffsetMin,
+                speakingMs: message.speakingMs,
+                spokenTokenCount: message.spokenTokenCount,
+                glossMode: message.glossMode,
             });
             return { ok: true };
         } catch (e) {
@@ -707,7 +740,7 @@ export default class SaviCommandHandler implements CommandHandler {
                     browser.tabs.sendMessage(session.tabId, command).catch(() => {});
                     return { ok: false, sessionGone: true };
                 }
-                return { ok: result.ok, audio: result.audio };
+                return { ok: result.ok, audio: result.audio, openSegment: result.openSegment };
             };
 
             try {

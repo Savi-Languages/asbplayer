@@ -19,15 +19,12 @@
 import {
     GlossedWordEntry,
     SaviCommand,
+    SaviGlossLineMessage,
+    SaviGlossLineResponse,
     SaviGlossTranslateMessage,
     SaviGlossTranslateResponse,
-    SaviWordBucketsMessage,
-    SaviWordBucketsResponse,
-    SaviWordProficiencyMessage,
-    SaviWordProficiencyResponse,
 } from './messages';
 import { getCachedRoamingSettings } from './cloud-settings';
-import type { WordBucket } from './cloud-client';
 import type { SettingsProvider } from '@project/common/settings';
 
 // The language to gloss INTO (the user's known language). English for the two
@@ -187,8 +184,89 @@ export function segmentLine(text: string): GlossSegment[] {
     return segments;
 }
 
+/** One word's verdict from `POST /v2/gloss` — the server lemmatized it and
+ *  decided. `skip` absent ⇒ render `gloss` above it. */
+export interface GlossDecision {
+    /** The surface we sent, echoed back (lowercased on our side). */
+    readonly word: string;
+    /** The dictionary form it resolved to — server-side truth, unavailable here. */
+    readonly lemma?: string;
+    readonly skip?: 'known' | 'function-word' | 'untokenized';
+    readonly proficiency?: number;
+    readonly gloss?: string;
+}
+
+/** The surfaces of a line worth asking the server about: content words, in
+ *  order, de-duplicated, lowercased.
+ *
+ *  This is a cheap PRE-filter, not the decision — the server makes that, and it
+ *  is the only side that can, since it owns the lemmatizer. All this avoids is
+ *  shipping punctuation, one-letter tokens, obvious structural words and
+ *  proper nouns across the wire. Being too generous here costs a little
+ *  payload; being too STRICT silently un-glosses a word forever, so when in
+ *  doubt, send it. */
+export function glossCandidates(segments: GlossSegment[]): string[] {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const seg of segments) {
+        if (seg.word && seg.content && seg.lemma && !seen.has(seg.lemma)) {
+            seen.add(seg.lemma);
+            out.push(seg.lemma);
+        }
+    }
+    return out;
+}
+
+/** The coarse reason a line went bare, used to suppress repeats in the debug
+ *  log. Not user-visible. */
+type WhyKind = 'off' | 'track' | 'no-candidates' | 'call-failed' | 'all-skipped';
+
+/** Why a line's words were skipped, as counts BY REASON — never word by word.
+ *
+ *  The candidates are exactly the line's content words, so listing them would
+ *  reconstruct what the user is watching. Hard constraint #2 tiers transcript
+ *  text separately from aggregates and keeps snippets independently
+ *  toggleable; a debug log that emits them by default sits on the wrong side
+ *  of that line, however local the console feels.
+ *
+ *  Counts answer the only question the log exists to answer — "was this line
+ *  suppressed, or is the pipeline broken?" — and carry no content. Exported so
+ *  the property is TESTED rather than asserted in a comment (the first version
+ *  of this logged every word while its commit message claimed it did not). */
+export function skipSummary(decisions: readonly GlossDecision[]): string {
+    const byReason = new Map<string, number>();
+    for (const d of decisions) {
+        if (d.skip) {
+            byReason.set(d.skip, (byReason.get(d.skip) ?? 0) + 1);
+        }
+    }
+    return [...byReason].map(([reason, count]) => `${reason}: ${count}`).join(', ');
+}
+
+/** Fold a `/v2/gloss` response into the surface → label map [`buildGlossHtml`]
+ *  wants. Skipped words are absent (no label), as are rambling labels — an LLM
+ *  fallback that returns a paragraph of senses must not be painted over a word. */
+export function labelsFrom(decisions: readonly GlossDecision[]): Map<string, string> {
+    const labels = new Map<string, string>();
+    for (const d of decisions) {
+        if (d.skip) {
+            continue;
+        }
+        const gloss = d.gloss?.trim();
+        if (gloss && isReasonableGloss(gloss)) {
+            labels.set(d.word.toLowerCase(), gloss);
+        }
+    }
+    return labels;
+}
+
 /** The distinct lemmas of a line that are candidates to gloss: content words
- *  whose lemma is not in `known`. Order-preserving, de-duplicated. */
+ *  whose lemma is not in `known`. Order-preserving, de-duplicated.
+ *
+ *  @deprecated SV-40 — the known-set filter moved to the server, because THIS
+ *  is where the bug lived: `known` is keyed by real lemmas but `seg.lemma` is a
+ *  lowercased surface, so `sabía` never matched a known `saber` and stayed
+ *  labelled forever. Use [`glossCandidates`] + `POST /v2/gloss`. */
 export function glossableLemmas(segments: GlossSegment[], known: ReadonlySet<string>): string[] {
     const seen = new Set<string>();
     const out: string[] = [];
@@ -276,7 +354,7 @@ export function isReasonableGloss(gloss: string): boolean {
 // ── The controller ────────────────────────────────────────────────────────
 
 const sendToBackground = <R>(
-    message: SaviGlossTranslateMessage | SaviWordBucketsMessage | SaviWordProficiencyMessage
+    message: SaviGlossLineMessage | SaviGlossTranslateMessage
 ): Promise<R> => {
     const command: SaviCommand<typeof message> = { sender: 'savi-video', message };
     return browser.runtime.sendMessage(command) as Promise<R>;
@@ -362,6 +440,43 @@ export class SaviGlossController implements GlossProvider {
     // Rate gate: the earliest time the next dispatch may start (min-interval spacing).
     private _nextDispatchMs = 0;
 
+    /** The kind of reason a line went bare — the dedupe key for [`_why`].
+     *  Deliberately coarse: counts vary line to line, and re-logging because
+     *  "known: 3" became "known: 4" would defeat the whole point. */
+    private _lastWhy: WhyKind | undefined;
+    private _whyRepeats = 0;
+
+    /** Why a line got no labels.
+     *
+     *  EVERY reason glossing produces nothing looks identical on screen —
+     *  plain subtitles, no error. Track mismatch, no candidate words, a failed
+     *  call, and "you already know every word here" are indistinguishable, and
+     *  the last one is the common case, so a genuinely broken pipeline reads as
+     *  normal operation. That is the same shape as the fallback that hid the
+     *  surface-vs-lemma bug for so long, and it cost three rounds of
+     *  archaeology to re-learn.
+     *
+     *  Filter the service-worker console on `savi: gloss` to see the reason.
+     *
+     *  Logged only when the reason CHANGES, because the healthy case — "you
+     *  already know every word here" — is the common one, and at ~900 subtitle
+     *  lines an episode a per-line log would both burn work nobody asked for
+     *  and drown the rare reason in the frequent one. Steady state is silent;
+     *  a transition prints the new reason and how long the previous ran.
+     *  `console.debug` keeps it at Verbose level, hidden unless asked for. */
+    private _why(kind: WhyKind, reason: string): void {
+        if (kind === this._lastWhy) {
+            this._whyRepeats += 1; // steady state — say nothing
+            return;
+        }
+        if (this._whyRepeats > 0) {
+            console.debug(`savi: gloss — (previous ×${this._whyRepeats + 1})`);
+        }
+        this._lastWhy = kind;
+        this._whyRepeats = 0;
+        console.debug(`savi: gloss — ${reason}`);
+    }
+
     constructor(
         settings: Pick<SettingsProvider, 'get'>,
         onGlossReady: (text: string) => void,
@@ -373,8 +488,17 @@ export class SaviGlossController implements GlossProvider {
     }
 
     /** Read the enabled flag + target language, prefetch the known-word set, and
-     *  start looking ahead. Called from the binding's bind(); safe to call again. */
+     *  start looking ahead. Called from the binding's bind(); safe to call again.
+     *
+     *  "Safe to call again" was a claim, not a property. `_reset()` cleared the
+     *  in-flight set while requests were still out, and the prefetch interval
+     *  below was assigned WITHOUT clearing an existing one — so a second call
+     *  leaked a timer that ticked forever and left the duplicate suppression
+     *  looking at an empty set. Result: the same line requested twice,
+     *  back-to-back, with identical payloads. Gloss calls are billed per
+     *  character downstream, so a duplicate is not merely untidy. */
     async start(): Promise<void> {
+        this._stopPrefetch();
         this._reset();
         try {
             const { saviGlossing } = await this._settings.get(['saviGlossing']);
@@ -382,26 +506,35 @@ export class SaviGlossController implements GlossProvider {
             const { targetLanguage } = await getCachedRoamingSettings();
             this._targetLang = targetLanguage;
             this._glossable = saviGlossing && targetLanguage.length > 0 && isGlossableLanguage(targetLanguage);
+            if (!this._glossable) {
+                this._why(
+                    'off',
+                    `off — saviGlossing=${saviGlossing}, targetLanguage=${JSON.stringify(targetLanguage)}`
+                );
+            }
         } catch {
             this._glossable = false;
         }
         if (this._glossable) {
-            // Start looking ahead IMMEDIATELY and load the known-word set in
-            // parallel. Glossing works with an empty known set (it globs every
-            // content word until the buckets arrive, then narrows), so a slow
-            // /v2/words/{lang}/buckets fetch — which projects over the whole
-            // account history and can take seconds on a large one — must NOT
-            // delay the first labels.
+            // SV-40: nothing to preload. The known-set fetch is gone — every
+            // decision now comes back with its line, which also means the first
+            // labels no longer wait on a whole-history projection.
             this._prefetchTimer = setInterval(() => this._prefetchTick(), PREFETCH_TICK_MS);
-            void this._loadKnown();
         }
     }
 
-    stop(): void {
+    /** Clear the prefetch interval if one is running. Idempotent, and the only
+     *  place the timer is torn down — assigning over a live interval leaks it,
+     *  because the handle is the only reference anyone holds. */
+    private _stopPrefetch(): void {
         if (this._prefetchTimer !== undefined) {
             clearInterval(this._prefetchTimer);
             this._prefetchTimer = undefined;
         }
+    }
+
+    stop(): void {
+        this._stopPrefetch();
         this._reset();
         this._glossable = false;
     }
@@ -415,7 +548,15 @@ export class SaviGlossController implements GlossProvider {
     }
 
     glossHtmlFor(text: string, track?: number): string | undefined {
-        if (!this._glossable || (track ?? PRIMARY_TRACK) !== PRIMARY_TRACK) {
+        if (!this._glossable) {
+            return undefined; // already explained once, at start()
+        }
+        if ((track ?? PRIMARY_TRACK) !== PRIMARY_TRACK) {
+            // Only the target-language track is glossed. Worth saying out loud:
+            // hover glossing has NO track gate, so a subtitle in another slot
+            // gives working hover and dead inline labels — which reads as a
+            // broken feature rather than a configuration.
+            this._why('track', `skipped — track ${track} is not the primary track`);
             return undefined;
         }
         if (text.trim().length === 0) {
@@ -476,45 +617,11 @@ export class SaviGlossController implements GlossProvider {
         return this._translate(word.toLowerCase(), lineText, true);
     }
 
-    // Which lemmas to SKIP glossing. SV-20: proficiency-first — the review
-    // engine's per-lemma retrievability dominates the decision (skip when
-    // proficiency ≥ the roaming `review.glossThreshold`, default 0.8). When
-    // the proficiency endpoint is unavailable (old cloud / signed out), fall
-    // back to SV-13's binary buckets (skip `known`). A total failure leaves
-    // _known empty → gloss every content word.
-    private async _loadKnown(): Promise<void> {
-        try {
-            const response = await sendToBackground<SaviWordProficiencyResponse>({
-                command: 'savi-word-proficiency',
-                lang: this._targetLang,
-            });
-            if (response?.proficiency) {
-                const threshold = response.threshold;
-                this._known = new Set(
-                    Object.entries(response.proficiency)
-                        .filter(([, p]) => p >= threshold)
-                        .map(([lemma]) => lemma)
-                );
-                return;
-            }
-        } catch {
-            // fall through to buckets
-        }
-        try {
-            const response = await sendToBackground<SaviWordBucketsResponse>({
-                command: 'savi-word-buckets',
-                lang: this._targetLang,
-            });
-            const buckets = response?.buckets ?? {};
-            this._known = new Set(
-                Object.entries(buckets)
-                    .filter(([, bucket]) => (bucket as WordBucket) === 'known')
-                    .map(([lemma]) => lemma)
-            );
-        } catch {
-            this._known = new Set();
-        }
-    }
+    // (SV-40 removed `_loadKnown`. It fetched every known LEMMA once per bind
+    // and filtered locally by lowercased SURFACE — a comparison that could
+    // never match a conjugation, so `sabía` stayed labelled no matter how well
+    // the learner knew `saber`. The decision now travels with each line, made
+    // by the only party that owns a lemmatizer. See `_glossLine`.)
 
     // Translate cues starting within the lookahead window so they're cached before
     // they show (hides the per-word DeepL latency). Runs off a timer; no-ops while
@@ -557,20 +664,18 @@ export class SaviGlossController implements GlossProvider {
         this._inFlight.add(text);
         try {
             const segments = segmentLine(text);
-            const lemmas = glossableLemmas(segments, this._known);
-            if (lemmas.length === 0) {
-                this._lineHtml.set(text, ''); // nothing glossable → settle empty, no retry
+            const candidates = glossCandidates(segments);
+            if (candidates.length === 0) {
+                this._why(
+                    'no-candidates',
+                    'no candidates — every word was punctuation, a function word, or a name'
+                );
+                this._lineHtml.set(text, ''); // nothing to ask about → settle empty, no retry
                 return;
             }
-            const entries = await Promise.all(
-                lemmas.map(async (lemma) => [lemma, await this._translate(lemma, text, priority)] as const)
-            );
-            const glosses = new Map<string, string>();
-            for (const [lemma, gloss] of entries) {
-                if (gloss) {
-                    glosses.set(lemma, gloss);
-                }
-            }
+            // ONE round trip for the whole line: the server lemmatizes, decides
+            // against the learner's proficiency, and labels the survivors.
+            const glosses = await this._glossLine(text, candidates, priority);
             if (glosses.size === 0) {
                 // Every translation failed — almost always transient (rate limit /
                 // provider hiccup). Don't settle '' permanently; allow a bounded
@@ -593,6 +698,76 @@ export class SaviGlossController implements GlossProvider {
             }
         } finally {
             this._inFlight.delete(text);
+        }
+    }
+
+    /** Ask the cloud to decide + label one line. Returns surface → label for
+     *  the words that should be glossed; empty when the call failed (the caller
+     *  then retries a bounded number of times, then settles plain).
+     *
+     *  A failure must NOT fall back to "gloss every candidate". The old client
+     *  did exactly that when its known-set fetch failed, and combined with the
+     *  surface-vs-lemma bug the fallback was indistinguishable from working
+     *  normally — which is a large part of why this shipped unnoticed. */
+    private async _glossLine(
+        line: string,
+        words: string[],
+        priority: boolean
+    ): Promise<Map<string, string>> {
+        const cached = words
+            .map((w) => [w, this._wordGloss.get(`${w} ${line}`)] as const)
+            .filter(([, g]) => g !== undefined) as [string, string][];
+        if (cached.length === words.length) {
+            return new Map(cached); // fully served from the per-line cache
+        }
+        if (!priority) {
+            await this._rateGate();
+        }
+        await this._acquire(priority);
+        try {
+            const response = await withTimeout(
+                sendToBackground<SaviGlossLineResponse>({
+                    command: 'savi-gloss-line',
+                    lang: this._targetLang,
+                    glossLang: GLOSS_LANGUAGE,
+                    line,
+                    words,
+                }),
+                TRANSLATE_TIMEOUT_MS
+            );
+            if (!response?.words) {
+                // Signed out, cloud unreachable, or a deployment predating
+                // /v2/gloss. Distinct from "you know these words" — that case
+                // returns decisions, all skipped.
+                this._why('call-failed', `call returned no decisions for ${words.length} word(s)`);
+                return new Map();
+            }
+            // The common, healthy reason for a bare line: the learner already
+            // knows every word on it. Said explicitly so it can never again be
+            // confused with a broken pipeline.
+            //
+            // Counted BY REASON, never word by word. The candidates are exactly
+            // the line's content words, so listing them would reconstruct what
+            // the user is watching — the transcript-snippet tier that hard
+            // constraint #2 keeps independently toggleable rather than emitting
+            // by default. "known: 4" answers the diagnostic question ("was it
+            // suppressed or broken?") without carrying any of the content.
+            const skipped = response.words.filter((w) => w.skip);
+            if (skipped.length === response.words.length) {
+                this._why(
+                    'all-skipped',
+                    `all ${skipped.length} word(s) skipped — ${skipSummary(response.words)}`
+                );
+            }
+            const labels = labelsFrom(response.words);
+            for (const [word, gloss] of labels) {
+                this._wordGloss.set(`${word} ${line}`, gloss);
+            }
+            return labels;
+        } catch {
+            return new Map();
+        } finally {
+            this._release();
         }
     }
 

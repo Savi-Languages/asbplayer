@@ -1,13 +1,25 @@
 import {
     buildGlossHtml,
+    glossCandidates,
     glossableLemmas,
     glossedEntriesFromHtml,
     glossedLemmasFromHtml,
     isContentWord,
     isGlossableLanguage,
     isReasonableGloss,
+    labelsFrom,
+    skipSummary,
+    SaviGlossController,
     segmentLine,
 } from './gloss';
+
+// The only thing `gloss.ts` pulls from cloud-settings, and the one piece of
+// `start()` that needs a signed-in browser. Stubbed so the lifecycle tests
+// below can reach the code after the early return; every other test in this
+// file runs with glossing off and never touches it.
+jest.mock('./cloud-settings', () => ({
+    getCachedRoamingSettings: async () => ({ targetLanguage: 'es' }),
+}));
 
 describe('isGlossableLanguage', () => {
     it('accepts space-delimited (Latin-script) languages by primary subtag', () => {
@@ -223,6 +235,169 @@ describe('glossable ⊆ reviewable', () => {
         // makes it reviewable, so it stays glossable too.
         for (const word of ['voy', 'fuimos', 'corriendo', 'llevar']) {
             expect(isContentWord(word)).toBe(true);
+        }
+    });
+});
+
+// ── SV-40: the server decides, the client renders ──────────────────────────
+
+describe('glossCandidates', () => {
+    it('sends distinct content surfaces, dropping punctuation and proper nouns', () => {
+        const segments = segmentLine('Yo no sabía nada, Elena. ¿Sabía algo?');
+        // `sabía` twice → sent once; `Elena` mid-sentence → a proper noun;
+        // `no` → a structural function word the server needn't be asked about.
+        expect(glossCandidates(segments)).toEqual(['sabía', 'nada', 'algo']);
+    });
+});
+
+describe('labelsFrom', () => {
+    // The regression this whole endpoint exists for: a conjugation of a known
+    // lemma must come back skipped, and therefore carry NO label — even though
+    // its surface has never been seen before.
+    it('labels only the words the server did not skip', () => {
+        // The skipped words carry a label ON PURPOSE: `skip` must be what
+        // excludes them, not the incidental absence of a gloss. Without this,
+        // the test passes even for an implementation that ignores `skip`.
+        const labels = labelsFrom([
+            { word: 'sabía', lemma: 'saber', skip: 'known', proficiency: 0.97, gloss: 'knew' },
+            { word: 'nada', lemma: 'nada', proficiency: 0.12, gloss: 'nothing' },
+            { word: 'estuvieron', lemma: 'estar', skip: 'function-word', gloss: 'they were' },
+        ]);
+
+        expect(labels.get('sabía')).toBeUndefined();
+        expect(labels.get('estuvieron')).toBeUndefined();
+        expect(labels.get('nada')).toBe('nothing');
+    });
+
+    it('drops an LLM ramble rather than rendering a paragraph over a word', () => {
+        const rambling = 'This word has several senses: (1) nothing, (2) not at all, (3) swim.';
+        const labels = labelsFrom([{ word: 'nada', lemma: 'nada', gloss: rambling }]);
+
+        expect(labels.get('nada')).toBeUndefined();
+    });
+
+    it('matches the server echo case-insensitively', () => {
+        // The client sends lowercased surfaces but renders the original text,
+        // so the join must survive a capitalised sentence-initial word.
+        const labels = labelsFrom([{ word: 'sabía', lemma: 'saber', gloss: 'knew' }]);
+
+        expect(labels.get('Sabía'.toLowerCase())).toBe('knew');
+    });
+});
+
+describe('skipSummary', () => {
+    // The candidates ARE the line's content words, so a per-word log would
+    // reconstruct what the user is watching — the transcript-snippet tier hard
+    // constraint #2 keeps independently toggleable. The first version of this
+    // log emitted every word while its commit message claimed it did not, so
+    // the property is pinned here rather than trusted to a comment.
+    it('never carries the words themselves, only reasons and counts', () => {
+        const summary = skipSummary([
+            { word: 'supieras', lemma: 'saber', skip: 'known' },
+            { word: 'pareces', lemma: 'parecer', skip: 'known' },
+            { word: 'estuvieron', lemma: 'estar', skip: 'function-word' },
+        ]);
+
+        for (const word of ['supieras', 'pareces', 'estuvieron', 'saber', 'parecer', 'estar']) {
+            expect(summary).not.toContain(word);
+        }
+    });
+
+    it('still answers the diagnostic question: which reason, and how many', () => {
+        const summary = skipSummary([
+            { word: 'a', skip: 'known' },
+            { word: 'b', skip: 'known' },
+            { word: 'c', skip: 'function-word' },
+        ]);
+
+        expect(summary).toContain('known: 2');
+        expect(summary).toContain('function-word: 1');
+    });
+
+    it('ignores words that were NOT skipped — they got labels, not reasons', () => {
+        const summary = skipSummary([
+            { word: 'nube', lemma: 'nube', gloss: 'cloud' },
+            { word: 'saber', lemma: 'saber', skip: 'known' },
+        ]);
+
+        expect(summary).toBe('known: 1');
+    });
+});
+
+describe('SaviGlossController debug logging', () => {
+    // The healthy case — "you already know every word here" — is the COMMON
+    // one. At ~900 subtitle lines an episode, logging it per line would burn
+    // work nobody asked for and bury the rare reason under the frequent one,
+    // which is the opposite of what the log is for.
+    const settings = { get: async () => ({ saviGlossing: false }) as any };
+
+    it('says a reason once, then goes quiet while it holds', async () => {
+        const debug = jest.spyOn(console, 'debug').mockImplementation(() => {});
+        const controller = new SaviGlossController(settings, () => {});
+        const why = (controller as any)._why.bind(controller);
+
+        why('all-skipped', 'all 4 word(s) skipped — known: 4');
+        why('all-skipped', 'all 3 word(s) skipped — known: 3');
+        why('all-skipped', 'all 5 word(s) skipped — known: 5');
+
+        expect(debug).toHaveBeenCalledTimes(1);
+        debug.mockRestore();
+    });
+
+    it('speaks up when the reason changes, and says how long the last one ran', async () => {
+        const debug = jest.spyOn(console, 'debug').mockImplementation(() => {});
+        const controller = new SaviGlossController(settings, () => {});
+        const why = (controller as any)._why.bind(controller);
+
+        why('all-skipped', 'all 4 word(s) skipped — known: 4');
+        why('all-skipped', 'all 3 word(s) skipped — known: 3');
+        why('call-failed', 'call returned no decisions for 2 word(s)');
+
+        const lines = debug.mock.calls.map((c) => String(c[0]));
+        expect(lines).toHaveLength(3);
+        expect(lines[1]).toContain('previous ×2'); // the run that just ended
+        expect(lines[2]).toContain('call returned no decisions');
+        debug.mockRestore();
+    });
+});
+
+// ── the duplicate-request bug ───────────────────────────────────────────────
+
+describe('SaviGlossController.start is re-entrant', () => {
+    // The founder saw the same line requested twice, back to back, with
+    // identical payloads:
+    //
+    //   { line: "Hablando de milagros, Rubén, vení,", words: [...] }
+    //   { line: "Hablando de milagros, Rubén, vení,", words: [...] }
+    //
+    // `start()` documented itself as "safe to call again" and was not: it
+    // assigned a fresh prefetch interval over a live one — leaking the old
+    // handle, which is the only reference anyone holds — so two tickers ran
+    // forever. `_reset()` cleared the in-flight set at the same moment, so the
+    // duplicate suppression had nothing left to suppress against.
+    //
+    // Gloss calls are billed per character downstream, so a duplicate costs
+    // money, not just tidiness.
+    const settings = { get: async () => ({ saviGlossing: true }) as any };
+
+    it('does not leak a prefetch interval when started twice', async () => {
+        jest.useFakeTimers();
+        try {
+            const controller = new SaviGlossController(settings, () => {});
+            const ticks: number[] = [];
+            (controller as any)._prefetchTick = () => ticks.push(1);
+
+            await controller.start();
+            await controller.start();
+
+            const running = jest.getTimerCount();
+            expect(running).toBe(1); // two starts, ONE ticker
+
+            // And stopping really stops: a leaked handle would keep firing.
+            controller.stop();
+            expect(jest.getTimerCount()).toBe(0);
+        } finally {
+            jest.useRealTimers();
         }
     });
 });

@@ -1,4 +1,33 @@
-import { browserHintFromUserAgent } from './daemon-client';
+import { browserHintFromUserAgent, postPlaybackState } from './daemon-client';
+
+describe('postPlaybackState openSegment', () => {
+    const replyWith = (body: Record<string, unknown>) => {
+        global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => body }) as any;
+        return postPlaybackState(
+            { baseUrl: 'http://127.0.0.1:4030', token: 't' },
+            { captureId: 'c', seq: 1, ops: [] }
+        );
+    };
+
+    it('reports the open segment id', async () => {
+        expect((await replyWith({ ok: true, audio: 'recording', openSegment: 's7' })).openSegment).toBe('s7');
+    });
+
+    it('reports null when the daemon has NOTHING open', async () => {
+        // This is the signal the controller acts on: our segment was closed
+        // underneath us, so re-asserting it can never recover — only a fresh
+        // segment at the live playhead will.
+        expect((await replyWith({ ok: true, audio: 'recording', openSegment: null })).openSegment).toBeNull();
+    });
+
+    it('reports undefined when the daemon does not know the field at all', async () => {
+        // A pre-0.44.4 daemon simply omits it. Collapsing that into `null`
+        // would read as "your segment is closed" on EVERY keepalive, and the
+        // controller would re-anchor every few seconds — shredding the capture
+        // into fragments instead of protecting it.
+        expect((await replyWith({ ok: true, audio: 'recording' })).openSegment).toBeUndefined();
+    });
+});
 
 describe('browserHintFromUserAgent', () => {
     it('hints only DISTINGUISHABLE browsers', () => {

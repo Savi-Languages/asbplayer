@@ -102,7 +102,9 @@ import { SaviGlossController } from '../savi/gloss';
 import { SaviGlossHover } from '../savi/gloss-hover';
 import { SaviControlsClearance } from '../savi/controls-clearance';
 import { SaviEncounterReporter } from '../savi/encounter-reporter';
+import { SaviRecordingGuardBanner } from '../savi/recording-guard-banner';
 import { SaviEngagementReporter } from '../savi/engagement-reporter';
+import { SpeechAccumulator } from '../savi/speech-stats';
 import { SaviInteractionClock } from '../savi/interaction-clock';
 import { getCachedRoamingSettings } from '../savi/cloud-settings';
 import { deriveEpisodeId } from '../savi/episode';
@@ -186,6 +188,12 @@ export default class Binding {
     readonly saviHoverDictionary: SaviHoverDictionary;
     readonly saviGlossController: SaviGlossController;
     readonly saviEncounterReporter: SaviEncounterReporter;
+    /** Warns that watched lines aren't reaching the daemon (SV-40). Its own
+     *  instance rather than the capture controller's guard: encounter
+     *  reporting runs whether or not audio capture is on, so the two signals
+     *  are independent and must not clear each other. */
+    readonly saviDaemonBanner = new SaviRecordingGuardBanner();
+    readonly saviSpeechStats = new SpeechAccumulator();
     readonly saviEngagementReporter: SaviEngagementReporter;
     readonly saviInteractionClock: SaviInteractionClock;
     readonly saviGlossHover: SaviGlossHover;
@@ -316,8 +324,23 @@ export default class Binding {
             // shown label text (SV-20).
             glossedEntries: (text, track) => this.saviGlossController.glossedEntriesFor(text, track),
             send: (message) => browser.runtime.sendMessage({ sender: 'savi-video', message }),
+            // SV-40: a dead daemon must be LOUD. It is the outbox, so a failed
+            // send is exposure permanently lost — and it used to vanish into a
+            // console.debug, so an entire episode could go uncounted because
+            // the desktop app simply wasn't open. Reuses the guard banner.
+            onDeliveryFailure: (consecutive) => {
+                if (consecutive === 1) {
+                    this.saviDaemonBanner.show('daemon-unreachable', () => {});
+                }
+            },
+            onDeliveryRecovered: () => this.saviDaemonBanner.hide(),
         });
-        this.subtitleController.onSaviStartedShowing = (subtitle) => this.saviEncounterReporter.report(subtitle);
+        this.subtitleController.onSaviStartedShowing = (subtitle) => {
+            this.saviEncounterReporter.report(subtitle);
+            // Measured WPM (SV-30): the same shown-cue stream, accrued into the
+            // next engagement block's speech stats.
+            this.saviSpeechStats.addShownSubtitle(subtitle);
+        };
         // Engaged learning time (SV-21). Ticked from the heartbeat below
         // rather than from video events, because the capture controller's
         // video listeners exist ONLY while a capture is recording — and
@@ -329,6 +352,11 @@ export default class Binding {
             targetLanguage: async () => (await getCachedRoamingSettings()).targetLanguage,
             episodeId: () => deriveEpisodeId(window.location.href, document.title),
             lastInteractionAt: () => this.saviInteractionClock.lastInteractionAt,
+            speechStats: () => this.saviSpeechStats.drain(),
+            // Session-level environment: auto-gloss labels active for the
+            // target language or not. Which words actually got labels is the
+            // per-token story the encounters already tell.
+            glossMode: () => (this.saviGlossController.glossable ? 'glossed' : 'bare'),
             send: (message) => browser.runtime.sendMessage({ sender: 'savi-video', message }),
         });
         // Lift the subtitles above the streaming player's control bar while it is
@@ -1386,6 +1414,7 @@ export default class Binding {
         this.saviGlossController.stop();
         this.saviGlossHover.stop();
         this.saviEncounterReporter.stop();
+        this.saviDaemonBanner.destroy();
         this.saviEngagementReporter.stop();
         this.saviInteractionClock.unbind();
         this.saviControlsClearance.stop();

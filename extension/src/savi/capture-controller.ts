@@ -15,7 +15,7 @@
 
 import { SettingsProvider } from '@project/common/settings';
 import { daemonToken } from './account';
-import { Segmenter, SegmenterOutput } from './segmenter';
+import { SegmentMeta, Segmenter, SegmenterOutput } from './segmenter';
 import { serializeToSrt, SerializableSubtitle } from './subtitle-serializer';
 import { deriveEpisodeId, deriveShowAndTitle, deriveShowAndTitleFromBasename } from './episode';
 import { NativeSubtitleHider, nativeSubtitleSelectorForHost } from './native-subtitle-hider';
@@ -26,6 +26,7 @@ import { SaviRecordingGuard } from './recording-guard';
 import {
     SaviCommand,
     SaviPlaybackStateMessage,
+    SaviPlaybackStateResponse,
     SaviSegmentOp,
     SaviStartCaptureMessage,
     SaviStartCaptureResponse,
@@ -55,6 +56,17 @@ const segmentOpRetryDelayMs = 150;
  *  audio a dropped op can cost; small enough to be a few seconds, large enough
  *  that it is not chatter. */
 const segmentReassertIntervalMs = 5_000;
+/** Media time a single segment may span before it is re-anchored (`recut`).
+ *
+ *  Two jobs. It bounds what any UNDETECTED divergence between us and the
+ *  recorder can cost — worst case one cap, instead of the rest of the episode.
+ *  And it re-anchors the audio→media mapping periodically rather than
+ *  extrapolating `media_start + audio_ms * rate` across a 40-minute segment.
+ *
+ *  Five minutes: ~9 segments on a typical episode, which is nothing for the
+ *  stitcher, and small enough that a lost stretch is an annoyance rather than
+ *  a hole. */
+const segmentCapMs = 5 * 60_000;
 
 /**
  * Deliver a message, retrying transient failures.
@@ -607,7 +619,58 @@ export class SaviCaptureController {
             return;
         }
         this._lastReassertMs = now;
-        this._sendSegmentOps([{ op: 'segment-start', segment }]);
+
+        // Capped: re-anchor instead of re-asserting. See `segmentCapMs`.
+        const mediaTimeMs = this._host.video.currentTime * 1000;
+        if (mediaTimeMs - segment.mediaTimeMs >= segmentCapMs) {
+            this._recut(mediaTimeMs);
+            return;
+        }
+
+        void this._keepalive(segment);
+    }
+
+    /** Re-assert the open segment, then act on what the daemon says is ACTUALLY
+     *  open.
+     *
+     *  A mismatch means the recorder closed our segment underneath us — its
+     *  liveness timeout decided we were gone, or it refused to re-open a segment
+     *  it had already closed. Re-asserting the same id cannot recover from
+     *  either; only a new segment at the live playhead does. Until the daemon
+     *  reported this, the capture simply stopped until the next pause or seek. */
+    private async _keepalive(segment: SegmentMeta) {
+        const response = await this._deliverOps([{ op: 'segment-start', segment }]);
+
+        // `undefined` = a daemon that does not report the open segment (< 0.44.4)
+        // or an undelivered batch. Infer nothing: reading either as "your segment
+        // is closed" would recut every keepalive and shred the capture.
+        if (response?.audio !== 'recording' || response.openSegment === undefined) {
+            return;
+        }
+        if (response.openSegment === segment.segmentId) {
+            return;
+        }
+        // Moved on while the batch was in flight — the answer is about a segment
+        // we have already replaced.
+        if (this._segmenter?.currentSegment?.segmentId !== segment.segmentId) {
+            return;
+        }
+
+        console.warn(
+            `savi: daemon has ${response.openSegment ?? 'nothing'} open, not ${segment.segmentId} — re-anchoring`
+        );
+        this._recut(this._host.video.currentTime * 1000);
+    }
+
+    /** End the current segment and open a fresh one at `mediaTimeMs`.
+     *
+     *  Re-stamps the throttle, so a persistent mismatch costs one recut per
+     *  interval rather than one per `timeupdate` — an unthrottled recut loop
+     *  would chop the capture into fragments, which is how the 0.33.0 keepalive
+     *  nearly made things worse instead of better. */
+    private _recut(mediaTimeMs: number) {
+        this._sendSegmentOps(this._opsFromOutputs(this._segmenter?.recut(mediaTimeMs) ?? []));
+        this._lastReassertMs = Date.now();
     }
 
     private _attachVideoListeners() {
@@ -700,6 +763,12 @@ export class SaviCaptureController {
         // to be sent. Re-applying is safe: the daemon registers segments
         // idempotently by id, and a duplicate end with nothing open is a
         // no-op.
+        void this._deliverOps(ops);
+    }
+
+    /** Deliver a batch and hand back the daemon's answer (`undefined` when it
+     *  could not be delivered at all). */
+    private async _deliverOps(ops: SaviSegmentOp[]): Promise<SaviPlaybackStateResponse | undefined> {
         const command: SaviCommand<SaviPlaybackStateMessage> = {
             sender: 'savi-video',
             message: {
@@ -707,16 +776,17 @@ export class SaviCaptureController {
                 ops,
             },
         };
-        void this._sendWithRetry(command, ops);
-    }
-
-    private async _sendWithRetry(command: SaviCommand<SaviPlaybackStateMessage>, ops: SaviSegmentOp[]) {
-        const delivered = await sendWithRetry(() => browser.runtime.sendMessage(command));
+        let response: SaviPlaybackStateResponse | undefined;
+        const delivered = await sendWithRetry(async () => {
+            response = (await browser.runtime.sendMessage(command)) as SaviPlaybackStateResponse;
+        });
         if (!delivered) {
             // Out of attempts. Say so: the daemon still believes a segment is
             // open and keeps recording into it, so coverage will overstate.
             // A silent failure here is what made this take days to find.
             console.warn('savi: could not deliver segment ops after retries; coverage may overstate', ops);
+            return undefined;
         }
+        return response;
     }
 }

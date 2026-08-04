@@ -164,3 +164,58 @@ describe('SaviEncounterReporter (line lifecycle)', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
     });
 });
+
+// ── SV-40: a dead daemon must be LOUD, never silent data loss ───────────────
+//
+// The reporter is deliberately fire-and-forget because the daemon is the
+// outbox — but that only holds while the daemon is actually reachable. With it
+// off, every watched line was swallowed by a console.debug: an entire episode
+// of exposure could vanish with nothing on screen to say so.
+
+describe('SaviEncounterReporter (delivery failure)', () => {
+    // `_finalize` chains .then().catch() onto an async send, so the callbacks
+    // land several microtasks deep. Drain the queue rather than counting ticks.
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    const failing = () => deps({ send: async () => Promise.reject(new Error('ECONNREFUSED')) });
+
+    it('reports a delivery failure to the host so it can be surfaced', async () => {
+        const failures: number[] = [];
+        const { d } = failing();
+        const reporter = new SaviEncounterReporter({
+            ...d,
+            onDeliveryFailure: (consecutive) => failures.push(consecutive),
+        });
+        await reporter.start();
+
+        reporter.report(line('No quería hablar de eso'));
+        reporter.report(line('Otra frase distinta', 90000)); // finalizes the first
+        await flush();
+
+        expect(failures).toEqual([1]);
+    });
+
+    it('clears the alarm once delivery recovers', async () => {
+        let fail = true;
+        const events: string[] = [];
+        const { d } = deps({
+            send: async () => (fail ? Promise.reject(new Error('ECONNREFUSED')) : undefined),
+        });
+        const reporter = new SaviEncounterReporter({
+            ...d,
+            onDeliveryFailure: () => events.push('fail'),
+            onDeliveryRecovered: () => events.push('ok'),
+        });
+        await reporter.start();
+
+        reporter.report(line('Uno'));
+        reporter.report(line('Dos', 90000));
+        await flush();
+
+        fail = false;
+        reporter.report(line('Tres', 95000));
+        await flush();
+
+        expect(events).toEqual(['fail', 'ok']);
+    });
+});

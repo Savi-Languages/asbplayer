@@ -266,8 +266,6 @@ const Popup = ({
                             onSaviSignOut={saviAccount.signOut}
                             saviTargetLanguage={saviRoaming.targetLanguage}
                             onSaviTargetLanguageChange={saviRoaming.setTargetLanguage}
-                            saviOpenSubtitlesApiKey={saviRoaming.openSubtitlesApiKey}
-                            onSaviOpenSubtitlesApiKeyChange={saviRoaming.setOpenSubtitlesApiKey}
                         />
                     )}
                     {statisticsOpen && (

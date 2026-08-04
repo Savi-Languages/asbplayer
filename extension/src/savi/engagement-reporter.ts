@@ -25,6 +25,13 @@ export interface EngagementReporterDeps {
     episodeId: () => string | undefined;
     /** Monotonic timestamp of the user's last interaction. */
     lastInteractionAt: () => number;
+    /** Called once per flush to DRAIN the speech that played since the last
+     *  flush (SV-30 measured WPM). `undefined` = nothing accrued — the block
+     *  then carries no speech fields rather than fake zeros. */
+    speechStats?: () => { speakingMs: number; spokenTokenCount: number } | undefined;
+    /** The session's gloss environment: 'glossed' while auto-gloss labels are
+     *  active for the target language, else 'bare'. Sampled at flush time. */
+    glossMode?: () => 'bare' | 'glossed' | undefined;
     /** Deliver the message to the background (browser.runtime.sendMessage). */
     send: (message: SaviEngagementSessionMessage) => Promise<unknown>;
     /** Monotonic clock; injected for tests. */
@@ -121,6 +128,9 @@ export class SaviEngagementReporter {
     private _emit(session: SessionFlush): void {
         const episodeId = this._episodeId || this._deps.episodeId() || '';
         this._episodeId = '';
+        // Drained unconditionally so cues shown during a discarded block can't
+        // leak into the next one.
+        const speech = this._deps.speechStats?.();
         const message: SaviEngagementSessionMessage = {
             command: 'savi-engagement-session',
             id: (this._deps.newId ?? (() => crypto.randomUUID()))(),
@@ -133,6 +143,8 @@ export class SaviEngagementReporter {
             // Recorded at capture time because it can never be reconstructed:
             // without it, moving timezones retroactively re-buckets history.
             tzOffsetMin: -new Date().getTimezoneOffset(),
+            ...(speech ?? {}),
+            glossMode: this._deps.glossMode?.(),
         };
         this._send(message, true);
     }

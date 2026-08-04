@@ -9,7 +9,12 @@
 // pointer-events are OFF except the dismiss "×", and it installs NO key listeners,
 // so the record shortcut is never intercepted.
 
-export type GuardReason = 'reload-drop' | 'never-started';
+/** `daemon-unreachable` (SV-40) is not about recording at all — it means
+ *  watched lines are failing to reach the daemon, which IS the outbox, so the
+ *  exposure for everything on screen is being dropped on the floor. Silent
+ *  before; an episode's worth of learning data could vanish because the app
+ *  simply wasn't running. Urgent styling, same surface. */
+export type GuardReason = 'reload-drop' | 'never-started' | 'daemon-unreachable';
 
 export class SaviRecordingGuardBanner {
     private _el: HTMLDivElement | null = null;
@@ -22,16 +27,24 @@ export class SaviRecordingGuardBanner {
     show(reason: GuardReason, onDismiss: () => void) {
         this._onDismiss = onDismiss;
         const el = this._ensure();
-        const urgent = reason === 'reload-drop';
+        const urgent = reason === 'reload-drop' || reason === 'daemon-unreachable';
         el.style.background = urgent ? 'rgba(150, 22, 22, 0.96)' : 'rgba(122, 91, 22, 0.96)';
         el.style.borderColor = urgent ? '#f85149' : '#d9a441';
         if (this._mainEl) {
-            this._mainEl.textContent = urgent ? '⏸ Recording stopped on reload' : '● You’re not recording';
+            this._mainEl.textContent =
+                reason === 'daemon-unreachable'
+                    ? '⚠ savi isn’t running — this episode isn’t being counted'
+                    : reason === 'reload-drop'
+                      ? '⏸ Recording stopped on reload'
+                      : '● You’re not recording';
         }
         if (this._subEl) {
-            this._subEl.textContent = urgent
-                ? 'Press Ctrl+Shift+S (or click the savi toolbar icon) to resume.'
-                : 'Press Ctrl+Shift+S to record this episode.';
+            this._subEl.textContent =
+                reason === 'daemon-unreachable'
+                    ? 'Open the savi desktop app to record what you watch. Lines watched until then are lost.'
+                    : reason === 'reload-drop'
+                      ? 'Press Ctrl+Shift+S (or click the savi toolbar icon) to resume.'
+                      : 'Press Ctrl+Shift+S to record this episode.';
         }
         el.style.display = 'flex';
     }
