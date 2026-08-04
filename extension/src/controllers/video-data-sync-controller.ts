@@ -25,7 +25,7 @@ import i18n from 'i18next';
 import { ExtensionGlobalStateProvider } from '@/services/extension-global-state-provider';
 import { isOnTutorialPage } from '@/services/tutorial';
 import { extractExtension } from '@/pages/util';
-import { parseShowQuery, primarySubtag, selectTrackForLanguage } from '@/savi/track-select';
+import { parseShowQuery, primarySubtag, selectNativeTrack, selectTrackForLanguage } from '@/savi/track-select';
 import { decideLanguageGate } from '@/savi/language-gate';
 import { titlesOverlap } from '@/savi/subtitle-relevance';
 import { mutedEpisodes } from '@/savi/muted-episodes';
@@ -482,6 +482,7 @@ export default class VideoDataSyncController {
             if (response && typeof response.targetLanguage === 'string') {
                 return {
                     targetLanguage: response.targetLanguage,
+                    nativeLanguage: response.nativeLanguage ?? '',
                     openSubtitlesApiKey: response.openSubtitlesApiKey ?? '',
                 };
             }
@@ -533,11 +534,23 @@ export default class VideoDataSyncController {
                 return false;
             }
 
-            const { targetLanguage, openSubtitlesApiKey } = await this._saviRoamingSettings();
+            const roaming = await this._saviRoamingSettings();
+            const { targetLanguage, openSubtitlesApiKey } = roaming;
 
+            // The SV-41 gate runs FIRST and decides from the SPOKEN language
+            // alone. It must stay independent of the native line below: a
+            // native-language subtitle track existing on an English video is
+            // exactly the "a track exists" false signal the gate was built to
+            // ignore, so the second line never gets a vote on whether savi runs.
             if (!(await this._applySaviLanguageGate(targetLanguage))) {
                 return false;
             }
+            // Tolerate a settings object without the key: a cache written by a
+            // build older than the native line has no `nativeLanguage`, and
+            // letting that throw here would be swallowed by the catch below and
+            // reported as "auto-load failed" — silently costing the user their
+            // subtitles entirely over an optional second line.
+            const nativeLanguage = roaming.nativeLanguage ?? '';
             const detected = this._syncedData?.subtitles ?? [];
             const detectedLangs = detected.map((s) => s.language ?? '?');
 
@@ -553,13 +566,39 @@ export default class VideoDataSyncController {
             const track = selectTrackForLanguage(this._syncedData?.subtitles, targetLanguage);
 
             if (track !== undefined) {
-                console.info(
-                    '[savi auto-load] loading "%s" (%s) for target %s',
-                    track.label,
-                    track.language,
-                    targetLanguage
+                // The native line rides along when one is configured and the site
+                // has it. Target stays FIRST: asbplayer renders in array order and
+                // treats track 0 as the mining source, so flipping these would mine
+                // the translation instead of the language being learned.
+                const nativeTrack = selectNativeTrack(
+                    this._syncedData?.subtitles,
+                    nativeLanguage,
+                    targetLanguage,
+                    track
                 );
-                await this._syncData([track]);
+
+                if (nativeTrack !== undefined) {
+                    console.info(
+                        '[savi auto-load] loading "%s" (%s) for target %s + "%s" (%s) as the native line',
+                        track.label,
+                        track.language,
+                        targetLanguage,
+                        nativeTrack.label,
+                        nativeTrack.language
+                    );
+                } else {
+                    console.info(
+                        '[savi auto-load] loading "%s" (%s) for target %s%s',
+                        track.label,
+                        track.language,
+                        targetLanguage,
+                        nativeLanguage.trim().length === 0
+                            ? ''
+                            : ` — no ${nativeLanguage} track among [${detectedLangs.join(', ') || 'none'}] for the native line`
+                    );
+                }
+
+                await this._syncData(nativeTrack === undefined ? [track] : [track, nativeTrack]);
                 await this._rememberSaviLanguageForCapture(targetLanguage);
                 return true;
             }

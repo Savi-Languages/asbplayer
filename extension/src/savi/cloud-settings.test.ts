@@ -62,8 +62,8 @@ describe('savi roaming cloud settings', () => {
 
         const loaded = await loadRoamingSettings('https://cloud.example');
 
-        expect(loaded).toEqual({ targetLanguage: 'es', openSubtitlesApiKey: 'k-123' });
-        expect(store[ROAMING_CACHE_KEY]).toEqual({ targetLanguage: 'es', openSubtitlesApiKey: 'k-123' });
+        expect(loaded).toEqual({ targetLanguage: 'es', nativeLanguage: '', openSubtitlesApiKey: 'k-123' });
+        expect(store[ROAMING_CACHE_KEY]).toEqual({ targetLanguage: 'es', nativeLanguage: '', openSubtitlesApiKey: 'k-123' });
         const urls = fetchMock.mock.calls.map((c) => c[0]);
         expect(urls).toContain('https://cloud.example/v2/settings');
         expect(urls).toContain('https://cloud.example/v2/api-keys?provider=opensubtitles');
@@ -97,7 +97,7 @@ describe('savi roaming cloud settings', () => {
     });
 
     it('keeps the cached key when the api-keys read fails, clears it when the account has none', async () => {
-        store[ROAMING_CACHE_KEY] = { targetLanguage: 'es', openSubtitlesApiKey: 'local-key' };
+        store[ROAMING_CACHE_KEY] = { targetLanguage: 'es', nativeLanguage: '', openSubtitlesApiKey: 'local-key' };
 
         // A failed read is indistinguishable from offline — keep the cache.
         mockCloud(okJson({ settings: {} }), { ok: false, status: 500, json: async () => ({}) });
@@ -110,12 +110,26 @@ describe('savi roaming cloud settings', () => {
     });
 
     it('keeps a locally-set language when the cloud has no row for it', async () => {
-        store[ROAMING_CACHE_KEY] = { targetLanguage: 'es', openSubtitlesApiKey: '' };
+        // EVERY roaming language must survive this, not just the ones the merge
+        // happens to name. A key left out of the merge is not merely ignored:
+        // normalize() defaults it to '' and the result is written back over the
+        // cache, so each settings load silently destroys what the user set.
+        store[ROAMING_CACHE_KEY] = { targetLanguage: 'es', nativeLanguage: 'en', openSubtitlesApiKey: '' };
         mockCloud(okJson({ settings: {} }), okJson({ keys: [] }));
 
         const loaded = await loadRoamingSettings('https://cloud.example');
 
         expect(loaded.targetLanguage).toBe('es');
+        expect(loaded.nativeLanguage).toBe('en');
+        // ...and the write-back must not have clobbered it either.
+        expect((store[ROAMING_CACHE_KEY] as any).nativeLanguage).toBe('en');
+    });
+
+    it('takes the cloud value for the native language when the cloud has one', async () => {
+        store[ROAMING_CACHE_KEY] = { targetLanguage: 'ja', nativeLanguage: 'en', openSubtitlesApiKey: '' };
+        mockCloud(okJson({ settings: { nativeLanguage: { value: 'fr', version: 2, updatedAtMs: 2 } } }), okJson({ keys: [] }));
+
+        expect((await loadRoamingSettings('https://cloud.example')).nativeLanguage).toBe('fr');
     });
 
     it('strips a trailing slash from the cloud base URL', async () => {
@@ -125,21 +139,22 @@ describe('savi roaming cloud settings', () => {
     });
 
     it('keeps the cache when signed out (no token)', async () => {
-        store[ROAMING_CACHE_KEY] = { targetLanguage: 'ja', openSubtitlesApiKey: 'k-9' };
+        store[ROAMING_CACHE_KEY] = { targetLanguage: 'ja', nativeLanguage: '', openSubtitlesApiKey: 'k-9' };
         tokenMock.mockResolvedValue(undefined);
 
         const loaded = await loadRoamingSettings('https://cloud.example');
 
-        expect(loaded).toEqual({ targetLanguage: 'ja', openSubtitlesApiKey: 'k-9' });
+        expect(loaded).toEqual({ targetLanguage: 'ja', nativeLanguage: '', openSubtitlesApiKey: 'k-9' });
         expect(fetchMock).not.toHaveBeenCalled();
     });
 
     it('keeps the cache when the cloud errors', async () => {
-        store[ROAMING_CACHE_KEY] = { targetLanguage: 'ja', openSubtitlesApiKey: '' };
+        store[ROAMING_CACHE_KEY] = { targetLanguage: 'ja', nativeLanguage: '', openSubtitlesApiKey: '' };
         fetchMock.mockResolvedValue({ ok: false, status: 500, json: async () => ({}) });
 
         expect(await loadRoamingSettings('https://cloud.example')).toEqual({
             targetLanguage: 'ja',
+            nativeLanguage: '',
             openSubtitlesApiKey: '',
         });
     });
@@ -150,7 +165,7 @@ describe('savi roaming cloud settings', () => {
         const next = await putRoamingSetting('https://cloud.example', 'targetLanguage', 'es-419');
 
         expect(next.targetLanguage).toBe('es-419');
-        expect(store[ROAMING_CACHE_KEY]).toEqual({ targetLanguage: 'es-419', openSubtitlesApiKey: '' });
+        expect(store[ROAMING_CACHE_KEY]).toEqual({ targetLanguage: 'es-419', nativeLanguage: '', openSubtitlesApiKey: '' });
         const [url, init] = fetchMock.mock.calls[0];
         expect(url).toBe('https://cloud.example/v2/settings/targetLanguage');
         expect(init.method).toBe('PUT');
@@ -163,13 +178,13 @@ describe('savi roaming cloud settings', () => {
         tokenMock.mockResolvedValue(undefined);
 
         await expect(putRoamingSetting('https://cloud.example', 'targetLanguage', 'ja')).rejects.toThrow(/sign in/i);
-        expect(store[ROAMING_CACHE_KEY]).toEqual({ targetLanguage: 'ja', openSubtitlesApiKey: '' });
+        expect(store[ROAMING_CACHE_KEY]).toEqual({ targetLanguage: 'ja', nativeLanguage: '', openSubtitlesApiKey: '' });
     });
 
     it('caches locally but throws when the cloud rejects the write', async () => {
         fetchMock.mockResolvedValue({ ok: false, status: 400, json: async () => ({}) });
 
         await expect(putRoamingSetting('https://cloud.example', 'targetLanguage', 'es')).rejects.toThrow(/savi cloud/i);
-        expect(store[ROAMING_CACHE_KEY]).toEqual({ targetLanguage: 'es', openSubtitlesApiKey: '' });
+        expect(store[ROAMING_CACHE_KEY]).toEqual({ targetLanguage: 'es', nativeLanguage: '', openSubtitlesApiKey: '' });
     });
 });

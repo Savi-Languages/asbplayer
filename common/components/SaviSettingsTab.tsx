@@ -70,6 +70,8 @@ interface Props {
     // hosts only. 'unknown' (the web app, or Firefox, which has no such toggle)
     // renders nothing.
     saviFileUrlAccess?: 'unknown' | 'allowed' | 'blocked';
+    saviNativeLanguage?: string;
+    onSaviNativeLanguageChange?: (value: string) => void;
 }
 
 const SaviSettingsTab: React.FC<Props> = ({
@@ -83,6 +85,8 @@ const SaviSettingsTab: React.FC<Props> = ({
     onSaviSignOut,
     saviTargetLanguage,
     onSaviTargetLanguageChange,
+    saviNativeLanguage,
+    onSaviNativeLanguageChange,
 }) => {
     const {
         saviAutoLoadSubtitles,
@@ -281,6 +285,15 @@ const SaviSettingsTab: React.FC<Props> = ({
                     helperText={`Language you're learning, as a BCP-47 code — e.g. es, es-419, ja. ${roamingHint}`}
                 />
             )}
+            {roamingSupported && onSaviNativeLanguageChange !== undefined && (
+                <CommitOnBlurTextField
+                    label={'Native language (second subtitle line)'}
+                    value={saviNativeLanguage ?? ''}
+                    onCommit={(value) => onSaviNativeLanguageChange(value.trim())}
+                    helperText={`Shown under the target line when the video has that track — e.g. en. Leave blank for a single line. ${roamingHint}`}
+                />
+            )}
+
             <SettingsSection>{'Savi capture'}</SettingsSection>
             <SwitchLabelWithHoverEffect
                 control={

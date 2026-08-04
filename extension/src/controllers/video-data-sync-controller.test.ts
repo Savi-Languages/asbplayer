@@ -74,7 +74,7 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
         loadSubtitles = jest.fn();
         getSingle = jest.fn().mockResolvedValue(true); // saviAutoLoadSubtitles
         settingsSet = jest.fn().mockResolvedValue(undefined);
-        roamingResponse = { targetLanguage: 'es', openSubtitlesApiKey: '' };
+        roamingResponse = { targetLanguage: 'es', nativeLanguage: '', openSubtitlesApiKey: '' };
         openSubtitlesResponse = { ok: false };
         sendMessage = jest.fn(async (cmd: any) => {
             const command = cmd?.message?.command;
@@ -208,6 +208,79 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
 
             expect(await controller._trySaviAutoLoad()).toBe(true);
         });
+
+        it('blocks BEFORE the native line ever gets a vote', async () => {
+            // The gate judges the spoken language only. A native-language track
+            // existing on this English video is precisely the "a track exists"
+            // false signal it was built to ignore — so with a native language
+            // configured and a matching track present, a mismatch must still
+            // load nothing at all, not the native line on its own.
+            roamingResponse = { targetLanguage: 'es', nativeLanguage: 'en', openSubtitlesApiKey: '' };
+            controller._syncedData = {
+                basename: 'Show',
+                spokenLanguage: 'en',
+                subtitles: [track('1', 'en', 'English'), track('2', 'es', 'Spanish')],
+            };
+
+            expect(await controller._trySaviAutoLoad()).toBe(false);
+            expect(loadSubtitles).not.toHaveBeenCalled();
+            expect(applySaviLanguageGate).toHaveBeenCalledWith({
+                active: false,
+                reason: 'mismatch',
+                targetLanguage: 'es',
+            });
+        });
+    });
+
+    it('loads the native track as a second line alongside the target', async () => {
+        roamingResponse = { targetLanguage: 'es', nativeLanguage: 'en', openSubtitlesApiKey: '' };
+        controller._syncedData = {
+            basename: 'Show',
+            subtitles: [track('1', 'en', 'English'), track('2', 'es', 'Spanish')],
+        };
+
+        expect(await controller._trySaviAutoLoad()).toBe(true);
+        const files = loadSubtitles.mock.calls[0][0];
+        expect(files).toHaveLength(2);
+        // Target FIRST: asbplayer treats track 0 as the mining source, so the
+        // order here decides whether mining yields Spanish or English.
+        expect(files[0].name).toBe('Show - Spanish.nfimsc');
+        expect(files[1].name).toBe('Show - English.nfimsc');
+    });
+
+    it('loads the target alone when the video has no native track', async () => {
+        roamingResponse = { targetLanguage: 'es', nativeLanguage: 'de', openSubtitlesApiKey: '' };
+        controller._syncedData = { basename: 'Show', subtitles: [track('2', 'es', 'Spanish')] };
+
+        expect(await controller._trySaviAutoLoad()).toBe(true);
+        expect(loadSubtitles.mock.calls[0][0]).toHaveLength(1);
+    });
+
+    it('loads the target alone when no native language is configured', async () => {
+        roamingResponse = { targetLanguage: 'es', nativeLanguage: '', openSubtitlesApiKey: '' };
+        controller._syncedData = {
+            basename: 'Show',
+            subtitles: [track('1', 'en', 'English'), track('2', 'es', 'Spanish')],
+        };
+
+        expect(await controller._trySaviAutoLoad()).toBe(true);
+        expect(loadSubtitles.mock.calls[0][0]).toHaveLength(1);
+    });
+
+    it('still auto-loads when the settings predate the native-line field', async () => {
+        // A cache written by an older build has no `nativeLanguage`. Reading it
+        // must not throw: the catch in _trySaviAutoLoad would swallow it and
+        // report "auto-load failed", costing the user their subtitles outright
+        // over an optional second line.
+        sendMessage.mockImplementation(async (cmd: any) => {
+            if (cmd?.message?.command === 'savi-roaming-settings') throw new Error('no background');
+            return undefined;
+        });
+        roamingCacheMock.mockResolvedValue({ targetLanguage: 'es', openSubtitlesApiKey: '' } as any);
+        controller._syncedData = { basename: 'Show', subtitles: [track('2', 'es', 'Spanish')] };
+
+        expect(await controller._trySaviAutoLoad()).toBe(true);
+        expect(loadSubtitles).toHaveBeenCalledTimes(1);
     });
 
     it('does nothing when auto-load is disabled', async () => {
@@ -219,7 +292,7 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
     });
 
     it('does nothing when no target language is set', async () => {
-        roamingResponse = { targetLanguage: '', openSubtitlesApiKey: '' };
+        roamingResponse = { targetLanguage: '', nativeLanguage: '', openSubtitlesApiKey: '' };
         controller._syncedData = { basename: 'Show', subtitles: [track('2', 'es', 'Spanish')] };
 
         expect(await controller._trySaviAutoLoad()).toBe(false);
@@ -227,7 +300,7 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
     });
 
     it('Path B: falls back to OpenSubtitles when no track matches and a key is set', async () => {
-        roamingResponse = { targetLanguage: 'es', openSubtitlesApiKey: 'k-1' };
+        roamingResponse = { targetLanguage: 'es', nativeLanguage: '', openSubtitlesApiKey: 'k-1' };
         // The name must actually resemble the query now — an unrelated result
         // is discarded (see the relevance tests below).
         openSubtitlesResponse = {
@@ -252,7 +325,7 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
     });
 
     it('does not use OpenSubtitles when no key is configured', async () => {
-        roamingResponse = { targetLanguage: 'es', openSubtitlesApiKey: '' };
+        roamingResponse = { targetLanguage: 'es', nativeLanguage: '', openSubtitlesApiKey: '' };
         controller._syncedData = { basename: 'Show', subtitles: [track('1', 'en', 'English')] };
 
         expect(await controller._trySaviAutoLoad()).toBe(false);
@@ -261,7 +334,7 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
     });
 
     it('Path B returns false when OpenSubtitles has no result', async () => {
-        roamingResponse = { targetLanguage: 'es', openSubtitlesApiKey: 'k-1' };
+        roamingResponse = { targetLanguage: 'es', nativeLanguage: '', openSubtitlesApiKey: 'k-1' };
         openSubtitlesResponse = { ok: false };
         controller._syncedData = { basename: 'Show', subtitles: [track('1', 'en', 'English')] };
 
@@ -274,7 +347,7 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
             if (cmd?.message?.command === 'savi-roaming-settings') throw new Error('no background');
             return undefined;
         });
-        roamingCacheMock.mockResolvedValue({ targetLanguage: 'es', openSubtitlesApiKey: '' });
+        roamingCacheMock.mockResolvedValue({ targetLanguage: 'es', nativeLanguage: '', openSubtitlesApiKey: '' });
         controller._syncedData = { basename: 'Show', subtitles: [track('2', 'es', 'Spanish')] };
 
         expect(await controller._trySaviAutoLoad()).toBe(true);

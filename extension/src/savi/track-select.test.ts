@@ -1,5 +1,5 @@
 import { VideoDataSubtitleTrack } from '@project/common';
-import { parseShowQuery, primarySubtag, selectTrackForLanguage } from './track-select';
+import { parseShowQuery, primarySubtag, selectNativeTrack, selectTrackForLanguage } from './track-select';
 
 const track = (id: string, language: string | undefined, label = id, extra: Partial<VideoDataSubtitleTrack> = {}) =>
     ({ id, language, label, url: `https://sub/${id}`, extension: 'nfimsc', ...extra }) as VideoDataSubtitleTrack;
@@ -96,5 +96,58 @@ describe('parseShowQuery', () => {
 
     it('falls back to the full name when the marker is at the start', () => {
         expect(parseShowQuery('S01E01')).toEqual({ query: 'S01E01', seasonNumber: 1, episodeNumber: 1 });
+    });
+});
+
+describe('selectNativeTrack', () => {
+    // The real shape of the video that prompted this: a Japanese learner whose
+    // native language is English, on a video carrying human tracks for both.
+    const subs = [track('ja', 'ja', 'Japanese'), track('en', 'en', 'English'), track('fr', 'fr', 'French')];
+    const jaTrack = subs[0];
+
+    it('picks the native track alongside the target', () => {
+        expect(selectNativeTrack(subs, 'en', 'ja', jaTrack)).toBe(subs[1]);
+    });
+
+    it('is off when no native language is configured', () => {
+        expect(selectNativeTrack(subs, '', 'ja', jaTrack)).toBeUndefined();
+        expect(selectNativeTrack(subs, '   ', 'ja', jaTrack)).toBeUndefined();
+        expect(selectNativeTrack(subs, undefined, 'ja', jaTrack)).toBeUndefined();
+    });
+
+    it('refuses to duplicate the target line when both languages match', () => {
+        // Studying the language you already speak: one line, not the same twice.
+        expect(selectNativeTrack(subs, 'en', 'en-US', subs[1])).toBeUndefined();
+        expect(selectNativeTrack(subs, 'ja', 'ja', jaTrack)).toBeUndefined();
+    });
+
+    it('never returns the very track already loaded as the target', () => {
+        // Defensive. For well-formed input the language guard above already
+        // makes this unreachable: a native selection and a target selection
+        // resolve to different primary subtags, so they cannot be the same
+        // object. It stands guard against a mislabelled track, which would
+        // otherwise put the same line on screen twice.
+        const mislabelled = [track('en', 'en', 'English')];
+        expect(selectNativeTrack(mislabelled, 'en', 'de', mislabelled[0])).toBeUndefined();
+    });
+
+    it('returns undefined when the video has no track in the native language', () => {
+        expect(selectNativeTrack(subs, 'de', 'ja', jaTrack)).toBeUndefined();
+        expect(selectNativeTrack([], 'en', 'ja', undefined)).toBeUndefined();
+        expect(selectNativeTrack(undefined, 'en', 'ja', undefined)).toBeUndefined();
+    });
+
+    it('matches on primary subtag, like the target selector', () => {
+        const regional = [track('ja', 'ja'), track('gb', 'en-GB', 'English (UK)')];
+        expect(selectNativeTrack(regional, 'en', 'ja', regional[0])).toBe(regional[1]);
+    });
+
+    it('skips the None placeholder', () => {
+        expect(selectNativeTrack([track('ja', 'ja'), emptyTrack], 'en', 'ja', undefined)).toBeUndefined();
+    });
+
+    it('prefers a non-CC native track, inheriting the target ranking', () => {
+        const withCc = [track('ja', 'ja'), track('encc', 'en', 'English [CC]'), track('en', 'en', 'English')];
+        expect(selectNativeTrack(withCc, 'en', 'ja', withCc[0])).toBe(withCc[2]);
     });
 });

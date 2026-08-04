@@ -407,6 +407,7 @@ export interface SaviRoamingSettingsMessage {
 
 export interface SaviRoamingSettingsResponse {
     readonly targetLanguage: string;
+    readonly nativeLanguage: string;
     readonly openSubtitlesApiKey: string;
 }
 

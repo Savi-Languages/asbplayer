@@ -161,6 +161,8 @@ const SettingsPage = ({
                         saviMutedSites={saviMutedSites.sites}
                         onSaviUnmuteSite={saviMutedSites.unmute}
                         saviFileUrlAccess={saviFileUrlAccess}
+                        saviNativeLanguage={saviRoaming.nativeLanguage}
+                        onSaviNativeLanguageChange={saviRoaming.setNativeLanguage}
                     />
                 </DialogContent>
                 <Box style={{ marginBottom: theme.spacing(2) }} className={classes.profilesContainer}>

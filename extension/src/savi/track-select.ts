@@ -62,6 +62,42 @@ export const selectTrackForLanguage = (
 };
 
 /**
+ * The track for the second (native-language) subtitle line, or `undefined` when
+ * there shouldn't be one.
+ *
+ * Dual subtitles are the point of asbplayer's reading workflow: the target line
+ * to work through, the native line to check yourself against. This picks the
+ * latter with the same ranking as the target track, minus two cases that would
+ * produce a useless or duplicated second line:
+ *
+ *   - `nativeLanguage` shares its primary subtag with the target (someone whose
+ *     native language IS what they're studying) — one line, not two of the same;
+ *   - the best native candidate is the very track already loaded as the target.
+ *     Guarded by identity rather than by language because a site can list one
+ *     track under two labels, and asbplayer would then render it twice.
+ */
+export const selectNativeTrack = (
+    subtitles: VideoDataSubtitleTrack[] | undefined,
+    nativeLanguage: string | undefined,
+    targetLanguage: string | undefined,
+    targetTrack: VideoDataSubtitleTrack | undefined
+): VideoDataSubtitleTrack | undefined => {
+    const native = (nativeLanguage ?? '').trim();
+
+    if (native.length === 0) {
+        return undefined;
+    }
+
+    if (primarySubtag(native) === primarySubtag((targetLanguage ?? '').trim())) {
+        return undefined;
+    }
+
+    const track = selectTrackForLanguage(subtitles, native);
+
+    return track === targetTrack ? undefined : track;
+};
+
+/**
  * Split a detected episode name (e.g. Netflix's `Dark S01E03 Secrets`) into an
  * OpenSubtitles search query + season/episode numbers, for the fallback search.
  * When no `SxxEyy` marker is present the whole name is the query (a film).

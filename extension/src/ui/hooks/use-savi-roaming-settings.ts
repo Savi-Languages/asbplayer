@@ -21,8 +21,10 @@ import { resolveCloudBase } from '@/savi/cloud-client';
 
 export interface SaviRoamingSettingsHook {
     readonly targetLanguage: string;
+    readonly nativeLanguage: string;
     readonly loaded: boolean;
     readonly setTargetLanguage: (value: string) => void;
+    readonly setNativeLanguage: (value: string) => void;
 }
 
 export const useSaviRoamingSettings = (
@@ -82,7 +84,9 @@ export const useSaviRoamingSettings = (
 
     return {
         targetLanguage: state.targetLanguage,
+        nativeLanguage: state.nativeLanguage,
         loaded,
         setTargetLanguage: useCallback((value: string) => update('targetLanguage', value), [update]),
+        setNativeLanguage: useCallback((value: string) => update('nativeLanguage', value), [update]),
     };
 };
