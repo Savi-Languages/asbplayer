@@ -363,6 +363,68 @@ describe('SaviGlossController debug logging', () => {
 
 // ── the duplicate-request bug ───────────────────────────────────────────────
 
+// ── bind-time projection warm ───────────────────────────────────────────────
+
+/** Build a `SaviGlossController` with faked settings + a faked
+ *  `browser.runtime.sendMessage`, returning `{ controller, sent }` where
+ *  `sent` records every message passed to `sendMessage`. `failCommands`
+ *  makes those specific commands reject, so a test can simulate one call
+ *  failing (e.g. the warm call timing out) without the rest of the fakes
+ *  changing behaviour. */
+function makeGlossController(
+    settingsOverrides: { saviGlossing?: boolean; targetLanguage?: string } = {},
+    options: { failCommands?: string[] } = {}
+): { controller: SaviGlossController; sent: Array<{ message: any }> } {
+    const failCommands = new Set(options.failCommands ?? []);
+    const sent: Array<{ message: any }> = [];
+    (globalThis as any).browser = {
+        runtime: {
+            sendMessage: jest.fn(async (command: any) => {
+                sent.push(command);
+                if (failCommands.has(command?.message?.command)) {
+                    throw new Error(`simulated failure: ${command?.message?.command}`);
+                }
+                return {};
+            }),
+        },
+    };
+    const settings = { get: async () => ({ saviGlossing: true, ...settingsOverrides }) as any };
+    const controller = new SaviGlossController(settings, () => {});
+    return { controller, sent };
+}
+
+describe('bind-time projection warm', () => {
+    it('fires exactly one warm message per bind', async () => {
+        const { controller, sent } = makeGlossController({ saviGlossing: true, targetLanguage: 'es' });
+        await controller.start();
+        const warms = sent.filter((m) => m.message?.command === 'savi-warm-projections');
+        expect(warms).toHaveLength(1);
+        expect(warms[0].message.lang).toBe('es');
+    });
+
+    it('keeps glossing enabled when the warm call fails', async () => {
+        const { controller, sent } = makeGlossController(
+            { saviGlossing: true, targetLanguage: 'es' },
+            { failCommands: ['savi-warm-projections'] }
+        );
+        await controller.start();
+        // The warm call is fire-and-forget: its only job is the server-side
+        // side effect, so a failure must never take glossing down with it.
+        expect(controller.glossHtmlFor('hola mundo')).toBeUndefined();
+        expect(sent.some((m) => m.message?.command === 'savi-warm-projections')).toBe(true);
+    });
+
+    it('never populates the client-side known set', async () => {
+        // SV-40 moved the decision server-side because the client keys by
+        // SURFACE while the data keys by LEMMA. Reviving a client-side known
+        // set would reintroduce exactly that bug, so the warm response must
+        // never be read back into a decision path.
+        const { controller } = makeGlossController({ saviGlossing: true, targetLanguage: 'es' });
+        await controller.start();
+        expect((controller as unknown as { _known: Set<string> })._known.size).toBe(0);
+    });
+});
+
 describe('SaviGlossController.start is re-entrant', () => {
     // The founder saw the same line requested twice, back to back, with
     // identical payloads:

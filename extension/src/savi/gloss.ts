@@ -23,6 +23,8 @@ import {
     SaviGlossLineResponse,
     SaviGlossTranslateMessage,
     SaviGlossTranslateResponse,
+    SaviWarmProjectionsMessage,
+    SaviWarmProjectionsResponse,
 } from './messages';
 import { getCachedRoamingSettings } from './cloud-settings';
 import type { SettingsProvider } from '@project/common/settings';
@@ -354,7 +356,7 @@ export function isReasonableGloss(gloss: string): boolean {
 // ── The controller ────────────────────────────────────────────────────────
 
 const sendToBackground = <R>(
-    message: SaviGlossLineMessage | SaviGlossTranslateMessage
+    message: SaviGlossLineMessage | SaviGlossTranslateMessage | SaviWarmProjectionsMessage
 ): Promise<R> => {
     const command: SaviCommand<typeof message> = { sender: 'savi-video', message };
     return browser.runtime.sendMessage(command) as Promise<R>;
@@ -516,9 +518,22 @@ export class SaviGlossController implements GlossProvider {
             this._glossable = false;
         }
         if (this._glossable) {
-            // SV-40: nothing to preload. The known-set fetch is gone — every
-            // decision now comes back with its line, which also means the first
-            // labels no longer wait on a whole-history projection.
+            // Warm the cloud's Level-2 projection now. SV-40 removed the old
+            // bind-time known-set fetch and claimed "the first labels no longer
+            // wait on a whole-history projection" — which turned out to be
+            // false in the way that matters: the wait didn't disappear, it moved
+            // to EVERY line. A cold fold takes ~20s against a remote Postgres,
+            // past this client's 8s budget, so the first lines of a video were
+            // unglossable until something warmed the cache.
+            //
+            // Fire-and-forget, and deliberately not awaited: prefetch must start
+            // immediately, and the response carries nothing we read. It must
+            // NEVER feed a decision path — the surface-vs-lemma gap is exactly
+            // why SV-40 moved the decision server-side.
+            void sendToBackground<SaviWarmProjectionsResponse>({
+                command: 'savi-warm-projections',
+                lang: this._targetLang,
+            }).catch(() => {});
             this._prefetchTimer = setInterval(() => this._prefetchTick(), PREFETCH_TICK_MS);
         }
     }

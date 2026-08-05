@@ -176,6 +176,26 @@ export const wordsProficiency = async (
     return body.proficiency ?? {};
 };
 
+/** Ask the cloud to fold this language's Level-2 projection NOW
+ *  (`POST /v2/words/{lang}/warm`), so the first gloss of a video doesn't absorb
+ *  the cold fold — which takes ~20s against a remote Postgres, far past this
+ *  client's 8s budget.
+ *
+ *  Fire-and-forget by design: the caller wants the SERVER-SIDE side effect, not
+ *  the payload. Resolves silently when signed out, and an aborted call still
+ *  leaves the fold running on the cloud, so a timeout here is not a failure. */
+export const warmProjections = async (cloudUrl: string, lang: string): Promise<void> => {
+    const token = await currentAccessToken();
+    if (!token) {
+        return;
+    }
+    await fetchWithTimeout(`${resolveCloudBase(cloudUrl)}/v2/words/${encodeURIComponent(lang)}/warm`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: '{}',
+    });
+};
+
 /** The default gloss-decision threshold: gloss when proficiency < this. */
 export const DEFAULT_GLOSS_THRESHOLD = 0.8;
 

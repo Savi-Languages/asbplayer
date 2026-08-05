@@ -402,6 +402,18 @@ export interface SaviWordBucketsResponse {
     readonly buckets: Record<string, 'new' | 'word_box' | 'known'>;
 }
 
+// Trigger the cloud's Level-2 fold at video bind (SV-40 follow-up), so the
+// first subtitle line doesn't pay for it. Fire-and-forget — the response
+// carries nothing the content script uses, and MUST NOT feed any decision path.
+export interface SaviWarmProjectionsMessage {
+    readonly command: 'savi-warm-projections';
+    readonly lang: string;
+}
+
+export interface SaviWarmProjectionsResponse {
+    readonly ok?: boolean;
+}
+
 // Per-lemma proficiency [0,1] from the SV-20 review engine — the graded
 // successor to buckets for the glossing decision: gloss a word iff its
 // proficiency is below the user's threshold. `proficiency` undefined =
