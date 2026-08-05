@@ -370,7 +370,13 @@ describe('SaviGlossController debug logging', () => {
  *  `sent` records every message passed to `sendMessage`. `failCommands`
  *  makes those specific commands reject, so a test can simulate one call
  *  failing (e.g. the warm call timing out) without the rest of the fakes
- *  changing behaviour. */
+ *  changing behaviour.
+ *
+ *  `settingsOverrides.targetLanguage` is a NO-OP: `start()` reads the target
+ *  language from `getCachedRoamingSettings()`, which this file mocks at the
+ *  top to always return 'es' — the real language always comes from there,
+ *  never from this options object. Passing anything but 'es' here would be
+ *  silently ignored, not honored. */
 function makeGlossController(
     settingsOverrides: { saviGlossing?: boolean; targetLanguage?: string } = {},
     options: { failCommands?: string[] } = {}
@@ -410,6 +416,10 @@ describe('bind-time projection warm', () => {
         await controller.start();
         // The warm call is fire-and-forget: its only job is the server-side
         // side effect, so a failure must never take glossing down with it.
+        // `glossable` is the actual discriminator here — `glossHtmlFor`
+        // returns undefined both when glossing is off AND when a line simply
+        // hasn't settled yet, so it can't tell the two cases apart on its own.
+        expect(controller.glossable).toBe(true);
         expect(controller.glossHtmlFor('hola mundo')).toBeUndefined();
         expect(sent.some((m) => m.message?.command === 'savi-warm-projections')).toBe(true);
     });
