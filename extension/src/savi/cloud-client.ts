@@ -183,17 +183,37 @@ export const wordsProficiency = async (
  *
  *  Fire-and-forget by design: the caller wants the SERVER-SIDE side effect, not
  *  the payload. Resolves silently when signed out, and an aborted call still
- *  leaves the fold running on the cloud, so a timeout here is not a failure. */
+ *  leaves the fold running on the cloud, so a timeout here is not a failure.
+ *
+ *  Throws on a non-2xx response, like every other call in this file — the
+ *  caller (`_warmProjections` in background-handler.ts) already swallows
+ *  whatever this throws, so nothing about glossing changes. What this fixes is
+ *  visibility: a 401 (expired JWT), a 404 (a cloud predating this route) or a
+ *  500 used to resolve as silent success with nothing logged anywhere, which
+ *  made "is the cold start actually fixed?" unanswerable without guessing —
+ *  the exact failure mode that cost two rounds of misdiagnosis on the original
+ *  bug. Logged on the console under the same `savi: gloss —` prefix gloss.ts's
+ *  debug channel uses; this fires once per video bind, so it can never flood
+ *  it. */
 export const warmProjections = async (cloudUrl: string, lang: string): Promise<void> => {
     const token = await currentAccessToken();
     if (!token) {
         return;
     }
-    await fetchWithTimeout(`${resolveCloudBase(cloudUrl)}/v2/words/${encodeURIComponent(lang)}/warm`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: '{}',
-    });
+    const response = await fetchWithTimeout(
+        `${resolveCloudBase(cloudUrl)}/v2/words/${encodeURIComponent(lang)}/warm`,
+        {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: '{}',
+        }
+    );
+    if (!response.ok) {
+        console.debug(`savi: gloss — warm failed: HTTP ${response.status}`);
+        throw new Error(`cloud warm failed: HTTP ${response.status}`);
+    }
+    const body = (await response.json()) as { cached?: boolean; lemmas?: number; foldedAtMs?: number };
+    console.debug(`savi: gloss — warm ok (cached=${body.cached}, lemmas=${body.lemmas}, foldedAtMs=${body.foldedAtMs})`);
 };
 
 /** The default gloss-decision threshold: gloss when proficiency < this. */

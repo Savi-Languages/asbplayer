@@ -420,8 +420,16 @@ export class SaviGlossController implements GlossProvider {
     private _enabled = false;
     private _targetLang = '';
     private _glossable = false;
-    // lemma → 'known' means "already learned" (skip). Empty when signed out /
-    // unfetched → every content word is glossed (SV-12 behaviour).
+    // INTENTIONALLY never populated (SV-40). This was the old known-lemma
+    // cache, keyed by LEMMA — but the client only ever sees SURFACES, and
+    // `sabía` (surface) can never match a known `saber` (lemma) in a plain
+    // Set lookup. That mismatch is exactly why the gloss decision moved
+    // server-side, where the lemmatizer lives: `sabía` and `saber` are the
+    // same word there. Populating this again would silently reintroduce the
+    // bug — every conjugation of a known word would stay labelled forever,
+    // since it could never match its own lemma here. Left in place only so a
+    // regression that starts writing to it again gets caught (see the test
+    // guarding that it stays empty), not because anything reads it.
     private _known: Set<string> = new Set();
     // FINAL gloss HTML per line ('' = nothing to gloss). A line is present here
     // only once it has settled (success, empty, or gave-up).
