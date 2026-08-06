@@ -32,11 +32,39 @@ export const resolveCloudBase = (cloudUrl: string): string => normalizeBaseUrl(D
 // Abort a cloud call that stalls: these run in the background on behalf of a
 // content-script message, and the message MUST get an answer — a fetch that
 // never settles would leave the caller (and its concurrency slot) hanging.
+// This is the PER-LINE budget: a label that arrives after its subtitle line has
+// left the screen is worthless, so waiting longer buys nothing.
 const FETCH_TIMEOUT_MS = 8000;
 
-const fetchWithTimeout = async (input: string, init: RequestInit): Promise<Response> => {
+// The warm call gets its own, much longer budget, and the reason is Cloud Run,
+// not patience.
+//
+// savi-cloud runs with CPU throttling (verified: no `cpu-throttling` annotation
+// on the service, which IS the default) — an instance gets essentially no CPU
+// once no request is in flight. The cold fold takes ~20s. So if this call
+// aborted at the 8s per-line budget, the request would end and the detached
+// fold behind it could be starved mid-way on a scaled-to-zero instance, which
+// is exactly the thing warming exists to prevent. Holding the request open
+// keeps the instance in request-processing for the fold's duration.
+//
+// Nothing waits on this: `start()` fires it without awaiting, and it holds no
+// gloss concurrency slot (`_acquire`/`_rateGate` wrap `_glossLine` only). So a
+// long budget costs the user nothing. 45s clears the measured ~22s cold fold
+// with room to spare and stays well inside Cloud Run's 300s request timeout.
+//
+// Deliberately NOT solved by setting `--no-cpu-throttling` on the service:
+// that switches savi-cloud to instance-based billing (paying for idle instance
+// lifetime), and it would leave correctness depending on an out-of-repo setting
+// that anyone can change in the console.
+const WARM_TIMEOUT_MS = 45000;
+
+const fetchWithTimeout = async (
+    input: string,
+    init: RequestInit,
+    timeoutMs: number = FETCH_TIMEOUT_MS
+): Promise<Response> => {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
         return await fetch(input, { ...init, signal: controller.signal });
     } finally {
@@ -178,12 +206,16 @@ export const wordsProficiency = async (
 
 /** Ask the cloud to fold this language's Level-2 projection NOW
  *  (`POST /v2/words/{lang}/warm`), so the first gloss of a video doesn't absorb
- *  the cold fold — which takes ~20s against a remote Postgres, far past this
- *  client's 8s budget.
+ *  the cold fold — which takes ~20s against a remote Postgres, far past the 8s
+ *  per-line budget the gloss calls run under.
  *
  *  Fire-and-forget by design: the caller wants the SERVER-SIDE side effect, not
- *  the payload. Resolves silently when signed out, and an aborted call still
- *  leaves the fold running on the cloud, so a timeout here is not a failure.
+ *  the payload. Resolves silently when signed out.
+ *
+ *  It runs on [`WARM_TIMEOUT_MS`], NOT the per-line budget, and that difference
+ *  is load-bearing rather than cosmetic — see that constant for why. In short:
+ *  the cloud throttles CPU to ~nothing once no request is in flight, so ending
+ *  this request early could starve the very fold it was sent to trigger.
  *
  *  Throws on a non-2xx response, like every other call in this file — the
  *  caller (`_warmProjections` in background-handler.ts) already swallows
@@ -206,7 +238,8 @@ export const warmProjections = async (cloudUrl: string, lang: string): Promise<v
             method: 'POST',
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
             body: '{}',
-        }
+        },
+        WARM_TIMEOUT_MS
     );
     if (!response.ok) {
         console.debug(`savi: gloss — warm failed: HTTP ${response.status}`);
