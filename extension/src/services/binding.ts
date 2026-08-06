@@ -106,6 +106,9 @@ import { SaviRecordingGuardBanner } from '../savi/recording-guard-banner';
 import { SaviEngagementReporter } from '../savi/engagement-reporter';
 import { SpeechAccumulator } from '../savi/speech-stats';
 import { SaviInteractionClock } from '../savi/interaction-clock';
+import type { LanguageGateVerdict } from '../savi/language-gate';
+import { SaviLanguageHush } from '../savi/language-hush';
+import { muteEpisode } from '../savi/muted-episodes';
 import { getCachedRoamingSettings } from '../savi/cloud-settings';
 import { deriveEpisodeId } from '../savi/episode';
 
@@ -198,6 +201,19 @@ export default class Binding {
     readonly saviInteractionClock: SaviInteractionClock;
     readonly saviGlossHover: SaviGlossHover;
     readonly saviControlsClearance: SaviControlsClearance;
+    /** Last language verdict applied, so a re-sync that reaches the same
+     *  conclusion doesn't restart the cluster (or re-log) on every poll. */
+    private _saviLanguageActive = true;
+    /** Offered only while the gate is guessing (`unknown`) — see language-hush.ts. */
+    readonly saviLanguageHush = new SaviLanguageHush(() => {
+        const episodeId = deriveEpisodeId(window.location.href, document.title);
+        if (episodeId === undefined) {
+            return;
+        }
+        void muteEpisode(episodeId).then(() => {
+            this.applySaviLanguageGate({ active: false, reason: 'muted' });
+        });
+    });
 
     private copyToClipboardOnMine: boolean;
     private clickToMineDefaultAction: PostMineAction;
@@ -653,6 +669,56 @@ export default class Binding {
         }
     }
 
+    /**
+     * Turn savi's learning layer on or off for the video now playing (SV-41).
+     *
+     * Called once the page has surfaced enough to judge the spoken language.
+     * Deactivating stops EVERY savi surface, the silent one included: with the
+     * encounter reporter stopped, an English video no longer counts watched
+     * lines as target-language exposure — which was the real damage, since the
+     * visual noise at least announced itself.
+     *
+     * Idempotent: a re-sync reaching the same verdict is a no-op, so this can be
+     * called from every data sync without restarting anything.
+     */
+    applySaviLanguageGate(verdict: LanguageGateVerdict) {
+        // Offer the manual hush only while we are guessing. Outside `unknown`
+        // the control is either noise (we matched) or moot (savi is already off).
+        if (verdict.reason === 'unknown') {
+            this.saviLanguageHush.show();
+        } else {
+            this.saviLanguageHush.hide();
+        }
+
+        if (verdict.active === this._saviLanguageActive) {
+            return;
+        }
+        this._saviLanguageActive = verdict.active;
+
+        if (!verdict.active) {
+            console.info(
+                `[savi language-gate] savi off for this video (${verdict.reason}) — not your learning language`
+            );
+            this.saviGlossController.stop();
+            this.saviGlossHover.stop();
+            this.saviEncounterReporter.stop();
+            this.saviEngagementReporter.stop();
+            this.saviHoverDictionary.stop();
+            this.saviControlsClearance.stop();
+            this.saviCaptureController.unbind();
+            return;
+        }
+
+        console.info(`[savi language-gate] savi on for this video (${verdict.reason})`);
+        this.saviCaptureController.bind();
+        this.saviHoverDictionary.start();
+        void this.saviGlossController.start();
+        void this.saviGlossHover.start();
+        void this.saviEncounterReporter.start();
+        void this.saviEngagementReporter.start();
+        this.saviControlsClearance.start();
+    }
+
     _bind() {
         this._notifyReady();
         this._subscribe();
@@ -671,6 +737,9 @@ export default class Binding {
         this.saviInteractionClock.bind();
         void this.saviEngagementReporter.start();
         this.saviControlsClearance.start();
+        // The savi layer starts optimistically: the language verdict needs the
+        // page's video data, which arrives later. applySaviLanguageGate() stops
+        // it again if this turns out not to be the learning language.
 
         const seek = (forward: boolean) => {
             const subtitle = adjacentSubtitle(
@@ -1418,6 +1487,8 @@ export default class Binding {
         this.saviEngagementReporter.stop();
         this.saviInteractionClock.unbind();
         this.saviControlsClearance.stop();
+        this.saviLanguageHush.destroy();
+        this._saviLanguageActive = true; // next video starts optimistic again
         this.unsubscribeStatisticsSeek?.();
         this.unsubscribeStatisticsSeek = undefined;
         this.unsubscribeStatisticsSubtitleMine?.();
