@@ -25,6 +25,7 @@ import { isOnTutorialPage } from '@/services/tutorial';
 import { extractExtension } from '@/pages/util';
 import { parseShowQuery, primarySubtag, selectTrackForLanguage } from '@/savi/track-select';
 import { decideLanguageGate } from '@/savi/language-gate';
+import { titlesOverlap } from '@/savi/subtitle-relevance';
 import { mutedEpisodes } from '@/savi/muted-episodes';
 import { deriveEpisodeId } from '@/savi/episode';
 import { getCachedRoamingSettings, SaviRoamingSettings } from '@/savi/cloud-settings';
@@ -522,6 +523,16 @@ export default class VideoDataSyncController {
     }
 
     private async _trySaviOpenSubtitlesFallback(targetLanguage: string): Promise<boolean> {
+        // OpenSubtitles is a FILM/TV database. YouTube titles are not in it, so
+        // every search is a fuzzy miss that still returns its nearest match —
+        // which is how a comedy song loaded an unrelated film's subtitles. Skip
+        // the whole path there rather than pay an API call to be wrong.
+        const pageDelegate = await currentPageDelegate();
+        if (pageDelegate?.config.key === 'youtube') {
+            console.info('[savi auto-load] skipping OpenSubtitles on YouTube (not a film/TV catalogue)');
+            return false;
+        }
+
         const { query, seasonNumber, episodeNumber } = parseShowQuery(this._syncedData?.basename ?? document.title);
 
         if (query.trim().length === 0) {
@@ -542,6 +553,19 @@ export default class VideoDataSyncController {
         const response = (await browser.runtime.sendMessage(command)) as SaviOpenSubtitlesFetchResponse | undefined;
 
         if (!response?.ok || !response.content) {
+            return false;
+        }
+
+        // The search is fuzzy and never returns "nothing" — verify the result is
+        // actually this video before loading it. Wrong subtitles are worse than
+        // none: they look plausible, and every line feeds glossing and counts as
+        // exposure.
+        if (!titlesOverlap(query, response.name)) {
+            console.info(
+                '[savi auto-load] discarding unrelated OpenSubtitles result "%s" for "%s"',
+                response.name ?? '(unnamed)',
+                query
+            );
             return false;
         }
 
