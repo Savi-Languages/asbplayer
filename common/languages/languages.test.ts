@@ -1,4 +1,4 @@
-import { languageLabel, languageOptions, SUBTITLE_LANGUAGE_CODES } from './languages';
+import { languageLabel, languageOptions, resolveLanguageInput, SUBTITLE_LANGUAGE_CODES } from './languages';
 
 describe('languageLabel', () => {
     it('names a language and keeps its tag visible', () => {
@@ -58,6 +58,45 @@ describe('languageOptions', () => {
     it('every option renders a label', () => {
         SUBTITLE_LANGUAGE_CODES.forEach((code) => {
             expect(languageLabel(code).length).toBeGreaterThan(0);
+        });
+    });
+});
+
+describe('resolveLanguageInput', () => {
+    it('round-trips the label the picker renders', () => {
+        // The field shows names but the setting stores tags; every commit goes
+        // through here, so this is the path that must not lose the tag.
+        expect(resolveLanguageInput('Japanese (ja)')).toBe('ja');
+        expect(resolveLanguageInput(languageLabel('es-419'))).toBe('es-419');
+    });
+
+    it('accepts a bare tag typed by someone who knows it', () => {
+        expect(resolveLanguageInput('ja')).toBe('ja');
+        expect(resolveLanguageInput('ES-419')).toBe('es-419');
+    });
+
+    it('accepts a language name without its tag', () => {
+        expect(resolveLanguageInput('Japanese')).toBe('ja');
+        expect(resolveLanguageInput('brazilian portuguese')).toBe('pt-BR');
+    });
+
+    it('passes through an unknown tag rather than discarding it', () => {
+        // freeSolo escape hatch: a tag this list omits must still be settable.
+        expect(resolveLanguageInput('haw')).toBe('haw');
+        expect(resolveLanguageInput('  yue-Hant  ')).toBe('yue-Hant');
+    });
+
+    it('maps empty to empty, which is how the native line is turned off', () => {
+        expect(resolveLanguageInput('')).toBe('');
+        expect(resolveLanguageInput('   ')).toBe('');
+        expect(resolveLanguageInput(undefined as unknown as string)).toBe('');
+    });
+
+    it('never returns a display label as the stored value', () => {
+        SUBTITLE_LANGUAGE_CODES.forEach((code) => {
+            const resolved = resolveLanguageInput(languageLabel(code));
+            expect(resolved).toBe(code);
+            expect(resolved).not.toContain('(');
         });
     });
 });

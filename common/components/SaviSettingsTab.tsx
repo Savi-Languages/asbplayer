@@ -14,7 +14,7 @@ import { AsbplayerSettings } from '../settings';
 import SettingsSection from './SettingsSection';
 import SettingsTextField from './SettingsTextField';
 import SwitchLabelWithHoverEffect from './SwitchLabelWithHoverEffect';
-import { languageLabel, languageOptions } from '../languages/languages';
+import { languageLabel, languageOptions, resolveLanguageInput } from '../languages/languages';
 
 // A text field whose value is committed (roamed to the account) on blur rather
 // than on every keystroke, so an API key isn't PUT to the cloud character by
@@ -59,17 +59,23 @@ const LanguageAutocomplete: React.FC<{
     onCommit: (value: string) => void;
     helperText?: React.ReactNode;
 }> = ({ label, value, onCommit, helperText }) => {
-    const [draft, setDraft] = useState(value);
-    useEffect(() => setDraft(value), [value]);
+    const options = languageOptions(value);
+    // The box shows a NAME; the setting stores a TAG. `draft` is what's on
+    // screen, so it is display text, and every commit resolves it back.
+    const [draft, setDraft] = useState(() => languageLabel(value));
+    useEffect(() => setDraft(languageLabel(value)), [value]);
 
     const commit = useCallback(
-        (next: string) => {
-            const trimmed = next.trim();
-            if (trimmed !== value) {
-                onCommit(trimmed);
+        (text: string) => {
+            const tag = resolveLanguageInput(text, options);
+            if (tag !== value) {
+                onCommit(tag);
             }
+            // Re-render the canonical label, so a name typed by hand ("Japanese")
+            // settles into the same text a picked option would show.
+            setDraft(languageLabel(tag));
         },
-        [onCommit, value]
+        [onCommit, options, value]
     );
 
     return (
@@ -78,27 +84,21 @@ const LanguageAutocomplete: React.FC<{
             autoHighlight
             selectOnFocus
             handleHomeEndKeys
-            options={languageOptions(value)}
-            value={value}
+            options={options}
             inputValue={draft}
             onInputChange={(_, next) => setDraft(next)}
             onChange={(_, next) => commit(typeof next === 'string' ? next : '')}
-            // Typed text is a tag; a picked option is already one. Either way the
-            // stored value is the tag, never the display label.
-            getOptionLabel={(option) => (typeof option === 'string' ? option : '')}
-            renderOption={({ key, ...restOfProps }, option) => (
-                <li key={key} {...restOfProps}>
-                    {languageLabel(option)}
-                </li>
-            )}
-            filterOptions={(options, { inputValue }) => {
+            getOptionLabel={(option) => (typeof option === 'string' ? languageLabel(option) : '')}
+            filterOptions={(opts, { inputValue }) => {
                 const needle = inputValue.trim().toLowerCase();
-                if (needle.length === 0) {
-                    return options;
+                // A freshly-focused field holds the current label; filtering by
+                // it would show one row and hide the rest of the list.
+                if (needle.length === 0 || needle === languageLabel(value).toLowerCase()) {
+                    return opts;
                 }
                 // Match the name as well as the tag — someone looking for
-                // Japanese should be able to type "jap", not just "ja".
-                return options.filter(
+                // Japanese should find it by typing "jap", not just "ja".
+                return opts.filter(
                     (o) => o.toLowerCase().includes(needle) || languageLabel(o).toLowerCase().includes(needle)
                 );
             }}

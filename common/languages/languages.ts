@@ -121,6 +121,50 @@ export const languageLabel = (code: string, uiLocale?: string): string => {
  * (or came from another device) must remain selectable rather than silently
  * appearing to be unset.
  */
+/**
+ * Turn whatever is in the picker's text box back into a BCP-47 tag.
+ *
+ * The field DISPLAYS names (`Japanese (ja)`) but the setting STORES tags, so
+ * every commit round-trips through here. Accepts, in order of preference:
+ *
+ *   - a display label, exactly as the picker renders it;
+ *   - a bare tag, so someone who knows `es-419` can still just type it;
+ *   - a language name without its tag (`Japanese`), which is what you get by
+ *     typing rather than picking;
+ *   - anything else, trimmed and taken at face value — the freeSolo escape
+ *     hatch for a tag this list doesn't carry.
+ *
+ * Empty in, empty out: that is how the native line is turned off.
+ */
+export const resolveLanguageInput = (text: string, options: readonly string[] = SUBTITLE_LANGUAGE_CODES): string => {
+    const value = (text ?? '').trim();
+
+    if (value.length === 0) {
+        return '';
+    }
+
+    const needle = value.toLowerCase();
+    const exactTag = options.find((o) => o.toLowerCase() === needle);
+
+    if (exactTag !== undefined) {
+        return exactTag;
+    }
+
+    const byLabel = options.find((o) => languageLabel(o).toLowerCase() === needle);
+
+    if (byLabel !== undefined) {
+        return byLabel;
+    }
+
+    const byName = options.find((o) => {
+        const label = languageLabel(o);
+        const name = label.includes(' (') ? label.slice(0, label.lastIndexOf(' (')) : label;
+        return name.toLowerCase() === needle;
+    });
+
+    return byName ?? value;
+};
+
 export const languageOptions = (current?: string): string[] => {
     const options = [...SUBTITLE_LANGUAGE_CODES];
     const tag = (current ?? '').trim();
