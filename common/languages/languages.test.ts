@@ -2,8 +2,8 @@ import { languageLabel, languageOptions, resolveLanguageInput, SUBTITLE_LANGUAGE
 
 describe('languageLabel', () => {
     it('names a language and keeps its tag visible', () => {
-        expect(languageLabel('ja')).toBe('Japanese (ja)');
-        expect(languageLabel('en')).toBe('English (en)');
+        expect(languageLabel('ja')).toBe('Japanese — ja');
+        expect(languageLabel('en')).toBe('English — en');
     });
 
     it('names regional variants distinctly', () => {
@@ -66,7 +66,7 @@ describe('resolveLanguageInput', () => {
     it('round-trips the label the picker renders', () => {
         // The field shows names but the setting stores tags; every commit goes
         // through here, so this is the path that must not lose the tag.
-        expect(resolveLanguageInput('Japanese (ja)')).toBe('ja');
+        expect(resolveLanguageInput('Japanese — ja')).toBe('ja');
         expect(resolveLanguageInput(languageLabel('es-419'))).toBe('es-419');
     });
 
@@ -96,7 +96,7 @@ describe('resolveLanguageInput', () => {
         SUBTITLE_LANGUAGE_CODES.forEach((code) => {
             const resolved = resolveLanguageInput(languageLabel(code));
             expect(resolved).toBe(code);
-            expect(resolved).not.toContain('(');
+            expect(resolved).not.toContain('—');
         });
     });
 });

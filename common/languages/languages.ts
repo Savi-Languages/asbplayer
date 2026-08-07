@@ -82,8 +82,15 @@ export const SUBTITLE_LANGUAGE_CODES: readonly string[] = [
     'vi',
 ];
 
+/** Separates the language name from its tag in a rendered label. */
+const LABEL_SEPARATOR = ' — ';
+
 /**
- * A human label for a BCP-47 tag — `ja` → `Japanese (ja)`.
+ * A human label for a BCP-47 tag — `ja` → `Japanese — ja`.
+ *
+ * The tag is separated by a dash rather than wrapped in parentheses because
+ * several names already contain their own: `Spanish (Latin America) (es-419)`
+ * reads like a nesting mistake, `Spanish (Latin America) — es-419` doesn't.
  *
  * The tag stays visible because it is what subtitle tracks are labelled with
  * and what the setting actually stores; someone comparing the picker against a
@@ -105,7 +112,7 @@ export const languageLabel = (code: string, uiLocale?: string): string => {
         // would render as `zz (QQ) (zz-QQ)` and read like a real language.
         const names = new Intl.DisplayNames([uiLocale || 'en'], { type: 'language', fallback: 'none' });
         const name = names.of(tag);
-        return name && name.toLowerCase() !== tag.toLowerCase() ? `${name} (${tag})` : tag;
+        return name && name.toLowerCase() !== tag.toLowerCase() ? `${name}${LABEL_SEPARATOR}${tag}` : tag;
     } catch (e) {
         // Intl.DisplayNames is ES2021; on a webview that lacks it the tag alone
         // is still a usable label.
@@ -114,17 +121,9 @@ export const languageLabel = (code: string, uiLocale?: string): string => {
 };
 
 /**
- * The picker's options: the curated list, plus `current` when it isn't already
- * in it.
- *
- * Including the current value matters — a stored tag that predates this list
- * (or came from another device) must remain selectable rather than silently
- * appearing to be unset.
- */
-/**
  * Turn whatever is in the picker's text box back into a BCP-47 tag.
  *
- * The field DISPLAYS names (`Japanese (ja)`) but the setting STORES tags, so
+ * The field DISPLAYS names (`Japanese — ja`) but the setting STORES tags, so
  * every commit round-trips through here. Accepts, in order of preference:
  *
  *   - a display label, exactly as the picker renders it;
@@ -158,13 +157,21 @@ export const resolveLanguageInput = (text: string, options: readonly string[] = 
 
     const byName = options.find((o) => {
         const label = languageLabel(o);
-        const name = label.includes(' (') ? label.slice(0, label.lastIndexOf(' (')) : label;
+        const name = label.includes(LABEL_SEPARATOR) ? label.slice(0, label.lastIndexOf(LABEL_SEPARATOR)) : label;
         return name.toLowerCase() === needle;
     });
 
     return byName ?? value;
 };
 
+/**
+ * The picker's options: the curated list, plus `current` when it isn't already
+ * in it.
+ *
+ * Including the current value matters — a stored tag that predates this list
+ * (or came from another device) must remain selectable rather than silently
+ * appearing to be unset.
+ */
 export const languageOptions = (current?: string): string[] => {
     const options = [...SUBTITLE_LANGUAGE_CODES];
     const tag = (current ?? '').trim();

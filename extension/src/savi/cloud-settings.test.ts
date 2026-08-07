@@ -63,7 +63,11 @@ describe('savi roaming cloud settings', () => {
         const loaded = await loadRoamingSettings('https://cloud.example');
 
         expect(loaded).toEqual({ targetLanguage: 'es', nativeLanguage: '', openSubtitlesApiKey: 'k-123' });
-        expect(store[ROAMING_CACHE_KEY]).toEqual({ targetLanguage: 'es', nativeLanguage: '', openSubtitlesApiKey: 'k-123' });
+        expect(store[ROAMING_CACHE_KEY]).toEqual({
+            targetLanguage: 'es',
+            nativeLanguage: '',
+            openSubtitlesApiKey: 'k-123',
+        });
         const urls = fetchMock.mock.calls.map((c) => c[0]);
         expect(urls).toContain('https://cloud.example/v2/settings');
         expect(urls).toContain('https://cloud.example/v2/api-keys?provider=opensubtitles');
@@ -127,7 +131,10 @@ describe('savi roaming cloud settings', () => {
 
     it('takes the cloud value for the native language when the cloud has one', async () => {
         store[ROAMING_CACHE_KEY] = { targetLanguage: 'ja', nativeLanguage: 'en', openSubtitlesApiKey: '' };
-        mockCloud(okJson({ settings: { nativeLanguage: { value: 'fr', version: 2, updatedAtMs: 2 } } }), okJson({ keys: [] }));
+        mockCloud(
+            okJson({ settings: { nativeLanguage: { value: 'fr', version: 2, updatedAtMs: 2 } } }),
+            okJson({ keys: [] })
+        );
 
         expect((await loadRoamingSettings('https://cloud.example')).nativeLanguage).toBe('fr');
     });
@@ -165,7 +172,11 @@ describe('savi roaming cloud settings', () => {
         const next = await putRoamingSetting('https://cloud.example', 'targetLanguage', 'es-419');
 
         expect(next.targetLanguage).toBe('es-419');
-        expect(store[ROAMING_CACHE_KEY]).toEqual({ targetLanguage: 'es-419', nativeLanguage: '', openSubtitlesApiKey: '' });
+        expect(store[ROAMING_CACHE_KEY]).toEqual({
+            targetLanguage: 'es-419',
+            nativeLanguage: '',
+            openSubtitlesApiKey: '',
+        });
         const [url, init] = fetchMock.mock.calls[0];
         expect(url).toBe('https://cloud.example/v2/settings/targetLanguage');
         expect(init.method).toBe('PUT');
