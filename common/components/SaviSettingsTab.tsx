@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import Autocomplete from '@mui/material/Autocomplete';
 import Button from '@mui/material/Button';
 import Stack from '@mui/material/Stack';
 import Switch from '@mui/material/Switch';
@@ -13,6 +14,7 @@ import { AsbplayerSettings } from '../settings';
 import SettingsSection from './SettingsSection';
 import SettingsTextField from './SettingsTextField';
 import SwitchLabelWithHoverEffect from './SwitchLabelWithHoverEffect';
+import { languageLabel, languageOptions } from '../languages/languages';
 
 // A text field whose value is committed (roamed to the account) on blur rather
 // than on every keystroke, so an API key isn't PUT to the cloud character by
@@ -40,6 +42,76 @@ const CommitOnBlurTextField: React.FC<{
                 }
             }}
             helperText={helperText}
+        />
+    );
+};
+
+// A language picker over the curated list, still accepting a typed tag.
+//
+// `freeSolo` is not decoration: the list is a convenience, not a whitelist, and
+// locking the field to it would drop support for any tag it omits — including
+// values already stored from before this picker existed. Commits on selection
+// and on blur, matching CommitOnBlurTextField, so the account isn't written
+// once per keystroke.
+const LanguageAutocomplete: React.FC<{
+    label: string;
+    value: string;
+    onCommit: (value: string) => void;
+    helperText?: React.ReactNode;
+}> = ({ label, value, onCommit, helperText }) => {
+    const [draft, setDraft] = useState(value);
+    useEffect(() => setDraft(value), [value]);
+
+    const commit = useCallback(
+        (next: string) => {
+            const trimmed = next.trim();
+            if (trimmed !== value) {
+                onCommit(trimmed);
+            }
+        },
+        [onCommit, value]
+    );
+
+    return (
+        <Autocomplete
+            freeSolo
+            autoHighlight
+            selectOnFocus
+            handleHomeEndKeys
+            options={languageOptions(value)}
+            value={value}
+            inputValue={draft}
+            onInputChange={(_, next) => setDraft(next)}
+            onChange={(_, next) => commit(typeof next === 'string' ? next : '')}
+            // Typed text is a tag; a picked option is already one. Either way the
+            // stored value is the tag, never the display label.
+            getOptionLabel={(option) => (typeof option === 'string' ? option : '')}
+            renderOption={({ key, ...restOfProps }, option) => (
+                <li key={key} {...restOfProps}>
+                    {languageLabel(option)}
+                </li>
+            )}
+            filterOptions={(options, { inputValue }) => {
+                const needle = inputValue.trim().toLowerCase();
+                if (needle.length === 0) {
+                    return options;
+                }
+                // Match the name as well as the tag — someone looking for
+                // Japanese should be able to type "jap", not just "ja".
+                return options.filter(
+                    (o) => o.toLowerCase().includes(needle) || languageLabel(o).toLowerCase().includes(needle)
+                );
+            }}
+            renderInput={(params) => (
+                <SettingsTextField
+                    {...params}
+                    color="primary"
+                    fullWidth
+                    label={label}
+                    helperText={helperText}
+                    onBlur={() => commit(draft)}
+                />
+            )}
         />
     );
 };
@@ -278,19 +350,19 @@ const SaviSettingsTab: React.FC<Props> = ({
                 }
             />
             {roamingSupported && (
-                <CommitOnBlurTextField
+                <LanguageAutocomplete
                     label={'Target language'}
                     value={saviTargetLanguage ?? ''}
-                    onCommit={(value) => onSaviTargetLanguageChange?.(value.trim())}
-                    helperText={`Language you're learning, as a BCP-47 code — e.g. es, es-419, ja. ${roamingHint}`}
+                    onCommit={(value) => onSaviTargetLanguageChange?.(value)}
+                    helperText={`The language you're learning. ${roamingHint}`}
                 />
             )}
             {roamingSupported && onSaviNativeLanguageChange !== undefined && (
-                <CommitOnBlurTextField
+                <LanguageAutocomplete
                     label={'Native language (second subtitle line)'}
                     value={saviNativeLanguage ?? ''}
-                    onCommit={(value) => onSaviNativeLanguageChange(value.trim())}
-                    helperText={`Shown under the target line when the video has that track — e.g. en. Leave blank for a single line. ${roamingHint}`}
+                    onCommit={(value) => onSaviNativeLanguageChange(value)}
+                    helperText={`Shown under the target line when the video has that track. Leave blank for a single line. ${roamingHint}`}
                 />
             )}
 
