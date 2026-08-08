@@ -24,6 +24,8 @@
 const SUPABASE_URL = 'https://rggkecrujhncogumixdf.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_ew-eAEZCJBd3MCZaPHCXxA_l45-GCcG';
 
+import { isUsable, NativeSession, requestNativeSession } from './native-session';
+
 const storageKey = 'saviAccount';
 // On-demand readers refresh when this close to expiry (absorbs clock skew and
 // the request's own flight time).
@@ -153,9 +155,35 @@ const accessTokenWithMargin = async (marginSeconds: number): Promise<string | un
     return await refreshInFlight;
 };
 
+// The desktop app's published token, cached in memory until it is nearly
+// expired. Cached because every daemon and cloud request asks for a bearer, and
+// each miss spawns a native-messaging host process.
+let nativeCache: NativeSession | undefined;
+
+const nativeAccessToken = async (): Promise<string | undefined> => {
+    if (isUsable(nativeCache, nowSeconds())) {
+        return nativeCache?.accessToken;
+    }
+
+    nativeCache = await requestNativeSession();
+    return isUsable(nativeCache, nowSeconds()) ? nativeCache?.accessToken : undefined;
+};
+
 /** The signed-in account's access token, refreshed if it is about to expire.
- *  `undefined` when signed out or the session could not be kept alive. */
-export const currentAccessToken = (): Promise<string | undefined> => accessTokenWithMargin(readMarginSeconds);
+ *  `undefined` when signed out or the session could not be kept alive.
+ *
+ *  Falls back to the token the DESKTOP APP publishes over native messaging, so
+ *  signing in there signs you in here. Its own session wins when present: an
+ *  explicit sign-in in this browser should not be quietly overridden by
+ *  whichever account the app happens to hold. */
+export const currentAccessToken = async (): Promise<string | undefined> =>
+    (await accessTokenWithMargin(readMarginSeconds)) ?? (await nativeAccessToken());
+
+/** Drop the cached desktop token — used by sign-out so the next request
+ *  re-asks rather than serving a token from before the change. */
+export const forgetNativeSession = (): void => {
+    nativeCache = undefined;
+};
 
 /** The bearer for a daemon request: the account's JWT when signed in, else the
  *  legacy LAN token from settings (the transition fallback — may be ''). Call

@@ -212,7 +212,9 @@ export default defineConfig({
         }
 
         // 'alarms': the savi account-session refresh heartbeat (savi/account.ts).
-        let permissions = ['tabs', 'storage', 'unlimitedStorage', 'alarms'];
+        // `nativeMessaging`: pick up the desktop app's account session, so
+        // signing in there signs in here too (see savi/native-session.ts).
+        let permissions = ['tabs', 'storage', 'unlimitedStorage', 'alarms', 'nativeMessaging'];
 
         if (browser === 'chrome') {
             permissions = [...permissions, 'tabCapture', 'activeTab', 'contextMenus', 'sidePanel', 'offscreen'];
