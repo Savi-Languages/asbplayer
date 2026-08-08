@@ -215,6 +215,7 @@ interface Props {
     // which own the session storage; without these the daemon-token field
     // renders instead.
     saviAccountEmail?: string;
+    saviAccountFromDesktopApp?: boolean;
     onSaviSignIn?: (email: string, password: string) => Promise<{ ok: boolean; errorMessage?: string }>;
     onSaviSignOut?: () => Promise<void>;
     // Account-roaming savi settings (extension hosts only — cloud-backed).
@@ -272,6 +273,7 @@ export default function SettingsForm({
     onOpenChromeExtensionShortcuts,
     onUnlockLocalFonts,
     saviAccountEmail,
+    saviAccountFromDesktopApp,
     onSaviSignIn,
     onSaviSignOut,
     saviTargetLanguage,
@@ -605,6 +607,7 @@ export default function SettingsForm({
                         settings={settings}
                         onSettingChanged={handleSettingChanged}
                         saviAccountEmail={saviAccountEmail}
+                        saviAccountFromDesktopApp={saviAccountFromDesktopApp}
                         onSaviSignIn={onSaviSignIn}
                         onSaviSignOut={onSaviSignOut}
                         saviTargetLanguage={saviTargetLanguage}

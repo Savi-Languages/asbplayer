@@ -45,6 +45,9 @@ interface Props {
     // the session storage. When present, the daemon-token field collapses into a
     // sign-in block and the account-roaming fields below become usable.
     saviAccountEmail?: string;
+    /** The email came from the desktop app over native messaging, not a sign-in
+     *  here. Shown as such, and sign-out is hidden: the app owns that session. */
+    saviAccountFromDesktopApp?: boolean;
     onSaviSignIn?: (email: string, password: string) => Promise<{ ok: boolean; errorMessage?: string }>;
     onSaviSignOut?: () => Promise<void>;
     // Account-roaming settings (extension hosts only — cloud-backed). The
@@ -59,6 +62,7 @@ const SaviSettingsTab: React.FC<Props> = ({
     settings,
     onSettingChanged,
     saviAccountEmail,
+    saviAccountFromDesktopApp,
     onSaviSignIn,
     onSaviSignOut,
     saviTargetLanguage,
@@ -110,11 +114,18 @@ const SaviSettingsTab: React.FC<Props> = ({
             {onSaviSignIn !== undefined && saviAccountEmail ? (
                 <Stack direction="row" spacing={1} alignItems="center">
                     <Typography variant="body2" sx={{ flexGrow: 1 }}>
-                        {`Signed in as ${saviAccountEmail}`}
+                        {saviAccountFromDesktopApp
+                            ? `Signed in as ${saviAccountEmail} — from the savi desktop app`
+                            : `Signed in as ${saviAccountEmail}`}
                     </Typography>
-                    <Button variant="outlined" size="small" onClick={() => void onSaviSignOut?.()}>
-                        {'Sign out'}
-                    </Button>
+                    {/* No sign-out for a desktop-app session: it isn't this
+                        extension's to end. Signing out in the app stops it
+                        publishing, and access here expires with the token. */}
+                    {!saviAccountFromDesktopApp && (
+                        <Button variant="outlined" size="small" onClick={() => void onSaviSignOut?.()}>
+                            {'Sign out'}
+                        </Button>
+                    )}
                 </Stack>
             ) : onSaviSignIn !== undefined ? (
                 // Signed out: the account sign-in, with the legacy LAN-token field

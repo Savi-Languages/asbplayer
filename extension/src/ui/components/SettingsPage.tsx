@@ -150,6 +150,7 @@ const SettingsPage = ({
                         testCard={extensionTestCard}
                         scrollToId={scrollToId}
                         saviAccountEmail={saviAccount.email}
+                        saviAccountFromDesktopApp={saviAccount.fromDesktopApp}
                         onSaviSignIn={saviAccount.signIn}
                         onSaviSignOut={saviAccount.signOut}
                         saviTargetLanguage={saviRoaming.targetLanguage}
