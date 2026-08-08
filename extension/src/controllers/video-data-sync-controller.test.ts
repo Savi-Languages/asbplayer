@@ -163,7 +163,11 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
 
             expect(await controller._trySaviAutoLoad()).toBe(false);
             expect(loadSubtitles).not.toHaveBeenCalled();
-            expect(applySaviLanguageGate).toHaveBeenCalledWith({ active: false, reason: 'mismatch' });
+            expect(applySaviLanguageGate).toHaveBeenCalledWith({
+                active: false,
+                reason: 'mismatch',
+                targetLanguage: 'es',
+            });
         });
 
         it('loads as usual when the spoken language matches', async () => {
@@ -175,14 +179,22 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
 
             expect(await controller._trySaviAutoLoad()).toBe(true);
             expect(loadSubtitles).toHaveBeenCalledTimes(1);
-            expect(applySaviLanguageGate).toHaveBeenCalledWith({ active: true, reason: 'match' });
+            expect(applySaviLanguageGate).toHaveBeenCalledWith({
+                active: true,
+                reason: 'match',
+                targetLanguage: 'es',
+            });
         });
 
         it('fails open when the page gives no spoken language', async () => {
             controller._syncedData = { basename: 'Show', subtitles: [track('2', 'es', 'Spanish')] };
 
             expect(await controller._trySaviAutoLoad()).toBe(true);
-            expect(applySaviLanguageGate).toHaveBeenCalledWith({ active: true, reason: 'unknown' });
+            expect(applySaviLanguageGate).toHaveBeenCalledWith({
+                active: true,
+                reason: 'unknown',
+                targetLanguage: 'es',
+            });
         });
 
         it('fails open when the gate itself throws', async () => {

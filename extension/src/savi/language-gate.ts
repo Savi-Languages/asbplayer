@@ -24,6 +24,13 @@ export type LanguageGateReason = 'match' | 'mismatch' | 'unknown' | 'muted';
 export interface LanguageGateVerdict {
     readonly active: boolean;
     readonly reason: LanguageGateReason;
+    /** The target language this verdict was reached ABOUT ('' when unset).
+     *
+     *  Carried so the binding can tell "same conclusion, same language" (a
+     *  no-op re-sync) from "same conclusion, different language" — which is what
+     *  a sign-in looks like: `'' → 'fr'` while the verdict stays `active: true`
+     *  because the gate fails open both before and after (SV-38). */
+    readonly targetLanguage: string;
 }
 
 export interface LanguageGateInput {
@@ -69,22 +76,22 @@ export function decideLanguageGate({
 }: LanguageGateInput): LanguageGateVerdict {
     // A hand mute beats every automatic conclusion: it is the user telling us
     // directly, and it is the only recourse where there is no signal at all.
+    const target = targetLanguage.trim();
     if (episodeId !== undefined && mutedEpisodes?.includes(episodeId)) {
-        return { active: false, reason: 'muted' };
+        return { active: false, reason: 'muted', targetLanguage: target };
     }
 
-    const target = targetLanguage.trim();
     if (target.length === 0 || spokenLanguage === undefined) {
-        return { active: true, reason: 'unknown' };
+        return { active: true, reason: 'unknown', targetLanguage: target };
     }
 
     const spoken = spokenLanguage.trim();
     if (spoken.length === 0) {
-        return { active: true, reason: 'unknown' };
+        return { active: true, reason: 'unknown', targetLanguage: target };
     }
 
     // Compare primary subtags: es-419 and es-ES are both Spanish for our purposes.
     return primarySubtag(spoken) === primarySubtag(target)
-        ? { active: true, reason: 'match' }
-        : { active: false, reason: 'mismatch' };
+        ? { active: true, reason: 'match', targetLanguage: target }
+        : { active: false, reason: 'mismatch', targetLanguage: target };
 }

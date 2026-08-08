@@ -120,8 +120,8 @@ const Popup = ({
     }, []);
     const { supportedLanguages } = useSupportedLanguages();
     const { localFontsAvailable, localFontsPermission, localFontFamilies } = useLocalFontFamilies();
-    const saviAccount = useSaviAccount();
-    const saviRoaming = useSaviRoamingSettings(settings.saviCloudUrl ?? '');
+    const saviAccount = useSaviAccount(settings.saviCloudUrl ?? '');
+    const saviRoaming = useSaviRoamingSettings(settings.saviCloudUrl ?? '', saviAccount.email ?? '');
     const theme = useTheme();
     const { handleAnnotationTutorialSeen, inAnnotationTutorial } = useAnnotationTutorial({ globalStateProvider });
     const [scrollToId, setScrollToId] = useState<string>();

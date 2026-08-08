@@ -44,16 +44,16 @@ describe('isGlossableLanguage', () => {
 
 describe('isContentWord', () => {
     it('treats non-stopwords of 2+ letters as content', () => {
-        expect(isContentWord('quiero')).toBe(true);
-        expect(isContentWord('gato')).toBe(true);
+        expect(isContentWord('quiero', 'es')).toBe(true);
+        expect(isContentWord('gato', 'es')).toBe(true);
     });
 
     it('treats Spanish function words and single letters as non-content', () => {
-        expect(isContentWord('de')).toBe(false);
-        expect(isContentWord('que')).toBe(false);
-        expect(isContentWord('el')).toBe(false);
-        expect(isContentWord('a')).toBe(false); // single letter
-        expect(isContentWord('y')).toBe(false);
+        expect(isContentWord('de', 'es')).toBe(false);
+        expect(isContentWord('que', 'es')).toBe(false);
+        expect(isContentWord('el', 'es')).toBe(false);
+        expect(isContentWord('a', 'es')).toBe(false); // single letter
+        expect(isContentWord('y', 'es')).toBe(false);
     });
 
     it('glosses common lexical adverbs, which are vocabulary not grammar', () => {
@@ -63,7 +63,7 @@ describe('isContentWord', () => {
         // encounter was ever written. These are A1 vocabulary, not structural
         // glue; they self-resolve once the gloss threshold sees them learned.
         for (const word of ['más', 'bien', 'muy', 'también', 'tampoco', 'algo', 'así', 'aunque', 'según']) {
-            expect(isContentWord(word)).toBe(true);
+            expect(isContentWord(word, 'es')).toBe(true);
         }
     });
 });
@@ -71,12 +71,12 @@ describe('isContentWord', () => {
 describe('segmentLine', () => {
     it('splits into word/gap segments that concatenate back to the line', () => {
         const line = 'Yo no quería hablar con ella, ¿sabes?';
-        const segments = segmentLine(line);
+        const segments = segmentLine(line, 'es');
         expect(segments.map((s) => s.text).join('')).toBe(line);
     });
 
     it('handles accents and ñ as word characters, punctuation as gaps', () => {
-        const segments = segmentLine('el niño comió');
+        const segments = segmentLine('el niño comió', 'es');
         const words = segments.filter((s) => s.word).map((s) => s.text);
         expect(words).toEqual(['el', 'niño', 'comió']);
         // Lemma is the lowercased surface (matching the es analyzer today).
@@ -85,7 +85,7 @@ describe('segmentLine', () => {
     });
 
     it('marks content words vs function words', () => {
-        const segments = segmentLine('Yo quiero comer con el gato');
+        const segments = segmentLine('Yo quiero comer con el gato', 'es');
         const content = segments.filter((s) => s.content).map((s) => s.lemma);
         expect(content).toEqual(['quiero', 'comer', 'gato']); // yo/con/el dropped
     });
@@ -93,7 +93,7 @@ describe('segmentLine', () => {
 
 describe('segmentLine — proper nouns', () => {
     it('does not gloss a capitalized word mid-sentence (a name)', () => {
-        const segments = segmentLine('Llegué a pensar que Elena bromeaba.');
+        const segments = segmentLine('Llegué a pensar que Elena bromeaba.', 'es');
         const elena = segments.find((s) => s.text === 'Elena');
         expect(elena?.properNoun).toBe(true);
         expect(elena?.content).toBe(false);
@@ -103,7 +103,7 @@ describe('segmentLine — proper nouns', () => {
     });
 
     it('keeps a sentence-initial capital as an ordinary word', () => {
-        const segments = segmentLine('Quiero comer.');
+        const segments = segmentLine('Quiero comer.', 'es');
         const quiero = segments.find((s) => s.text === 'Quiero');
         expect(quiero?.properNoun).toBe(false);
         expect(glossableLemmas(segments, new Set())).toContain('quiero');
@@ -111,7 +111,7 @@ describe('segmentLine — proper nouns', () => {
 
     it('treats a capital after a sentence boundary as a new sentence start', () => {
         // 'Vino' starts the second sentence → ordinary; 'Madrid' mid-sentence → name.
-        const segments = segmentLine('Comí. Vino desde Madrid.');
+        const segments = segmentLine('Comí. Vino desde Madrid.', 'es');
         expect(segments.find((s) => s.text === 'Vino')?.properNoun).toBe(false);
         expect(segments.find((s) => s.text === 'Madrid')?.properNoun).toBe(true);
     });
@@ -119,7 +119,7 @@ describe('segmentLine — proper nouns', () => {
 
 describe('glossableLemmas', () => {
     it('returns distinct content lemmas, skipping known ones', () => {
-        const segments = segmentLine('el gato y el perro y el gato');
+        const segments = segmentLine('el gato y el perro y el gato', 'es');
         expect(glossableLemmas(segments, new Set())).toEqual(['gato', 'perro']); // deduped, el/y dropped
         expect(glossableLemmas(segments, new Set(['gato']))).toEqual(['perro']); // gato is known
     });
@@ -142,7 +142,7 @@ describe('isReasonableGloss', () => {
 
 describe('buildGlossHtml', () => {
     it('wraps only glossed words in ruby and leaves the rest as text', () => {
-        const segments = segmentLine('quiero un gato');
+        const segments = segmentLine('quiero un gato', 'es');
         const html = buildGlossHtml(segments, (lemma) => (lemma === 'gato' ? 'cat' : undefined));
         expect(html).toContain('<ruby class="asb-gloss">gato<rt>cat</rt></ruby>');
         // 'quiero' had no gloss resolved → stays plain; 'un' is a stopword → plain.
@@ -155,12 +155,12 @@ describe('buildGlossHtml', () => {
     });
 
     it('returns empty string when nothing was glossed (caller keeps plain text)', () => {
-        const segments = segmentLine('quiero un gato');
+        const segments = segmentLine('quiero un gato', 'es');
         expect(buildGlossHtml(segments, () => undefined)).toBe('');
     });
 
     it('escapes HTML in the gloss and in gap text', () => {
-        const segments = segmentLine('gato & perro');
+        const segments = segmentLine('gato & perro', 'es');
         const html = buildGlossHtml(segments, (lemma) => (lemma === 'gato' ? '<b>cat</b>' : undefined));
         expect(html).toContain('&lt;b&gt;cat&lt;/b&gt;'); // gloss escaped, not injected as markup
         expect(html).not.toContain('<b>');
@@ -170,7 +170,7 @@ describe('buildGlossHtml', () => {
 
 describe('glossedLemmasFromHtml', () => {
     it('extracts exactly the words the settled HTML wraps in gloss ruby', () => {
-        const segments = segmentLine('Quiero un gato bonito, gato mío');
+        const segments = segmentLine('Quiero un gato bonito, gato mío', 'es');
         const html = buildGlossHtml(segments, (lemma) =>
             lemma === 'gato' ? 'cat' : lemma === 'bonito' ? 'pretty' : undefined
         );
@@ -185,7 +185,7 @@ describe('glossedLemmasFromHtml', () => {
 
 describe('glossedEntriesFromHtml (SV-20)', () => {
     it('extracts each glossed word WITH its displayed label', () => {
-        const segments = segmentLine('Quiero un gato bonito, gato mío');
+        const segments = segmentLine('Quiero un gato bonito, gato mío', 'es');
         const html = buildGlossHtml(segments, (lemma) =>
             lemma === 'gato' ? 'cat' : lemma === 'bonito' ? 'pretty' : undefined
         );
@@ -196,10 +196,8 @@ describe('glossedEntriesFromHtml (SV-20)', () => {
     });
 
     it('unescapes label text that was HTML-escaped at render time', () => {
-        const segments = segmentLine('Ley de oferta');
-        const html = buildGlossHtml(segments, (lemma) =>
-            lemma === 'ley' ? 'law & order' : undefined
-        );
+        const segments = segmentLine('Ley de oferta', 'es');
+        const html = buildGlossHtml(segments, (lemma) => (lemma === 'ley' ? 'law & order' : undefined));
         expect(html).toContain('law &amp; order'); // escaped in the markup…
         expect(glossedEntriesFromHtml(html)[0]).toEqual({ word: 'ley', gloss: 'law & order' }); // …raw out
     });
@@ -217,7 +215,7 @@ describe('glossable ⊆ reviewable', () => {
         // review — the founder's "voy" worry, with the examples that really
         // do fall through.
         for (const aux of ['seré', 'estuvieron', 'estaban', 'habría', 'siendo']) {
-            expect(isContentWord(aux)).toBe(false);
+            expect(isContentWord(aux, 'es')).toBe(false);
         }
     });
 
@@ -228,7 +226,7 @@ describe('glossable ⊆ reviewable', () => {
         // labelled, and freeing only this one would label a word that can
         // never enter review.
         for (const structural of ['el', 'la', 'de', 'que', 'y', 'se', 'lo', 'por', 'para']) {
-            expect(isContentWord(structural)).toBe(false);
+            expect(isContentWord(structural, 'es')).toBe(false);
         }
     });
 
@@ -237,7 +235,7 @@ describe('glossable ⊆ reviewable', () => {
         // keep its label. "fuimos" maps to both ir and ser — the ir reading
         // makes it reviewable, so it stays glossable too.
         for (const word of ['voy', 'fuimos', 'corriendo', 'llevar']) {
-            expect(isContentWord(word)).toBe(true);
+            expect(isContentWord(word, 'es')).toBe(true);
         }
     });
 });
@@ -246,7 +244,7 @@ describe('glossable ⊆ reviewable', () => {
 
 describe('glossCandidates', () => {
     it('sends distinct content surfaces, dropping punctuation and proper nouns', () => {
-        const segments = segmentLine('Yo no sabía nada, Elena. ¿Sabía algo?');
+        const segments = segmentLine('Yo no sabía nada, Elena. ¿Sabía algo?', 'es');
         // `sabía` twice → sent once; `Elena` mid-sentence → a proper noun;
         // `no` → a structural function word the server needn't be asked about.
         expect(glossCandidates(segments)).toEqual(['sabía', 'nada', 'algo']);
@@ -527,5 +525,95 @@ describe('SaviGlossController.start is re-entrant', () => {
         } finally {
             jest.useRealTimers();
         }
+    });
+});
+
+describe('isContentWord — the target language decides which stoplist applies', () => {
+    // Before 0.46.0 the Spanish sets were applied to EVERY space-delimited
+    // language. These are the words that silently lost their gloss forever:
+    // the client never asks the server about a word it has already filtered.
+    it('does not apply Spanish function words to French', () => {
+        // `sons` (plural of `son`, a sound) and `os` (bone) are ordinary French
+        // vocabulary that the Spanish lists filtered out. The three languages'
+        // function words overlap heavily, so these are the real casualties
+        // rather than a long list — measured against frequency-fr.txt.
+        for (const word of ['sons', 'os']) {
+            expect(isContentWord(word, 'fr')).toBe(true);
+        }
+        // …while real French function words are still filtered.
+        for (const word of ['le', 'les', 'des', 'que', 'est', 'vous', 'qu']) {
+            expect(isContentWord(word, 'fr')).toBe(false);
+        }
+    });
+
+    it('does not apply Spanish function words to German', () => {
+        // `los` ("was ist los?") and `tu` (imperative of `tun`) are real German
+        // words that the Spanish stoplist dropped — measured against
+        // frequency-de.txt, which ranks both inside the top 20k.
+        for (const word of ['los', 'tu']) {
+            expect(isContentWord(word, 'de')).toBe(true);
+        }
+        for (const word of ['der', 'die', 'das', 'nicht', 'sind', 'sie']) {
+            expect(isContentWord(word, 'de')).toBe(false);
+        }
+    });
+
+    it('sends everything for a language with no mirror', () => {
+        // A payload prefilter, not the decision — the server owns that. For an
+        // unmirrored language the safe failure is over-sending.
+        for (const word of ['de', 'que', 'der', 'le']) {
+            expect(isContentWord(word, 'it')).toBe(true);
+        }
+        // The length rule is language-independent and still applies.
+        expect(isContentWord('a', 'it')).toBe(false);
+    });
+
+    it('applies the Spanish auxiliary list only to Spanish', () => {
+        // `estuvieron`/`seré` are unreviewable in Spanish (their lemma is a
+        // function word) but are just unknown strings elsewhere.
+        expect(isContentWord('estuvieron', 'es')).toBe(false);
+        expect(isContentWord('estuvieron', 'fr')).toBe(true);
+    });
+
+    it('reads the primary subtag, so regional variants behave alike', () => {
+        expect(isContentWord('le', 'fr-CA')).toBe(false);
+        expect(isContentWord('das', 'DE-AT')).toBe(false);
+    });
+});
+
+describe('segmentLine — German capitalizes every noun', () => {
+    it('glosses mid-sentence German nouns instead of taking them for names', () => {
+        // The Romance heuristic ("a mid-sentence capital is a name") would
+        // refuse to gloss Haus, Buch and Kind — most of the content words a
+        // German learner needs.
+        const segments = segmentLine('Ich habe das Buch im Haus gelesen.', 'de');
+        const buch = segments.find((s) => s.text === 'Buch');
+        expect(buch?.properNoun).toBe(false);
+        expect(buch?.content).toBe(true);
+        const haus = segments.find((s) => s.text === 'Haus');
+        expect(haus?.content).toBe(true);
+        expect(glossCandidates(segments)).toEqual(['buch', 'haus', 'gelesen']);
+    });
+
+    it('still suppresses mid-sentence capitals for Romance languages', () => {
+        // The German exemption must not leak: French names stay unglossed.
+        const segments = segmentLine("J'ai vu Marie hier.", 'fr');
+        const marie = segments.find((s) => s.text === 'Marie');
+        expect(marie?.properNoun).toBe(true);
+        expect(marie?.content).toBe(false);
+    });
+
+    it('accepts German letters as word characters', () => {
+        const segments = segmentLine('Die Größe der Straße überrascht.', 'de');
+        const words = segments.filter((s) => s.word).map((s) => s.text);
+        expect(words).toEqual(['Die', 'Größe', 'der', 'Straße', 'überrascht']);
+        expect(segments.map((s) => s.text).join('')).toBe('Die Größe der Straße überrascht.');
+    });
+
+    it('splits French elision without emitting the clitic as a word', () => {
+        const segments = segmentLine("Qu'il parle de l'homme.", 'fr');
+        expect(segments.map((s) => s.text).join('')).toBe("Qu'il parle de l'homme.");
+        // qu / il / de / l are all structural or too short.
+        expect(glossCandidates(segments)).toEqual(['parle', 'homme']);
     });
 });

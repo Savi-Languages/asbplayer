@@ -355,7 +355,7 @@ export class SaviGlossHover {
         }
         const baseText = baseTextOf(line);
         // Geometric word lookup — immune to overlays that fool caret hit-testing.
-        const span = wordAtPoint(line, segmentLine(baseText), x, y);
+        const span = wordAtPoint(line, segmentLine(baseText, this._sources.gloss.targetLang), x, y);
         if (!span) {
             this._clearHover(); // between words / punctuation — the normal roaming state
             return;
@@ -371,7 +371,8 @@ export class SaviGlossHover {
         // always-on pass labels every content word, and the silent skip read as
         // "hover broke".) For a labeled word, anchor the hover label above the
         // whole <ruby> so it clears the existing <rt> instead of overlapping it.
-        const anchor = range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement;
+        const anchor =
+            range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement;
         const rubyAnchor = anchor?.closest('ruby.asb-gloss') ?? null;
 
         const key = `${baseText} ${span.start} ${span.end}`;

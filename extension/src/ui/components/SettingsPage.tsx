@@ -88,8 +88,8 @@ const SettingsPage = ({
     }, [updateLocalFontsPermission, updateLocalFonts]);
 
     const commands = useCommandKeyBinds();
-    const saviAccount = useSaviAccount();
-    const saviRoaming = useSaviRoamingSettings(settings?.saviCloudUrl ?? '');
+    const saviAccount = useSaviAccount(settings?.saviCloudUrl ?? '');
+    const saviRoaming = useSaviRoamingSettings(settings?.saviCloudUrl ?? '', saviAccount.email ?? '');
 
     const handleOpenExtensionShortcuts = useCallback(() => {
         browser.tabs.create({ active: true, url: 'chrome://extensions/shortcuts' });

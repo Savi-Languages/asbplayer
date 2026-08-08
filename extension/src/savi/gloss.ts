@@ -130,17 +130,108 @@ export function isGlossableLanguage(lang: string): boolean {
     return primary.length > 0 && !NON_SPACE_DELIMITED.has(primary);
 }
 
-/** A content word iff it is not a function word and at least two letters —
- *  mirrors the `es` analyzer's noise policy (used before the SV-13 known filter).
+// French structural function words — the mirror of savi-core's `fr` analyzer
+// STOPWORDS (crates/savi-core/src/analyzer.rs, `mod fr`). Same rule as the
+// Spanish mirror: this set must never be NARROWER than savi-core's, or we gloss
+// a word that can never enter review.
+//
+// `qu` is here because the tokenizer splits on the apostrophe, so `qu'il`
+// yields `qu` + `il`. The other elided clitics (j', l', d', n', s', t', c', m')
+// are single letters and fall to the length rule on their own.
+const FRENCH_STOPWORDS = new Set<string>([
+    'a', 'ai', 'aie', 'aient', 'aies', 'ait', 'as', 'au', 'aucun', 'aucune', 'aura',
+    'aurai', 'auraient', 'aurais', 'aurait', 'auras', 'aurez', 'auriez', 'aurions',
+    'aurons', 'auront', 'aux', 'avaient', 'avais', 'avait', 'avec', 'avez', 'aviez',
+    'avions', 'avoir', 'avons', 'ayant', 'ayez', 'ayons', 'ce', 'ceci', 'cela',
+    'celle', 'celles', 'celui', 'ces', 'cet', 'cette', 'ceux', 'chaque', 'chez',
+    'comme', 'contre', 'dans', 'de', 'des', 'donc', 'du', 'dont', 'elle', 'elles',
+    'en', 'entre', 'es', 'est', 'et', 'eu', 'eux', 'furent', 'fus', 'fusse', 'fussent',
+    'fut', 'ici', 'il', 'ils', 'je', 'la', 'le', 'les', 'leur', 'leurs', 'lui', 'ma',
+    'mais', 'me', 'mes', 'moi', 'mon', 'ne', 'ni', 'nos', 'notre', 'nous', 'on',
+    'ont', 'ou', 'par', 'pas', 'pour', 'qu', 'quand', 'que', 'quel', 'quelle',
+    'quelles', 'quels', 'qui', 'quoi', 'sa', 'sans', 'se', 'sera', 'serai',
+    'seraient', 'serais', 'serait', 'seras', 'serez', 'seriez', 'serions', 'serons',
+    'seront', 'ses', 'si', 'soient', 'sois', 'soit', 'sommes', 'son', 'sont', 'sous',
+    'soyez', 'soyons', 'sur', 'ta', 'te', 'tes', 'toi', 'ton', 'tu', 'un', 'une',
+    'vos', 'votre', 'vous', 'y', 'ça', 'étaient', 'étais', 'était', 'étant', 'été',
+    'étiez', 'étions', 'être', 'êtes', 'où',
+]);
+
+// German structural function words — the mirror of savi-core's `de` analyzer
+// STOPWORDS. Lowercase, because savi-core case-folds the German lemma table
+// (German capitalizes every noun) and this side lowercases before lookup too.
+const GERMAN_STOPWORDS = new Set<string>([
+    'aber', 'alle', 'allem', 'allen', 'aller', 'alles', 'als', 'am', 'an', 'ander',
+    'andere', 'anderem', 'anderen', 'anderer', 'anderes', 'auf', 'aus', 'bei', 'bin',
+    'bis', 'bist', 'da', 'damit', 'dann', 'das', 'dass', 'dein', 'deine', 'deinem',
+    'deinen', 'deiner', 'dem', 'den', 'denn', 'der', 'deren', 'des', 'dessen',
+    'dich', 'die', 'dies', 'diese', 'diesem', 'diesen', 'dieser', 'dieses', 'dir',
+    'doch', 'dort', 'du', 'durch', 'ein', 'eine', 'einem', 'einen', 'einer', 'eines',
+    'er', 'es', 'euch', 'euer', 'eure', 'für', 'gegen', 'gewesen', 'hab', 'habe',
+    'haben', 'hat', 'hatte', 'hatten', 'hattest', 'hattet', 'hier', 'hin', 'ich',
+    'ihm', 'ihn', 'ihnen', 'ihr', 'ihre', 'ihrem', 'ihren', 'ihrer', 'ihres', 'im',
+    'in', 'ins', 'ist', 'jede', 'jedem', 'jeden', 'jeder', 'jedes', 'jene', 'jenem',
+    'jenen', 'jener', 'jenes', 'kann', 'kein', 'keine', 'keinem', 'keinen', 'keiner',
+    'keines', 'man', 'mein', 'meine', 'meinem', 'meinen', 'meiner', 'meines', 'mich',
+    'mir', 'mit', 'muss', 'nach', 'nicht', 'nichts', 'noch', 'nun', 'nur', 'ob',
+    'oder', 'ohne', 'sein', 'seine', 'seinem', 'seinen', 'seiner', 'seines', 'seid',
+    'sich', 'sie', 'sind', 'so', 'solche', 'solchem', 'solchen', 'solcher', 'solches',
+    'soll', 'sollen', 'sondern', 'um', 'und', 'uns', 'unser', 'unsere', 'unserem',
+    'unseren', 'unserer', 'unseres', 'unter', 'vom', 'von', 'vor', 'war', 'waren',
+    'warst', 'wart', 'was', 'weg', 'weil', 'welche', 'welchem', 'welchen', 'welcher',
+    'welches', 'wenn', 'wer', 'werde', 'werden', 'wie', 'wir', 'wird', 'wirst', 'wo',
+    'wurde', 'wurden', 'während', 'über',
+]);
+
+const EMPTY_STOPWORDS: ReadonlySet<string> = new Set<string>();
+
+/** The structural-word stoplist for a target language, keyed by BCP-47 primary
+ *  subtag. An unmirrored language gets an EMPTY set on purpose: this is a
+ *  payload prefilter and the server owns the real decision, so the safe failure
+ *  is sending too much, never too little (see [`glossCandidates`]). */
+function stopwordsFor(lang: string): ReadonlySet<string> {
+    switch ((lang ?? '').split('-')[0].toLowerCase()) {
+        case 'es':
+            return SPANISH_STOPWORDS;
+        case 'fr':
+            return FRENCH_STOPWORDS;
+        case 'de':
+            return GERMAN_STOPWORDS;
+        default:
+            return EMPTY_STOPWORDS;
+    }
+}
+
+/** A content word iff it is not a function word IN THE TARGET LANGUAGE and at
+ *  least two letters — mirrors the analyzer's noise policy, as a prefilter.
  *
- *  Both lists matter: the surface stoplist catches `de`/`que`, and the
- *  auxiliary list catches conjugations like `seré` whose LEMMA is a function
- *  word. Without the second, savi-core would refuse to make them encounters
- *  while this kept labelling them — glossed forever, never reviewable. */
-export function isContentWord(lemma: string): boolean {
-    return (
-        lemma.length >= 2 && !SPANISH_STOPWORDS.has(lemma) && !SPANISH_AUXILIARY_FORMS.has(lemma)
-    );
+ *  `lang` is load-bearing: before 0.46.0 the Spanish sets were applied to every
+ *  space-delimited language. Measured against the vendored French and German
+ *  frequency lists, that wrongly dropped 25 French and 38 German surfaces —
+ *  mostly Spanish words that appear in those corpora anyway, but including real
+ *  vocabulary: German `los` ("was ist los?") and `tu` (imperative of `tun`),
+ *  French `sons` (plural of `son`, a sound). Each would have gone unglossed
+ *  forever, because the client never asks the server about a word it has
+ *  already filtered out.
+ *
+ *  The overlap between the three languages' function words is large, so the
+ *  damage was narrower than it looks — the severe half of this bug was the
+ *  capitalization heuristic in [`segmentLine`], not this list.
+ *
+ *  Spanish additionally carries [`SPANISH_AUXILIARY_FORMS`], which catches
+ *  conjugations like `seré` whose LEMMA is a function word. French and German
+ *  get no equivalent and need none: since SV-40 the server returns
+ *  `skip: 'function-word'` for exactly those, so the list is a legacy
+ *  optimization rather than the thing keeping glossing correct. */
+export function isContentWord(lemma: string, lang: string): boolean {
+    if (lemma.length < 2) {
+        return false;
+    }
+    if (stopwordsFor(lang).has(lemma)) {
+        return false;
+    }
+    const primary = (lang ?? '').split('-')[0].toLowerCase();
+    return primary !== 'es' || !SPANISH_AUXILIARY_FORMS.has(lemma);
 }
 
 // After one of these, the next capitalized word starts a new sentence (so it is
@@ -152,15 +243,30 @@ export function startsUppercase(surface: string): boolean {
     return /^\p{Lu}/u.test(surface);
 }
 
+// Languages that capitalize EVERY noun, not just proper ones — so "a
+// mid-sentence capital is a name" does not hold and the heuristic below must be
+// switched off. German is the only one savi supports; Luxembourgish (lb) shares
+// the rule if it is ever added.
+const CAPITALIZES_ALL_NOUNS = new Set(['de', 'lb']);
+
 /** Split a line into word/gap segments (offset-preserving; concatenation
  *  reproduces the line). Words are runs of Unicode letters — covers á é í ó ú ü ñ
- *  and any Latin-script language — matching the `es` analyzer's tokenization.
- *  A capitalized word that is NOT at a sentence start is flagged a proper noun
- *  (Spanish/Romance capitalize proper nouns, not common nouns) so names like
- *  "Elena" or "Madrid" aren't glossed; sentence-initial capitals stay ordinary. */
-export function segmentLine(text: string): GlossSegment[] {
+ *  ä ö ü ß and any Latin-script language — matching the analyzer's tokenization.
+ *
+ *  A capitalized word that is NOT at a sentence start is flagged a proper noun,
+ *  so names like "Elena" or "Madrid" aren't glossed while sentence-initial
+ *  capitals stay ordinary. That heuristic assumes only proper nouns are
+ *  capitalized mid-sentence, which is true for Romance languages and **false for
+ *  German**, where every noun is: applying it there would refuse to gloss
+ *  `Haus`, `Buch`, `Kind` — most of the content words a learner needs — so
+ *  `lang` disables it for [`CAPITALIZES_ALL_NOUNS`]. The cost is that German
+ *  names reach the server too, which is the right direction: the server decides,
+ *  and over-sending costs payload while under-sending un-glosses a word forever. */
+export function segmentLine(text: string, lang: string = ''): GlossSegment[] {
     const segments: GlossSegment[] = [];
     const re = /\p{L}+/gu;
+    const primary = (lang ?? '').split('-')[0].toLowerCase();
+    const namesAreCapitalized = !CAPITALIZES_ALL_NOUNS.has(primary);
     let last = 0;
     let atSentenceStart = true; // the first word of the line is sentence-initial
     for (const match of text.matchAll(re)) {
@@ -174,8 +280,8 @@ export function segmentLine(text: string): GlossSegment[] {
         }
         const surface = match[0];
         const lemma = surface.toLowerCase();
-        const properNoun = !atSentenceStart && startsUppercase(surface);
-        const content = isContentWord(lemma) && !properNoun;
+        const properNoun = namesAreCapitalized && !atSentenceStart && startsUppercase(surface);
+        const content = isContentWord(lemma, lang) && !properNoun;
         segments.push({ text: surface, word: true, lemma, content, properNoun });
         atSentenceStart = false;
         last = index + surface.length;
@@ -686,7 +792,7 @@ export class SaviGlossController implements GlossProvider {
     private async _computeLine(text: string, priority: boolean): Promise<void> {
         this._inFlight.add(text);
         try {
-            const segments = segmentLine(text);
+            const segments = segmentLine(text, this._targetLang);
             const candidates = glossCandidates(segments);
             if (candidates.length === 0) {
                 this._why(
