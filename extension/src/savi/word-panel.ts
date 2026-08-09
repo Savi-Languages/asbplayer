@@ -6,8 +6,34 @@
 // hover popup. Inline-styled + appended to document.body, like the toast/popup.
 
 import { SaviDictEntry, SaviKanjiFull, SaviKanjiInfo, SaviToken } from './daemon-client';
+import { SaviAiUnavailable } from './messages';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/** What to tell the user when an AI section is empty. Each case has a different
+ *  fix, and only one of them is about a provider — the old copy claimed "provider
+ *  busy" for all of them, which pointed debugging at rate limits when the real
+ *  cause was usually that nothing was signed in. */
+function unavailableMessage(why?: SaviAiUnavailable): { note: string; hint?: string } {
+    switch (why) {
+        case 'signedOut':
+            return {
+                note: 'Sign in to savi to see AI explanations.',
+                hint: 'Open the savi desktop app, or sign in from savi settings.',
+            };
+        case 'disabled':
+            return { note: 'AI explanations are turned off in savi settings.' };
+        case 'noDaemon':
+            return {
+                note: "The savi desktop app isn't reachable.",
+                hint: 'Start it to get AI explanations; the dictionary above works without it.',
+            };
+        case 'provider':
+            return { note: "The AI provider didn't respond — the dictionary above still applies." };
+        default:
+            return { note: 'No AI explanation for this word right now.' };
+    }
+}
 
 /** A tiny SMIL-animated spinner — no CSS/keyframes dependency, animates anywhere. */
 function spinner(): SVGSVGElement {
@@ -366,8 +392,9 @@ export class SaviWordPanel {
     }
 
     /** Fill the detailed teaching note (the professor-style in-context explanation).
-     *  null ⇒ no provider / all fail — show a graceful note; the dictionary stands. */
-    setExplanation(text: string | null) {
+     *  null ⇒ nothing to show; `why` says which of the several very different causes
+     *  it was, so the note can be acted on. The dictionary above always stands. */
+    setExplanation(text: string | null, why?: SaviAiUnavailable) {
         if (!this._explainBody) {
             return;
         }
@@ -380,9 +407,18 @@ export class SaviWordPanel {
                 p.textContent = para.trim();
                 this._explainBody.appendChild(p);
             }
-        } else {
-            Object.assign(this._explainBody.style, { color: '#93a0ad', fontStyle: 'italic', fontSize: '13px' });
-            this._explainBody.textContent = 'Detailed explanation unavailable right now (provider busy).';
+            return;
+        }
+        Object.assign(this._explainBody.style, { color: '#93a0ad', fontStyle: 'italic', fontSize: '13px' });
+        const { note, hint } = unavailableMessage(why);
+        const line = document.createElement('div');
+        line.textContent = note;
+        this._explainBody.appendChild(line);
+        if (hint) {
+            const sub = document.createElement('div');
+            Object.assign(sub.style, { marginTop: '3px', fontSize: '12px', color: '#7d8894' });
+            sub.textContent = hint;
+            this._explainBody.appendChild(sub);
         }
     }
 

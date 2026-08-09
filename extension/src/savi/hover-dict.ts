@@ -28,6 +28,7 @@ import {
     SaviKanjiResponse,
     SaviTokenizeMessage,
     SaviTokenizeResponse,
+    SaviAiUnavailable,
 } from './messages';
 import { serializeToSrt, SerializableSubtitle } from './subtitle-serializer';
 import { deriveEpisodeId } from './episode';
@@ -273,7 +274,6 @@ function renderEntry(
     }
     root.appendChild(head);
 
-
     for (const entry of entries.slice(0, 2)) {
         const ol = document.createElement('ol');
         Object.assign(ol.style, {
@@ -398,8 +398,7 @@ function positionPopup(popup: HTMLDivElement, arrow: HTMLDivElement, word: DOMRe
 /** The headline label of a dictionary result — the first gloss of the first
  *  sense (what the popup shows most prominently). '' when there's none (a
  *  kanji-only result still teaches, but there is no label to persist). */
-const firstDictGloss = (entries: SaviDictEntry[]): string =>
-    entries[0]?.senses?.[0]?.glosses?.[0] ?? '';
+const firstDictGloss = (entries: SaviDictEntry[]): string => entries[0]?.senses?.[0]?.glosses?.[0] ?? '';
 
 export class SaviHoverDictionary {
     private readonly _tokenizeCache = new Map<string, SaviToken[]>();
@@ -638,13 +637,22 @@ export class SaviHoverDictionary {
         return tokens;
     }
 
-    /** Focused professor-style explanation of a word in its sentence (cached). null
-     *  when the daemon falls back (feature off / no provider / all fail). */
-    private async _explainWord(text: string, term: string, reading?: string): Promise<string | null> {
-        const cacheKey = `${term} ${text}`;
+    /** Focused professor-style explanation of a word in its sentence (cached).
+     *  `explanation` is null when there is nothing to show; `unavailable` says why,
+     *  so the panel can name the actual fix instead of blaming a provider.
+     *
+     *  ONLY successes are cached. Caching a failure would outlive its cause: the
+     *  common one is "signed out", the panel then says to sign in, and the retap
+     *  that should prove it worked would be served the cached null instead. */
+    private async _explainWord(
+        text: string,
+        term: string,
+        reading?: string
+    ): Promise<{ explanation: string | null; unavailable?: SaviAiUnavailable }> {
+        const cacheKey = `${term}\u0000${text}`;
         const cached = this._explainCache.get(cacheKey);
         if (cached !== undefined) {
-            return cached;
+            return { explanation: cached };
         }
         const { prevLines, nextLines } = this._neighborsOf(text);
         const res = await sendToBackground<SaviExplainWordResponse>({
@@ -658,12 +666,15 @@ export class SaviHoverDictionary {
             episodeId: deriveEpisodeId(location.href, document.title),
         });
         const explanation = res.explanation ?? null;
+        if (explanation === null) {
+            return { explanation: null, unavailable: res.unavailable };
+        }
         if (this._explainCache.size >= TOKENIZE_CACHE_MAX) {
             const oldest = this._explainCache.keys().next().value;
             if (oldest !== undefined) this._explainCache.delete(oldest);
         }
         this._explainCache.set(cacheKey, explanation);
-        return explanation;
+        return { explanation };
     }
 
     /** Full kanji breakdown for a word's kanji (cached). Offline RTK/KANJIDIC data
@@ -782,7 +793,7 @@ export class SaviHoverDictionary {
         // In parallel, fetch the detailed "explain like a sensei" note for the
         // tapped word and fill the panel's teaching section when it lands.
         this._explainWord(text, term, span.token.reading)
-            .then((explanation) => panel.setExplanation(explanation))
+            .then(({ explanation, unavailable }) => panel.setExplanation(explanation, unavailable))
             .catch(() => panel.setExplanation(null));
         // Full RTK/KANJIDIC kanji breakdown (readings, components, mnemonic stories,
         // example compounds) — upgrades the panel's compact kanji section.
@@ -936,9 +947,7 @@ export class SaviHoverDictionary {
     /** Hide the popup / highlight / bridge for a clean screenshot; returns a
      *  restore fn. Uses `visibility` (no reflow) so positions are preserved. */
     private _hideForCapture(): () => void {
-        const els = [this._popup, this._highlight, this._bridge].filter(
-            (e): e is HTMLDivElement => e !== null
-        );
+        const els = [this._popup, this._highlight, this._bridge].filter((e): e is HTMLDivElement => e !== null);
         const prev = els.map((e) => e.style.visibility);
         els.forEach((e) => {
             e.style.visibility = 'hidden';
@@ -966,10 +975,13 @@ export class SaviHoverDictionary {
             clearTimeout(this._toastTimer);
         }
         // Success auto-dismisses quickly; warn/error linger so they get noticed.
-        this._toastTimer = window.setTimeout(() => {
-            el.style.opacity = '0';
-            el.style.transform = 'translateX(-50%) translateY(-8px)';
-        }, kind === 'success' ? 2600 : 4200);
+        this._toastTimer = window.setTimeout(
+            () => {
+                el.style.opacity = '0';
+                el.style.transform = 'translateX(-50%) translateY(-8px)';
+            },
+            kind === 'success' ? 2600 : 4200
+        );
     }
 
     private _ensureToast(): HTMLDivElement {
