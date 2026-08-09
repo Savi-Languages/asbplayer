@@ -236,10 +236,6 @@ export class SaviCaptureController {
         this._host.settings
             .get(['saviCaptureEnabled', 'saviHideNativeSubtitles', 'saviDaemonUrl'])
             .then(({ saviCaptureEnabled, saviHideNativeSubtitles }) => {
-                // Speed selection now lives in asbplayer's own top control bar
-                // (MobileVideoOverlay), so the separate floating control stays
-                // hidden — kept around only as a fallback.
-
                 // Hiding the site's own subtitles is independent of capture:
                 // run it first and regardless of whether auto-capture is on.
                 if (saviHideNativeSubtitles) {
@@ -258,8 +254,9 @@ export class SaviCaptureController {
                     this._recordButton.show();
                     // The speed selector rides with the Record control: both are
                     // capture affordances, and SAVI.md documents them together.
-                    // (It was constructed and hidden but never shown, so the
-                    // documented 0.5x-1.5x picker could not appear at all.)
+                    // This is the ONLY speed picker — MobileVideoOverlay used to
+                    // render its own identical row, which showed up as a second
+                    // panel over the video whenever capture was enabled.
                     this._speedControl.show();
                     const { episodeId } = this._pageMetadata();
                     // No stable id yet (Netflix mid-navigation) — the next
