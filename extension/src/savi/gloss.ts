@@ -205,7 +205,7 @@ function stopwordsFor(lang: string): ReadonlySet<string> {
 /** A content word iff it is not a function word IN THE TARGET LANGUAGE and at
  *  least two letters — mirrors the analyzer's noise policy, as a prefilter.
  *
- *  `lang` is load-bearing: before 0.46.0 the Spanish sets were applied to every
+ *  `lang` is load-bearing: before 0.47.0 the Spanish sets were applied to every
  *  space-delimited language. Measured against the vendored French and German
  *  frequency lists, that wrongly dropped 25 French and 38 German surfaces —
  *  mostly Spanish words that appear in those corpora anyway, but including real

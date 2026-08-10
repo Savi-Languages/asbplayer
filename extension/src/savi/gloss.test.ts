@@ -529,7 +529,7 @@ describe('SaviGlossController.start is re-entrant', () => {
 });
 
 describe('isContentWord — the target language decides which stoplist applies', () => {
-    // Before 0.46.0 the Spanish sets were applied to EVERY space-delimited
+    // Before 0.47.0 the Spanish sets were applied to EVERY space-delimited
     // language. These are the words that silently lost their gloss forever:
     // the client never asks the server about a word it has already filtered.
     it('does not apply Spanish function words to French', () => {
