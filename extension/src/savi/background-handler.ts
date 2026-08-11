@@ -71,6 +71,7 @@ import {
 } from './capture-session';
 import {
     browserHintFromUserAgent,
+    captureState,
     finishCapture,
     lookupDict,
     mineLine,
@@ -98,6 +99,7 @@ import {
 import { captureVisibleTab } from '@/services/capture-visible-tab';
 import { OpenSubtitlesClient } from '@/services/subtitle-sources';
 import { getCachedRoamingSettings, loadRoamingSettings } from './cloud-settings';
+import { isStaleCaptureSession } from './capture-staleness';
 
 export default class SaviCommandHandler implements CommandHandler {
     private readonly _settings: SettingsProvider;
@@ -219,9 +221,7 @@ export default class SaviCommandHandler implements CommandHandler {
             case 'savi-word-proficiency':
                 this._wordProficiency(command.message as SaviWordProficiencyMessage)
                     .then(sendResponse)
-                    .catch(() =>
-                        sendResponse({ threshold: DEFAULT_GLOSS_THRESHOLD } as SaviWordProficiencyResponse)
-                    );
+                    .catch(() => sendResponse({ threshold: DEFAULT_GLOSS_THRESHOLD } as SaviWordProficiencyResponse));
                 return true;
             case 'savi-word-buckets':
                 this._wordBuckets(command.message as SaviWordBucketsMessage)
@@ -593,17 +593,15 @@ export default class SaviCommandHandler implements CommandHandler {
         const existing = await getCaptureSession();
 
         if (existing !== undefined) {
-            // One session at a time (the daemon has one tap). A session whose
-            // tab is gone is stale bookkeeping — sweep it and continue.
-            try {
-                await browser.tabs.get(existing.tabId);
+            if (await isStaleCaptureSession(existing, message.episodeId, tabId, config)) {
+                await clearCaptureSession();
+            } else {
+                // One session at a time (the daemon has one tap).
                 return {
                     started: false,
                     errorCode: 'already-capturing',
                     errorMessage: 'a savi capture is already running',
                 };
-            } catch (e) {
-                await clearCaptureSession();
             }
         }
 
@@ -764,6 +762,23 @@ export default class SaviCommandHandler implements CommandHandler {
 
         if (session === undefined) {
             return { active: false };
+        }
+
+        // Reconcile with the daemon rather than reporting our record as fact.
+        // It can end a capture on its own (idle sweep), and a UI that keeps
+        // claiming "recording" afterwards is the visible half of the same bug
+        // that made the record button and the start guard contradict each other.
+        // Silence from the daemon leaves the record alone — see
+        // isStaleCaptureSession for why that direction is the safe one.
+        const config = await this._daemonConfig();
+
+        if (config) {
+            const active = await captureState(config);
+
+            if (active !== undefined && !active.includes(session.episodeId)) {
+                await clearCaptureSession();
+                return { active: false };
+            }
         }
 
         return { active: true, episodeId: session.episodeId, title: session.title, tabId: session.tabId };

@@ -161,6 +161,26 @@ export interface CaptureStartResult {
     readonly audio?: { state: string; reason?: string; sourceApp?: string };
 }
 
+/** The captures the daemon actually has open, or `undefined` when it could not
+ *  tell us — an older daemon without the route, or one we can't reach.
+ *
+ *  `undefined` is deliberately NOT the empty list. The caller uses this to
+ *  decide whether its own session record is stale, and "the daemon says nothing
+ *  is running" must never be inferred from "the daemon didn't answer": that
+ *  would discard a live capture's bookkeeping every time the daemon hiccuped. */
+export const captureState = async (config: SaviDaemonConfig): Promise<string[] | undefined> => {
+    try {
+        const body = await request(config, '/v2/capture/state', { method: 'GET' });
+        const active = body?.active;
+        if (!Array.isArray(active)) {
+            return undefined;
+        }
+        return active.map((s: any) => s?.episodeId).filter((id: unknown): id is string => typeof id === 'string');
+    } catch (e) {
+        return undefined;
+    }
+};
+
 export const startCapture = async (
     config: SaviDaemonConfig,
     {
