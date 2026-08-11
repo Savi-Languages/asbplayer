@@ -541,6 +541,11 @@ export default function OnlineSubtitleSourceDialog({
                                                 primary={result.fileName}
                                                 secondary={[
                                                     result.language?.toUpperCase(),
+                                                    // The release name is often
+                                                    // the only clue that an
+                                                    // entry is not the language
+                                                    // its tag claims (SV-44).
+                                                    result.release,
                                                     result.downloadCount !== undefined
                                                         ? t('onlineSubtitleSources.downloadCount', {
                                                               count: result.downloadCount,

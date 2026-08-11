@@ -330,6 +330,7 @@ export default class SaviCommandHandler implements CommandHandler {
                 fileName: file.fileName,
                 language: file.language,
                 downloadCount: file.downloadCount,
+                release: file.release,
             })),
         };
     }

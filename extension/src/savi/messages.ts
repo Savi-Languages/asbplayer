@@ -341,6 +341,10 @@ export interface SaviOpenSubtitlesSearchResult {
     readonly fileName: string;
     readonly language?: string;
     readonly downloadCount?: number;
+    /** The release the subtitle was timed against. Surfaced because
+     *  OpenSubtitles' language tag is user-supplied and sometimes wrong — a
+     *  French-tagged entry really did turn out to be Czech (SV-44). */
+    readonly release?: string;
 }
 
 export interface SaviOpenSubtitlesSearchResponse {

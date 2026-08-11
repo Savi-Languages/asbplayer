@@ -243,6 +243,11 @@ export interface OpenSubtitlesFile {
     fileName: string;
     language?: string;
     downloadCount?: number;
+    /** The release the subtitle was timed against ("Le.Petit.Nicolas.S01E01.WEB").
+     *  Shown in the picker: OpenSubtitles' catalogue language is user-supplied
+     *  and sometimes wrong, so the release name is often the only clue that an
+     *  entry is not what its language tag claims (SV-44). */
+    release?: string;
 }
 
 export interface OpenSubtitlesDownload {
@@ -333,6 +338,7 @@ export class OpenSubtitlesClient {
                         fileName: typeof file.file_name === 'string' ? file.file_name : `${file.file_id}.srt`,
                         language: attributes.language,
                         downloadCount: attributes.download_count,
+                        release: typeof attributes.release === 'string' ? attributes.release : undefined,
                     });
                 }
             }
