@@ -15,6 +15,7 @@
 // there), so the two never collide.
 
 import type { SettingsProvider } from '@project/common/settings';
+import { needsTopLayer, overlayParent, setTopLayer } from '@/services/top-layer';
 import { GlossSegment, SaviGlossController, segmentLine } from './gloss';
 import { caretRangeFromPoint, lineElement } from './hover-dict';
 
@@ -196,6 +197,8 @@ export class SaviGlossHover {
     private _deferredPaused = false; // WE held the line at its end; WE resume on mouse-out
     private _hoveredKey = ''; // line + span, so a word is translated/positioned once
     private _generation = 0; // cancels stale async translations
+    /** Whether the label is currently lifted into the top layer (SV-44). */
+    private _labelInTopLayer = false;
     private _lastLog = ''; // dedup for the hover diagnostics (mousemove fires constantly)
     private _lastLogAtMs = 0;
     // Trimmed cue texts, for telling real subtitle lines from look-alike overlays
@@ -435,11 +438,21 @@ export class SaviGlossHover {
         // the label parented inside the current fullscreen element, and back on
         // <body> when windowed (also re-attaches after an SPA wipe). Coordinates
         // stay viewport-relative (position: fixed) either way.
+        //
+        // SV-44: parenting into the fullscreen element is not always possible.
+        // A bare `file://` video is fullscreened as the <video> ITSELF, and a
+        // video is a replaced element — `appendChild` succeeds and the child is
+        // never rendered. That is why hover gloss vanished in fullscreen on a
+        // local file while working everywhere else: this code "handled"
+        // fullscreen by appending into something that cannot paint children.
+        // `overlayParent` declines those, and the label goes to the top layer
+        // instead.
         const fullscreen = document.fullscreenElement;
-        const parent = fullscreen instanceof HTMLElement ? fullscreen : document.body;
+        const parent = overlayParent(fullscreen);
         if (this._label.parentElement !== parent || !this._label.isConnected) {
             parent.appendChild(this._label);
         }
+        this._labelInTopLayer = setTopLayer(this._label, needsTopLayer(fullscreen, this._label), this._labelInTopLayer);
         return this._label;
     }
 }

@@ -1,31 +1,10 @@
 import { OffscreenDomCache } from '@project/common';
 
-/**
- * Whether the overlay has to be lifted into the browser's TOP LAYER to be seen
- * (SV-44).
- *
- * The normal fullscreen path appends the overlay to an ancestor of the video,
- * which works on streaming sites because they fullscreen a CONTAINER: the
- * overlay ends up inside the fullscreen element's subtree and paints with it.
- *
- * A bare `file://` video has no such container. Chrome's built-in viewer
- * fullscreens the `<video>` ELEMENT itself, and nothing outside a fullscreen
- * element's subtree is rendered — so the overlay silently vanished the moment a
- * local video went fullscreen. A `<video>` cannot host children, so there is
- * nowhere inside to put it either.
- *
- * The top layer is the way out: it sits above fullscreen content, and a popover
- * opened after the fullscreen element stacks on top of it. Verified visually
- * against a fullscreened video — a plain sibling is invisible there and a
- * popover is not.
- *
- * Deliberately narrow: promotion happens ONLY when the overlay is not already
- * inside the fullscreen element, so every site that already worked keeps the
- * untouched code path.
- */
-export function needsTopLayer(fullscreenElement: Element | null, container: Element): boolean {
-    return fullscreenElement !== null && !fullscreenElement.contains(container);
-}
+// SV-44: fullscreen survival lives in `top-layer.ts`, shared with the hover
+// overlays (gloss-hover, and hover-dict when SV-19 is picked up). Re-exported
+// because this module's own tests and callers already import it from here.
+export { needsTopLayer } from './top-layer';
+import { needsTopLayer, neutralizePopoverChrome, setTopLayer } from './top-layer';
 
 export enum OffsetAnchor {
     bottom,
@@ -295,31 +274,11 @@ export class CachingElementOverlay implements ElementOverlay {
      *  the overlay is then no worse off than before. */
     private _syncTopLayer(container: HTMLElement) {
         const promote = needsTopLayer(document.fullscreenElement, container);
+        const was = this.fullscreenContainerInTopLayer;
+        this.fullscreenContainerInTopLayer = setTopLayer(container, promote, was);
 
-        if (promote === this.fullscreenContainerInTopLayer) {
-            return;
-        }
-        if (typeof (container as any).showPopover !== 'function') {
-            return;
-        }
-
-        try {
-            if (promote) {
-                // `manual` so the browser never light-dismisses the subtitles
-                // on an Escape press or an outside click.
-                container.setAttribute('popover', 'manual');
-                (container as any).showPopover();
-                this.fullscreenContainerInTopLayer = true;
-                this._applyTopLayerStyleResets(container);
-            } else {
-                (container as any).hidePopover();
-                container.removeAttribute('popover');
-                this.fullscreenContainerInTopLayer = false;
-            }
-        } catch (e) {
-            // A double show/hide throws rather than no-ops. Keep the flag in
-            // step with reality instead of leaving the overlay wedged.
-            this.fullscreenContainerInTopLayer = promote;
+        if (this.fullscreenContainerInTopLayer && !was) {
+            this._applyTopLayerStyleResets(container);
         }
     }
 
@@ -330,22 +289,15 @@ export class CachingElementOverlay implements ElementOverlay {
      *  in particular would fight the left/top this class computes. Inline
      *  styles beat the UA sheet, so setting them here is enough. */
     private _applyTopLayerStyleResets(container: HTMLElement) {
-        container.style.margin = '0';
-        container.style.border = '0';
+        // Shared part: margin/border/overflow, and neutralizing whichever edges
+        // `_applyContainerStyles` left unset (the UA's `inset: 0` would
+        // otherwise stretch the overlay across the viewport).
+        neutralizePopoverChrome(container);
+        // Subtitle-specific: this container's class sets neither, so the UA
+        // popover background and padding would show through as a box behind
+        // the text.
         container.style.padding = '0';
         container.style.background = 'transparent';
-        container.style.overflow = 'visible';
-        container.style.maxHeight = 'none';
-        container.style.right = 'auto';
-        // Exactly one of top/bottom is set by `_applyContainerStyles`; the UA's
-        // `inset: 0` would otherwise anchor the empty one to the viewport edge
-        // and stretch the overlay across the screen.
-        if (container.style.top === '') {
-            container.style.top = 'auto';
-        }
-        if (container.style.bottom === '') {
-            container.style.bottom = 'auto';
-        }
     }
 
     private _findFullscreenParentElement(container: HTMLElement): HTMLElement {
