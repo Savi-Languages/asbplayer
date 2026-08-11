@@ -7,6 +7,8 @@ import {
     VideoData,
     VideoDataSubtitleTrack,
     VideoDataUiBridgeConfirmMessage,
+    VideoDataUiBridgeDownloadOnlineSubtitleMessage,
+    VideoDataUiBridgeSearchOnlineSubtitlesMessage,
     VideoDataUiBridgeOpenFileMessage,
     VideoDataUiBridgeSetOnlineSubtitleSourceConfigMessage,
     VideoDataUiModel,
@@ -35,6 +37,10 @@ import {
     SaviCommand,
     SaviOpenSubtitlesFetchMessage,
     SaviOpenSubtitlesFetchResponse,
+    SaviOpenSubtitlesSearchMessage,
+    SaviOpenSubtitlesSearchResponse,
+    SaviOpenSubtitlesDownloadMessage,
+    SaviOpenSubtitlesDownloadResponse,
     SaviRoamingSettingsMessage,
     SaviRoamingSettingsResponse,
 } from '@/savi/messages';
@@ -776,6 +782,78 @@ export default class VideoDataSyncController {
                             ...setOnlineSubtitleSourceConfigMessage.state,
                         },
                     });
+                    return;
+                }
+
+                // SV-44: OpenSubtitles on behalf of the picker.
+                //
+                // The picker is a `srcdoc` iframe, so it inherits the PAGE's
+                // origin and has no extension APIs — `browser.runtime` is
+                // undefined there. It asks over the bridge and this content
+                // script, which does have them, makes the call and replies on
+                // the message id.
+                if ('searchOnlineSubtitles' === message.command) {
+                    const searchMessage = message as VideoDataUiBridgeSearchOnlineSubtitlesMessage;
+                    // The target language is resolved HERE, not in the picker:
+                    // it lives in the roaming settings, which that frame also
+                    // cannot read. Empty means "every language" — better than
+                    // silently filtering to nothing.
+                    let languages = '';
+                    try {
+                        const { targetLanguage } = await this._saviRoamingSettings();
+                        languages = primarySubtag(targetLanguage ?? '');
+                    } catch {
+                        // Search unfiltered rather than not at all.
+                    }
+
+                    const command: SaviCommand<SaviOpenSubtitlesSearchMessage> = {
+                        sender: 'savi-video',
+                        message: {
+                            command: 'savi-opensubtitles-search',
+                            query: searchMessage.query,
+                            languages,
+                            seasonNumber: searchMessage.seasonNumber,
+                            episodeNumber: searchMessage.episodeNumber,
+                        },
+                    };
+
+                    let response: SaviOpenSubtitlesSearchResponse;
+                    try {
+                        response = ((await browser.runtime.sendMessage(command)) as
+                            | SaviOpenSubtitlesSearchResponse
+                            | undefined) ?? { ok: false };
+                    } catch (e) {
+                        response = { ok: false, errorMessage: e instanceof Error ? e.message : String(e) };
+                    }
+
+                    // Always reply, even on failure: the picker awaits this id
+                    // and would otherwise sit on a spinner until the bridge
+                    // timeout, which reads as a hung button.
+                    client.sendMessage({ messageId: searchMessage.messageId, ...response });
+                    return;
+                }
+
+                if ('downloadOnlineSubtitle' === message.command) {
+                    const downloadMessage = message as VideoDataUiBridgeDownloadOnlineSubtitleMessage;
+                    const command: SaviCommand<SaviOpenSubtitlesDownloadMessage> = {
+                        sender: 'savi-video',
+                        message: {
+                            command: 'savi-opensubtitles-download',
+                            fileId: downloadMessage.fileId,
+                            fileName: downloadMessage.fileName,
+                        },
+                    };
+
+                    let response: SaviOpenSubtitlesDownloadResponse;
+                    try {
+                        response = ((await browser.runtime.sendMessage(command)) as
+                            | SaviOpenSubtitlesDownloadResponse
+                            | undefined) ?? { ok: false };
+                    } catch (e) {
+                        response = { ok: false, errorMessage: e instanceof Error ? e.message : String(e) };
+                    }
+
+                    client.sendMessage({ messageId: downloadMessage.messageId, ...response });
                     return;
                 }
 

@@ -20,16 +20,8 @@ import Typography from '@mui/material/Typography';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { JimakuClient, JimakuEntry } from '@/services/subtitle-sources';
-import { parseShowQuery, primarySubtag } from '@/savi/track-select';
-import { getCachedRoamingSettings } from '@/savi/cloud-settings';
-import type {
-    SaviCommand,
-    SaviOpenSubtitlesDownloadMessage,
-    SaviOpenSubtitlesDownloadResponse,
-    SaviOpenSubtitlesSearchMessage,
-    SaviOpenSubtitlesSearchResponse,
-    SaviOpenSubtitlesSearchResult,
-} from '@/savi/messages';
+import { parseShowQuery } from '@/savi/track-select';
+import type { SaviOpenSubtitlesSearchResult } from '@/savi/messages';
 import type { JimakuCachedWork } from '@project/common/global-state';
 import IconButton from '@mui/material/IconButton';
 import InputAdornment from '@mui/material/InputAdornment';
@@ -61,6 +53,23 @@ interface Props {
     onJimakuSearchCategoryChange: (category: 'anime' | 'drama') => void;
     jimakuRecentWorks: JimakuCachedWork[];
     onJimakuRecentWorksChange: (recentWorks: JimakuCachedWork[]) => void;
+    /** SV-44 — OpenSubtitles, performed by the CONTENT SCRIPT on our behalf.
+     *
+     *  This dialog runs in a `srcdoc` iframe, which inherits the PAGE's origin
+     *  and therefore has no extension APIs: `browser.runtime` is undefined here
+     *  and calling it throws ("Cannot read properties of undefined"). Everything
+     *  needing the extension — the search, the download, and the roaming target
+     *  language the search filters by — goes over the picker bridge instead, so
+     *  it arrives as callbacks. */
+    onSearchOpenSubtitles: (
+        query: string,
+        seasonNumber?: number,
+        episodeNumber?: number
+    ) => Promise<{ ok: boolean; results?: SaviOpenSubtitlesSearchResult[]; errorMessage?: string }>;
+    onDownloadOpenSubtitle: (
+        fileId: number,
+        fileName: string
+    ) => Promise<{ ok: boolean; name?: string; content?: string; errorMessage?: string }>;
 }
 
 const SUPPORTED_JIMAKU_EXTENSIONS = ['.srt', '.ass'];
@@ -117,6 +126,8 @@ export default function OnlineSubtitleSourceDialog({
     onJimakuSearchCategoryChange,
     jimakuRecentWorks,
     onJimakuRecentWorksChange,
+    onSearchOpenSubtitles,
+    onDownloadOpenSubtitle,
 }: Props) {
     const { t } = useTranslation();
     const [searching, setSearching] = useState(false);
@@ -142,26 +153,6 @@ export default function OnlineSubtitleSourceDialog({
         jimakuApiKey.trim().length > 0 ? 'jimaku' : 'opensubtitles'
     );
     const [openSubtitlesResults, setOpenSubtitlesResults] = useState<SaviOpenSubtitlesSearchResult[]>();
-    const [openSubtitlesLanguage, setOpenSubtitlesLanguage] = useState('');
-
-    // The learner's target language, so the manual search does not bury the
-    // language they want under a hundred English results. Read straight from
-    // the roaming cache (browser.storage) rather than threaded through the
-    // picker bridge — this frame is an extension page, so it can just look.
-    useEffect(() => {
-        if (!open) {
-            return;
-        }
-        let cancelled = false;
-        void getCachedRoamingSettings().then(({ targetLanguage }) => {
-            if (!cancelled) {
-                setOpenSubtitlesLanguage(primarySubtag(targetLanguage ?? ''));
-            }
-        });
-        return () => {
-            cancelled = true;
-        };
-    }, [open]);
 
     const handleSearchOpenSubtitles = useCallback(async () => {
         setError(undefined);
@@ -176,20 +167,15 @@ export default function OnlineSubtitleSourceDialog({
             // own parameters — a far better search than passing the whole
             // string as a title — and it works just as well when the user types
             // that form themselves.
-            const { query: showQuery, seasonNumber, episodeNumber } = parseShowQuery(query.trim());
-            const command: SaviCommand<SaviOpenSubtitlesSearchMessage> = {
-                sender: 'savi-video',
-                message: {
-                    command: 'savi-opensubtitles-search',
-                    query: showQuery.length > 0 ? showQuery : query.trim(),
-                    languages: openSubtitlesLanguage,
-                    seasonNumber,
-                    episodeNumber,
-                },
-            };
-            const response = (await browser.runtime.sendMessage(command)) as
-                | SaviOpenSubtitlesSearchResponse
-                | undefined;
+            const trimmed = query.trim();
+            const { query: showQuery, seasonNumber, episodeNumber } = parseShowQuery(trimmed);
+            // No language is passed: the content script reads the roaming
+            // target language, which this frame cannot.
+            const response = await onSearchOpenSubtitles(
+                showQuery.length > 0 ? showQuery : trimmed,
+                seasonNumber,
+                episodeNumber
+            );
 
             if (!response?.ok) {
                 setError(
@@ -209,7 +195,7 @@ export default function OnlineSubtitleSourceDialog({
         } finally {
             setSearching(false);
         }
-    }, [query, openSubtitlesLanguage, t]);
+    }, [query, onSearchOpenSubtitles, t]);
 
     const handleImportOpenSubtitle = useCallback(
         async (result: SaviOpenSubtitlesSearchResult) => {
@@ -217,17 +203,7 @@ export default function OnlineSubtitleSourceDialog({
             setLoadingFiles(true);
 
             try {
-                const command: SaviCommand<SaviOpenSubtitlesDownloadMessage> = {
-                    sender: 'savi-video',
-                    message: {
-                        command: 'savi-opensubtitles-download',
-                        fileId: result.fileId,
-                        fileName: result.fileName,
-                    },
-                };
-                const response = (await browser.runtime.sendMessage(command)) as
-                    | SaviOpenSubtitlesDownloadResponse
-                    | undefined;
+                const response = await onDownloadOpenSubtitle(result.fileId, result.fileName);
 
                 if (!response?.ok || response.content === undefined) {
                     setError(
@@ -246,7 +222,7 @@ export default function OnlineSubtitleSourceDialog({
                 setLoadingFiles(false);
             }
         },
-        [onImport, onClose, t]
+        [onDownloadOpenSubtitle, onImport, onClose, t]
     );
 
     // Ref to avoid stale closure in upsertRecentWork
