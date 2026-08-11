@@ -128,6 +128,16 @@ export const deriveEpisodeId = (url: string, title: string): string | undefined 
         }
     }
 
+    // A local file has no host, so without a namespace it would fall through to
+    // a BARE slug — indistinguishable from a hostless page, and rendered as a
+    // raw `some-show-s01e02` wherever savi shows provenance (SV-44). `file:`
+    // gives it the same shape as the platform ids and lets the savi app label
+    // it as a local file.
+    if (parsed?.protocol === 'file:') {
+        const localTitle = stripSiteSuffix(title);
+        return /[\p{L}\p{N}]/u.test(localTitle) ? `file:${slugify(localTitle)}` : undefined;
+    }
+
     // Generic fallback: hostname namespace + stable slug of the title (no
     // date). Drop a leading "www." so the namespace is the bare domain.
     const host = (parsed?.host ?? '').replace(/^www\./, '');

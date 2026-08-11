@@ -386,3 +386,29 @@ describe('deriveEpisodeId — the duplicate-episode guard', () => {
         }
     });
 });
+
+// SV-44: local video files.
+describe('deriveEpisodeId — local files', () => {
+    it('namespaces a file:// page so it is not a bare slug', () => {
+        // Without the namespace this returned `some-show-s01e02`, which the
+        // savi app then had no way to tell from a hostless web page — and
+        // rendered as the raw slug.
+        expect(deriveEpisodeId('file:///Users/me/x.mkv', 'Some Show S01E02')).toBe('file:some-show-s01e02');
+    });
+
+    it('is stable across directories, so a moved file resumes', () => {
+        // Identity is the NAME, not the path: re-downloading an episode to a
+        // different folder must not fork the library entry.
+        expect(deriveEpisodeId('file:///a/b/x.mkv', 'Some Show S01E02')).toBe(
+            deriveEpisodeId('file:///completely/other/y.mkv', 'Some Show S01E02')
+        );
+    });
+
+    it('is undefined when the title carries no identity', () => {
+        // Same contract as the other branches: no identity yet → ask again,
+        // rather than filing every untitled local capture in one bucket.
+        expect(deriveEpisodeId('file:///Users/me/x.mkv', '   ')).toBeUndefined();
+        expect(deriveEpisodeId('file:///Users/me/x.mkv', '---')).toBeUndefined();
+    });
+});
+
