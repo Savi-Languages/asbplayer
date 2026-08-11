@@ -42,7 +42,9 @@ import { cropAndResize } from '@project/common/src/image-transformer';
 // fullscreen ('asbplayer-fullscreen-subtitles', see subtitle-controller's
 // _elementOverlayParams) — both must match, or hover dies the moment the
 // player goes fullscreen (it did).
-const SUBTITLE_CONTAINER = '.asbplayer-subtitles, .asbplayer-fullscreen-subtitles';
+/** The subtitle containers a line can live in. Exported so gloss-hover can
+ *  ENUMERATE lines when hit-testing cannot find them (SV-44). */
+export const SUBTITLE_CONTAINER = '.asbplayer-subtitles, .asbplayer-fullscreen-subtitles';
 // The embedded dictionary is Japanese; lines without any Japanese (e.g. the
 // English translation track) are skipped so we never box or tokenize them.
 const LANG = 'ja';
@@ -273,7 +275,6 @@ function renderEntry(
     }
     root.appendChild(head);
 
-
     for (const entry of entries.slice(0, 2)) {
         const ol = document.createElement('ol');
         Object.assign(ol.style, {
@@ -398,8 +399,7 @@ function positionPopup(popup: HTMLDivElement, arrow: HTMLDivElement, word: DOMRe
 /** The headline label of a dictionary result — the first gloss of the first
  *  sense (what the popup shows most prominently). '' when there's none (a
  *  kanji-only result still teaches, but there is no label to persist). */
-const firstDictGloss = (entries: SaviDictEntry[]): string =>
-    entries[0]?.senses?.[0]?.glosses?.[0] ?? '';
+const firstDictGloss = (entries: SaviDictEntry[]): string => entries[0]?.senses?.[0]?.glosses?.[0] ?? '';
 
 export class SaviHoverDictionary {
     private readonly _tokenizeCache = new Map<string, SaviToken[]>();
@@ -936,9 +936,7 @@ export class SaviHoverDictionary {
     /** Hide the popup / highlight / bridge for a clean screenshot; returns a
      *  restore fn. Uses `visibility` (no reflow) so positions are preserved. */
     private _hideForCapture(): () => void {
-        const els = [this._popup, this._highlight, this._bridge].filter(
-            (e): e is HTMLDivElement => e !== null
-        );
+        const els = [this._popup, this._highlight, this._bridge].filter((e): e is HTMLDivElement => e !== null);
         const prev = els.map((e) => e.style.visibility);
         els.forEach((e) => {
             e.style.visibility = 'hidden';
@@ -966,10 +964,13 @@ export class SaviHoverDictionary {
             clearTimeout(this._toastTimer);
         }
         // Success auto-dismisses quickly; warn/error linger so they get noticed.
-        this._toastTimer = window.setTimeout(() => {
-            el.style.opacity = '0';
-            el.style.transform = 'translateX(-50%) translateY(-8px)';
-        }, kind === 'success' ? 2600 : 4200);
+        this._toastTimer = window.setTimeout(
+            () => {
+                el.style.opacity = '0';
+                el.style.transform = 'translateX(-50%) translateY(-8px)';
+            },
+            kind === 'success' ? 2600 : 4200
+        );
     }
 
     private _ensureToast(): HTMLDivElement {
