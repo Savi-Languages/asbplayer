@@ -444,13 +444,21 @@ export default class SaviCommandHandler implements CommandHandler {
         }
     }
 
-    /** `'signedOut'` when we have no account token to send. The daemon accepts the
+    /** `'noAccount'` when we have no usable token to send. The daemon accepts the
      *  LAN token for local endpoints but only relays a bearer that verifies as the
      *  owner's Supabase JWT, so a LAN-token caller gets AI silently switched off —
-     *  no error, no log. The extension has no sign-in of its own once the session
-     *  comes from the desktop app, so this is simply "the app isn't running". */
-    private async _aiCredentialGap(): Promise<'signedOut' | undefined> {
-        return (await currentAccessToken()) === undefined ? 'signedOut' : undefined;
+     *  no error, no log.
+     *
+     *  It reports the ABSENCE, not a cause. From here the two look identical: an
+     *  account that was never signed in, and a signed-in account whose published
+     *  session went stale because the desktop app that refreshes it isn't running.
+     *  Distinguishing them needs the native-messaging host (it answers even with
+     *  the app closed, since the BROWSER launches it — an expired session on disk
+     *  means "app not running", a `signedOut` reply means "no account"). That
+     *  lives on the shared-sign-in branch, so the copy leads with the likelier
+     *  cause instead of guessing here. */
+    private async _aiCredentialGap(): Promise<'noAccount' | undefined> {
+        return (await currentAccessToken()) === undefined ? 'noAccount' : undefined;
     }
 
     // Full kanji breakdown for the tap panel (offline KANJIDIC/RTK data — no LLM,

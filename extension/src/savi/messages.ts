@@ -138,16 +138,20 @@ export interface SaviSegmentLineMessage {
 
 /** Why an AI-backed section has nothing to show. The panel used to render one
  *  generic "provider busy" line for all of these, which is actively misleading:
- *  `signedOut` is by far the most common and has nothing to do with providers
+ *  `noAccount` is by far the most common and has nothing to do with providers
  *  (it cost real debugging time chasing rate limits that were never involved).
- *  - `signedOut`  no account token, so the daemon relays none and the cloud is
- *                 never called. Happens whenever the desktop app isn't running:
- *                 the extension has no sign-in of its own, and the published
- *                 session expires within the hour.
+ *  - `noAccount`  no usable account token, so the daemon relays none and the
+ *                 cloud is never called. Named for what we KNOW — that there is
+ *                 no credential — not for a cause we haven't established. The
+ *                 usual cause is the desktop app not running: it publishes the
+ *                 session and refreshes it hourly, and the extension has no
+ *                 sign-in of its own, so a closed app means an expired token
+ *                 while the account itself is perfectly fine. Telling that user
+ *                 to "sign in" sends them to fix something that isn't broken.
  *  - `disabled`   the AI setting is off — a deliberate choice, not a failure.
  *  - `noDaemon`   the daemon isn't configured or isn't reachable.
  *  - `provider`   we did call the cloud with a real token and got nothing back. */
-export type SaviAiUnavailable = 'signedOut' | 'disabled' | 'noDaemon' | 'provider';
+export type SaviAiUnavailable = 'noAccount' | 'disabled' | 'noDaemon' | 'provider';
 
 export interface SaviSegmentLineResponse {
     readonly ai: boolean;

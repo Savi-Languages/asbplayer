@@ -32,16 +32,30 @@ describe('SaviWordPanel.setExplanation', () => {
         expect(explainText()).toContain('the noun "improvement"');
     });
 
-    it('says to sign in — NOT that a provider is busy — when there is no account', () => {
+    it('points at the desktop app — NOT at a busy provider — when there is no account', () => {
         // The whole point of this change. Without an account token the daemon
         // never reaches the cloud, so no provider was ever involved; the old copy
         // blamed one and sent debugging after rate limits that did not exist.
         const panel = openPanel();
-        panel.setExplanation(null, 'signedOut');
+        panel.setExplanation(null, 'noAccount');
         const text = explainText();
-        expect(text).toContain('Sign in to savi');
+        expect(text).toContain('Start the savi desktop app');
         expect(text.toLowerCase()).not.toContain('provider');
         expect(text.toLowerCase()).not.toContain('busy');
+    });
+
+    it('leads with the app, and only then mentions signing in', () => {
+        // The common case is a valid account whose published session went stale
+        // because the app that refreshes it is closed. "Sign in" sends that user
+        // to fix something that is not broken, so it must not lead the message —
+        // it stays available in the hint for someone with no account at all.
+        const panel = openPanel();
+        panel.setExplanation(null, 'noAccount');
+        const text = explainText();
+        const app = text.indexOf('Start the savi desktop app');
+        const signIn = text.indexOf('Sign in from savi settings');
+        expect(app).toBeGreaterThanOrEqual(0);
+        expect(signIn).toBeGreaterThan(app);
     });
 
     it('names the daemon when the desktop app is unreachable', () => {
@@ -76,10 +90,10 @@ describe('SaviWordPanel.setExplanation', () => {
 
     it('replaces a previous message instead of stacking onto it', () => {
         const panel = openPanel();
-        panel.setExplanation(null, 'signedOut');
-        panel.setExplanation('Signed in now — 改善 means improvement.');
+        panel.setExplanation(null, 'noAccount');
+        panel.setExplanation('App running now — 改善 means improvement.');
         const text = explainText();
         expect(text).toContain('means improvement');
-        expect(text).not.toContain('Sign in to savi');
+        expect(text).not.toContain('Start the savi desktop app');
     });
 });

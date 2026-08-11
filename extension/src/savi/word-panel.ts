@@ -13,13 +13,19 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 /** What to tell the user when an AI section is empty. Each case has a different
  *  fix, and only one of them is about a provider — the old copy claimed "provider
  *  busy" for all of them, which pointed debugging at rate limits when the real
- *  cause was usually that nothing was signed in. */
+ *  cause was usually that there was no credential to call with.
+ *
+ *  Each note names an ACTION. "Sign in" was the first attempt for `noAccount`
+ *  and was wrong for the common case: the account is fine and already signed in
+ *  — the desktop app simply isn't running to refresh the session it publishes.
+ *  Leading with the app fixes the real cause; the hint keeps the sign-in route
+ *  for someone who genuinely has no account yet. */
 function unavailableMessage(why?: SaviAiUnavailable): { note: string; hint?: string } {
     switch (why) {
-        case 'signedOut':
+        case 'noAccount':
             return {
-                note: 'Sign in to savi to see AI explanations.',
-                hint: 'Open the savi desktop app, or sign in from savi settings.',
+                note: 'Start the savi desktop app to see AI explanations.',
+                hint: 'It keeps the extension signed in. Not signed up yet? Sign in from savi settings.',
             };
         case 'disabled':
             return { note: 'AI explanations are turned off in savi settings.' };
