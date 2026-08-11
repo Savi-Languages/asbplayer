@@ -354,11 +354,13 @@ export interface SaviGlossLineMessage {
     readonly words: readonly string[];
 }
 
-/** One word's verdict. `skip` absent ⇒ render `gloss` above it. */
+/** One word's verdict. `skip` absent ⇒ render `gloss` above it.
+ *  `no-analyzer` is a request-level verdict stamped on every word: savi has no
+ *  analyzer for the requested language (unsupported, or a stale target). */
 export interface SaviGlossDecision {
     readonly word: string;
     readonly lemma?: string;
-    readonly skip?: 'known' | 'function-word' | 'untokenized';
+    readonly skip?: 'known' | 'function-word' | 'untokenized' | 'no-analyzer';
     readonly proficiency?: number;
     readonly gloss?: string;
 }
