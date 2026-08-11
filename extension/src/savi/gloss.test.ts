@@ -380,10 +380,30 @@ describe('per-line target language re-read (the stale-"fr" bug)', () => {
         mockTargetLanguage = 'ja';
         await glossLine('Hola cielo', ['cielo'], true);
 
-        const langs = sent
-            .filter((c) => c.message?.command === 'savi-gloss-line')
-            .map((c) => c.message.lang);
+        const langs = sent.filter((c) => c.message?.command === 'savi-gloss-line').map((c) => c.message.lang);
         expect(langs).toEqual(['es', 'ja']);
+    });
+
+    it('re-reads the language before SEGMENTING, not just before the request', async () => {
+        // The 0.46.1 fix refreshed the language inside `_glossLine`. SV-33 then
+        // made tokenization language-dependent too (per-language stoplists, and
+        // the capitalize-every-noun rule), and that runs one step earlier in
+        // `_computeLine` — so the first line after a switch was still segmented
+        // under the OLD language's rules while the request already used the new
+        // one. German is the sharp case: under the Spanish rules every
+        // mid-sentence noun is discarded as a proper name.
+        const { controller, sent } = makeGlossController();
+        await controller.start();
+
+        mockTargetLanguage = 'de';
+        await (controller as any)._computeLine('Ich habe das Buch gelesen', true);
+
+        const glossCalls = sent.filter((c) => c.message?.command === 'savi-gloss-line');
+        expect(glossCalls).toHaveLength(1);
+        expect(glossCalls[0].message.lang).toBe('de');
+        // Under the stale Spanish rules `Buch` is a mid-sentence capital and
+        // would have been dropped as a name before the server ever saw it.
+        expect(glossCalls[0].message.words).toContain('buch');
     });
 
     it('logs the server no-analyzer verdict as its own reason, without the words', async () => {
