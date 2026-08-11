@@ -549,6 +549,18 @@ export interface VideoDataUiBridgeSetOnlineSubtitleSourceConfigMessage extends M
     readonly state: Partial<OnlineSubtitleSourceConfig>;
 }
 
+/** SV-44: the picker's manual OpenSubtitles search. The user typed a name for
+ *  a video we could not identify (a local file, an unrecognized site), so this
+ *  carries their term verbatim — the automatic relevance check is deliberately
+ *  skipped for it, since the user is the better authority on what they are
+ *  watching. */
+export interface VideoDataUiBridgeSearchOnlineSubtitlesMessage extends Message {
+    readonly command: 'searchOnlineSubtitles';
+    readonly query: string;
+    readonly seasonNumber?: number;
+    readonly episodeNumber?: number;
+}
+
 export interface CropAndResizeMessage extends Message, ImageCaptureParams {
     readonly command: 'crop-and-resize';
     readonly dataUrl: string;

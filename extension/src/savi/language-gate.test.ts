@@ -150,3 +150,58 @@ describe('the verdict carries its target language', () => {
         expect(decideLanguageGate({ spokenLanguage: 'es', targetLanguage: 'es-419' }).targetLanguage).toBe('es-419');
     });
 });
+
+// SV-44: the hush button now switches savi off for a whole SITE.
+describe('site mutes', () => {
+    const target = 'es';
+
+    it('deactivates every video on a muted site', () => {
+        // Even a positive language match loses to the user's own instruction.
+        expect(
+            decideLanguageGate({
+                spokenLanguage: 'es',
+                targetLanguage: target,
+                siteKey: 'example.com',
+                mutedSites: ['example.com'],
+            })
+        ).toEqual({ active: false, reason: 'muted', targetLanguage: 'es' });
+    });
+
+    it('mutes only the site named, not its neighbours', () => {
+        expect(
+            decideLanguageGate({
+                spokenLanguage: undefined,
+                targetLanguage: target,
+                siteKey: 'other.com',
+                mutedSites: ['example.com'],
+            })
+        ).toEqual({ active: true, reason: 'unknown', targetLanguage: 'es' });
+    });
+
+    it('still honours a per-episode mute written before the button moved', () => {
+        // SV-44 changed what the button WRITES. Silently un-muting videos
+        // somebody muted on purpose would be a regression, so the gate keeps
+        // reading the old list.
+        expect(
+            decideLanguageGate({
+                spokenLanguage: 'es',
+                targetLanguage: target,
+                episodeId: 'youtube:abc',
+                mutedEpisodes: ['youtube:abc'],
+                siteKey: 'youtube.com',
+                mutedSites: [],
+            })
+        ).toEqual({ active: false, reason: 'muted', targetLanguage: 'es' });
+    });
+
+    it('ignores the site list when the page has no site key', () => {
+        expect(
+            decideLanguageGate({
+                spokenLanguage: undefined,
+                targetLanguage: target,
+                siteKey: undefined,
+                mutedSites: ['example.com'],
+            })
+        ).toEqual({ active: true, reason: 'unknown', targetLanguage: 'es' });
+    });
+});

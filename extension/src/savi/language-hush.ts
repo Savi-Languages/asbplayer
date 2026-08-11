@@ -5,9 +5,18 @@
 // cost is that on a site with no signal, an English video still gets the full
 // learning layer, and the user has no recourse but to disable savi wholesale.
 //
-// This is that recourse: one click, this video only. It appears ONLY when the
-// verdict is `unknown`, because that is the only case where savi is guessing.
-// On a positive match it would be noise, and on a mismatch savi is already off.
+// This is that recourse: one click switches savi off FOR THE WHOLE SITE. It
+// appears ONLY when the verdict is `unknown`, because that is the only case
+// where savi is guessing. On a positive match it would be noise, and on a
+// mismatch savi is already off.
+//
+// SV-44 widened it from this-video to this-site. The narrow version was built
+// when savi only bound to sites with a delegate, where "this video is not my
+// language" was the whole problem. Now that any page with a <video> can arm
+// the learning layer, the common complaint is a SITE that should never run it
+// — and clicking through video after video on such a site is not a recourse.
+// Existing per-video mutes are still honoured by the gate (muted-episodes.ts);
+// only what this button WRITES has changed.
 //
 // Inline-styled + appended to document.body, mirroring record-button.ts.
 
@@ -41,8 +50,9 @@ export class SaviLanguageHush {
         }
         const button = document.createElement('button');
         button.className = 'savi-language-hush';
-        button.textContent = '🔇 Not my language';
-        button.title = 'Turn savi off for this video (it cannot tell what language is spoken here)';
+        button.textContent = "🔇 Don't use Savi on this site";
+        button.title =
+            'Turn Savi off for every video on this site (it cannot tell what language is spoken here). Undo in Settings → Savi.';
         Object.assign(button.style, {
             position: 'fixed',
             right: '16px',

@@ -20,6 +20,16 @@ import Typography from '@mui/material/Typography';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { JimakuClient, JimakuEntry } from '@/services/subtitle-sources';
+import { parseShowQuery, primarySubtag } from '@/savi/track-select';
+import { getCachedRoamingSettings } from '@/savi/cloud-settings';
+import type {
+    SaviCommand,
+    SaviOpenSubtitlesDownloadMessage,
+    SaviOpenSubtitlesDownloadResponse,
+    SaviOpenSubtitlesSearchMessage,
+    SaviOpenSubtitlesSearchResponse,
+    SaviOpenSubtitlesSearchResult,
+} from '@/savi/messages';
 import type { JimakuCachedWork } from '@project/common/global-state';
 import IconButton from '@mui/material/IconButton';
 import InputAdornment from '@mui/material/InputAdornment';
@@ -28,8 +38,17 @@ import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 
 interface OnlineSubtitleImportCandidate {
     name: string;
-    url: string;
+    /** Jimaku: a public URL this frame fetches itself. */
+    url?: string;
+    /** OpenSubtitles: already-downloaded text (the download needs the API key,
+     *  which stays in the background — see SV-44). */
+    content?: string;
 }
+
+/** Which catalogue the dialog is searching. Jimaku is Japanese-only and
+ *  two-step (work → files); OpenSubtitles covers every language savi supports
+ *  and is one step (query → files). */
+type OnlineSubtitleSource = 'jimaku' | 'opensubtitles';
 
 interface Props {
     open: boolean;
@@ -113,6 +132,123 @@ export default function OnlineSubtitleSourceDialog({
     const [loadingJimakuFiles, setLoadingJimakuFiles] = useState(false);
     const resultsCache = useRef<Map<string, { anime: JimakuEntry[]; drama: JimakuEntry[] }>>(new Map());
 
+    // SV-44 — OpenSubtitles, the general-language half of this dialog.
+    //
+    // Defaults to Jimaku only when a Jimaku key is configured: that key is
+    // Japanese-only and nobody sets it by accident, so its presence is a good
+    // signal for which catalogue this user actually wants. Everyone else lands
+    // on OpenSubtitles, which is the one that covers Spanish/French/German.
+    const [source, setSource] = useState<OnlineSubtitleSource>(
+        jimakuApiKey.trim().length > 0 ? 'jimaku' : 'opensubtitles'
+    );
+    const [openSubtitlesResults, setOpenSubtitlesResults] = useState<SaviOpenSubtitlesSearchResult[]>();
+    const [openSubtitlesLanguage, setOpenSubtitlesLanguage] = useState('');
+
+    // The learner's target language, so the manual search does not bury the
+    // language they want under a hundred English results. Read straight from
+    // the roaming cache (browser.storage) rather than threaded through the
+    // picker bridge — this frame is an extension page, so it can just look.
+    useEffect(() => {
+        if (!open) {
+            return;
+        }
+        let cancelled = false;
+        void getCachedRoamingSettings().then(({ targetLanguage }) => {
+            if (!cancelled) {
+                setOpenSubtitlesLanguage(primarySubtag(targetLanguage ?? ''));
+            }
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [open]);
+
+    const handleSearchOpenSubtitles = useCallback(async () => {
+        setError(undefined);
+        setSearching(true);
+        setFilterString('');
+        setOpenSubtitlesResults(undefined);
+
+        try {
+            // The query field carries the detected name, which for a local file
+            // is the canonical "Title S01E02" (local-video.ts `displayNameFor`).
+            // Splitting it here means the season/episode reach the API as their
+            // own parameters — a far better search than passing the whole
+            // string as a title — and it works just as well when the user types
+            // that form themselves.
+            const { query: showQuery, seasonNumber, episodeNumber } = parseShowQuery(query.trim());
+            const command: SaviCommand<SaviOpenSubtitlesSearchMessage> = {
+                sender: 'savi-video',
+                message: {
+                    command: 'savi-opensubtitles-search',
+                    query: showQuery.length > 0 ? showQuery : query.trim(),
+                    languages: openSubtitlesLanguage,
+                    seasonNumber,
+                    episodeNumber,
+                },
+            };
+            const response = (await browser.runtime.sendMessage(command)) as
+                | SaviOpenSubtitlesSearchResponse
+                | undefined;
+
+            if (!response?.ok) {
+                setError(
+                    response?.errorMessage === 'noApiKey'
+                        ? t('onlineSubtitleSources.openSubtitlesNoApiKey')
+                        : (response?.errorMessage ?? t('onlineSubtitleSources.openSubtitlesSearchFailed'))
+                );
+                setOpenSubtitlesResults([]);
+                return;
+            }
+
+            setOpenSubtitlesResults(response.results ?? []);
+            setLastQuery(query);
+        } catch (e) {
+            setError(e instanceof Error ? e.message : String(e));
+            setOpenSubtitlesResults([]);
+        } finally {
+            setSearching(false);
+        }
+    }, [query, openSubtitlesLanguage, t]);
+
+    const handleImportOpenSubtitle = useCallback(
+        async (result: SaviOpenSubtitlesSearchResult) => {
+            setError(undefined);
+            setLoadingFiles(true);
+
+            try {
+                const command: SaviCommand<SaviOpenSubtitlesDownloadMessage> = {
+                    sender: 'savi-video',
+                    message: {
+                        command: 'savi-opensubtitles-download',
+                        fileId: result.fileId,
+                        fileName: result.fileName,
+                    },
+                };
+                const response = (await browser.runtime.sendMessage(command)) as
+                    | SaviOpenSubtitlesDownloadResponse
+                    | undefined;
+
+                if (!response?.ok || response.content === undefined) {
+                    setError(
+                        response?.errorMessage === 'noApiKey'
+                            ? t('onlineSubtitleSources.openSubtitlesNoApiKey')
+                            : (response?.errorMessage ?? t('onlineSubtitleSources.openSubtitlesDownloadFailed'))
+                    );
+                    return;
+                }
+
+                await onImport({ name: response.name ?? result.fileName, content: response.content });
+                onClose();
+            } catch (e) {
+                setError(e instanceof Error ? e.message : String(e));
+            } finally {
+                setLoadingFiles(false);
+            }
+        },
+        [onImport, onClose, t]
+    );
+
     // Ref to avoid stale closure in upsertRecentWork
     const recentWorksRef = useRef(jimakuRecentWorks);
     recentWorksRef.current = jimakuRecentWorks;
@@ -135,13 +271,16 @@ export default function OnlineSubtitleSourceDialog({
         [detectedTitleHint]
     );
     const isApiKeyMissing = jimakuApiKey.trim().length === 0;
+    // OpenSubtitles' key lives in savi's roaming settings, not in this frame,
+    // so its absence cannot be checked here — the background reports it and
+    // the error surfaces as a message. Only Jimaku can pre-disable the button.
     const isSearchDisabled =
         searching ||
         loadingJimakuFiles ||
         query.trim().length === 0 ||
-        isApiKeyMissing ||
-        (lastQuery === query && lastSearchCategory === jimakuSearchCategory) ||
-        loadingFiles;
+        loadingFiles ||
+        (source === 'jimaku' &&
+            (isApiKeyMissing || (lastQuery === query && lastSearchCategory === jimakuSearchCategory)));
 
     const resetState = useCallback(() => {
         setSearching(false);
@@ -152,6 +291,7 @@ export default function OnlineSubtitleSourceDialog({
         setLoadingJimakuFiles(false);
         setLastQuery(undefined);
         setLastSearchCategory(undefined);
+        setOpenSubtitlesResults(undefined);
         selectedEntryIdRef.current = undefined;
         fileLoadRequestIdRef.current += 1;
     }, []);
@@ -280,7 +420,7 @@ export default function OnlineSubtitleSourceDialog({
         [onClose, onImport]
     );
 
-    const handleSearch = handleSearchJimaku;
+    const handleSearch = source === 'jimaku' ? handleSearchJimaku : handleSearchOpenSubtitles;
 
     const [filterString, setFilterString] = useState<string>('');
     const filteredJimakuEntries = useMemo(() => {
@@ -303,6 +443,22 @@ export default function OnlineSubtitleSourceDialog({
             <DialogContent>
                 <Stack spacing={2}>
                     {error && <Alert severity="error">{error}</Alert>}
+                    <ToggleButtonGroup
+                        value={source}
+                        exclusive
+                        size="small"
+                        onChange={(_, value) => {
+                            if (value !== null) {
+                                setSource(value);
+                                setError(undefined);
+                            }
+                        }}
+                    >
+                        <ToggleButton value="opensubtitles">
+                            {t('onlineSubtitleSources.sourceOpenSubtitles')}
+                        </ToggleButton>
+                        <ToggleButton value="jimaku">{t('onlineSubtitleSources.sourceJimaku')}</ToggleButton>
+                    </ToggleButtonGroup>
                     <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
                         <TextField
                             autoFocus
@@ -321,24 +477,26 @@ export default function OnlineSubtitleSourceDialog({
                                 input: {
                                     endAdornment: (
                                         <InputAdornment position="end">
-                                            <ToggleButtonGroup
-                                                value={jimakuSearchCategory}
-                                                exclusive
-                                                size="small"
-                                                sx={{ mr: 1.5, height: 36 }}
-                                                onChange={(_, value) => {
-                                                    if (value !== null) {
-                                                        onJimakuSearchCategoryChange(value);
-                                                    }
-                                                }}
-                                            >
-                                                <ToggleButton value="anime">
-                                                    {t('onlineSubtitleSources.categoryAnime')}
-                                                </ToggleButton>
-                                                <ToggleButton value="drama">
-                                                    {t('onlineSubtitleSources.categoryDrama')}
-                                                </ToggleButton>
-                                            </ToggleButtonGroup>
+                                            {source === 'jimaku' && (
+                                                <ToggleButtonGroup
+                                                    value={jimakuSearchCategory}
+                                                    exclusive
+                                                    size="small"
+                                                    sx={{ mr: 1.5, height: 36 }}
+                                                    onChange={(_, value) => {
+                                                        if (value !== null) {
+                                                            onJimakuSearchCategoryChange(value);
+                                                        }
+                                                    }}
+                                                >
+                                                    <ToggleButton value="anime">
+                                                        {t('onlineSubtitleSources.categoryAnime')}
+                                                    </ToggleButton>
+                                                    <ToggleButton value="drama">
+                                                        {t('onlineSubtitleSources.categoryDrama')}
+                                                    </ToggleButton>
+                                                </ToggleButtonGroup>
+                                            )}
                                             <IconButton
                                                 loading={searching}
                                                 onClick={handleSearch}
@@ -353,30 +511,77 @@ export default function OnlineSubtitleSourceDialog({
                         />
                     </Box>
 
-                    <TextField
-                        label={t('onlineSubtitleSources.jimakuApiKey')}
-                        value={jimakuApiKey}
-                        onChange={(e) => onJimakuApiKeyChange(e.target.value)}
-                        helperText={
-                            <Trans
-                                i18nKey="onlineSubtitleSources.jimakuApiKeyAutosaveHint"
-                                components={[
-                                    <Link
-                                        key={0}
-                                        href="https://jimaku.cc/account"
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        underline="hover"
-                                    >
-                                        here
-                                    </Link>,
-                                ]}
-                            />
-                        }
-                        fullWidth
-                    />
+                    {source === 'jimaku' && (
+                        <TextField
+                            label={t('onlineSubtitleSources.jimakuApiKey')}
+                            value={jimakuApiKey}
+                            onChange={(e) => onJimakuApiKeyChange(e.target.value)}
+                            helperText={
+                                <Trans
+                                    i18nKey="onlineSubtitleSources.jimakuApiKeyAutosaveHint"
+                                    components={[
+                                        <Link
+                                            key={0}
+                                            href="https://jimaku.cc/account"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            underline="hover"
+                                        >
+                                            here
+                                        </Link>,
+                                    ]}
+                                />
+                            }
+                            fullWidth
+                        />
+                    )}
 
-                    {lastQuery !== undefined && jimakuSelectedEntry === undefined && (
+                    {source === 'opensubtitles' && openSubtitlesResults !== undefined && (
+                        <Stack spacing={1} sx={{ flex: 1, minWidth: 0 }}>
+                            <Typography variant="subtitle1" sx={{ flexGrow: 1 }}>
+                                {t('onlineSubtitleSources.availableFiles')} ({openSubtitlesResults.length})
+                            </Typography>
+                            {openSubtitlesResults.length === 0 ? (
+                                <Typography variant="body2" color="textSecondary">
+                                    {t('onlineSubtitleSources.noFiles')}
+                                </Typography>
+                            ) : (
+                                <List
+                                    dense
+                                    sx={{
+                                        maxHeight: 320,
+                                        overflow: 'auto',
+                                        border: '1px solid',
+                                        borderColor: 'divider',
+                                    }}
+                                >
+                                    {openSubtitlesResults.map((result) => (
+                                        <ListItemButton
+                                            key={result.fileId}
+                                            onClick={() => handleImportOpenSubtitle(result)}
+                                            disabled={loadingFiles}
+                                        >
+                                            <ListItemText
+                                                primary={result.fileName}
+                                                secondary={[
+                                                    result.language?.toUpperCase(),
+                                                    result.downloadCount !== undefined
+                                                        ? t('onlineSubtitleSources.downloadCount', {
+                                                              count: result.downloadCount,
+                                                          })
+                                                        : undefined,
+                                                ]
+                                                    .filter(Boolean)
+                                                    .join(' · ')}
+                                            />
+                                        </ListItemButton>
+                                    ))}
+                                </List>
+                            )}
+                        </Stack>
+                    )}
+
+                    {source === 'jimaku' && lastQuery !== undefined && jimakuSelectedEntry === undefined && (
                         <Stack spacing={1} sx={{ flex: 1, minWidth: 0 }}>
                             <Typography variant="subtitle1" sx={{ flexGrow: 1 }}>
                                 {t('onlineSubtitleSources.entries')} ({jimakuEntries.length})
@@ -409,7 +614,7 @@ export default function OnlineSubtitleSourceDialog({
                         </Stack>
                     )}
 
-                    {jimakuSelectedEntry !== undefined && (
+                    {source === 'jimaku' && jimakuSelectedEntry !== undefined && (
                         <Stack spacing={1} sx={{ flex: 1, minWidth: 0 }}>
                             <Box display="flex" sx={{ alignItems: 'center' }}>
                                 <IconButton

@@ -342,15 +342,30 @@ export default function VideoDataSyncUi({ bridge }: Props) {
     }, []);
 
     const handleImportOnlineFile = useCallback(
-        async ({ name, url }: { name: string; url: string }) => {
-            const response = await fetch(url);
+        async ({ name, url, content }: { name: string; url?: string; content?: string }) => {
+            // SV-44: OpenSubtitles results arrive as text, already downloaded by
+            // the background (the download needs the API key, which deliberately
+            // never reaches this iframe). Jimaku results are a public URL this
+            // frame can fetch itself. Both end up as the same Blob.
+            let blob: Blob;
 
-            if (!response.ok) {
-                throw new Error(`Subtitle retrieval failed with status ${response.status} (${response.statusText}).`);
+            if (content !== undefined) {
+                blob = new Blob([content], { type: 'text/plain' });
+            } else if (url !== undefined) {
+                const response = await fetch(url);
+
+                if (!response.ok) {
+                    throw new Error(
+                        `Subtitle retrieval failed with status ${response.status} (${response.statusText}).`
+                    );
+                }
+
+                blob = await response.blob();
+            } else {
+                throw new Error('Subtitle candidate carried neither a URL nor content.');
             }
 
-            const blob = await response.blob();
-            const { normalizedName, extension } = normalizeOnlineSubtitleFileName(name, url);
+            const { normalizedName, extension } = normalizeOnlineSubtitleFileName(name, url ?? name);
             const file = new File([blob], normalizedName);
             const objectUrl = URL.createObjectURL(file);
             trackedLocalObjectUrlsRef.current.add(objectUrl);

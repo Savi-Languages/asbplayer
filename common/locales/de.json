@@ -740,7 +740,13 @@
         "noFiles": "No files",
         "searchCategory": "Search category",
         "categoryAnime": "Anime",
-        "categoryDrama": "Drama"
+        "categoryDrama": "Drama",
+        "sourceOpenSubtitles": "OpenSubtitles",
+        "sourceJimaku": "Jimaku (JA)",
+        "openSubtitlesNoApiKey": "Add an OpenSubtitles API key in Savi Settings to search this catalogue.",
+        "openSubtitlesSearchFailed": "OpenSubtitles search failed. Check your connection and try again.",
+        "openSubtitlesDownloadFailed": "Could not download that subtitle. Try another result.",
+        "downloadCount": "{{count}} downloads"
     },
     "savi": {
         "notConfigured": "Savi: daemon URL/token not configured in settings",

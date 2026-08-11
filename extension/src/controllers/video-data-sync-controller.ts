@@ -27,7 +27,9 @@ import { parseShowQuery, primarySubtag, selectTrackForLanguage } from '@/savi/tr
 import { decideLanguageGate } from '@/savi/language-gate';
 import { titlesOverlap } from '@/savi/subtitle-relevance';
 import { mutedEpisodes } from '@/savi/muted-episodes';
+import { mutedSites, siteKeyForUrl } from '@/savi/muted-sites';
 import { deriveEpisodeId } from '@/savi/episode';
+import { displayNameFor, localVideoName, videoFilenameFromUrl, type ParsedVideoName } from '@/savi/local-video';
 import { getCachedRoamingSettings, SaviRoamingSettings } from '@/savi/cloud-settings';
 import {
     SaviCommand,
@@ -89,6 +91,14 @@ export default class VideoDataSyncController {
     private _lastLanguagesSynced: { [key: string]: string[] };
     private _emptySubtitle: VideoDataSubtitleTrack;
     private _syncedData?: VideoData;
+    /** Filename-derived identity for a delegate-less page (SV-44). Set only on
+     *  that path; a streaming page leaves it undefined and keeps using the
+     *  site's own basename. */
+    private _localVideo?: ParsedVideoName;
+    /** Whether the delegate-less page's URL actually named a video FILE, as
+     *  opposed to a title scraped off an ordinary page. Gates the failure
+     *  prompt — see `_syncGenericVideoPage`. */
+    private _localVideoIsAFile = false;
     private _wasPaused?: boolean;
     private _playBlocker?: () => void;
     private _openedLocation?: string;
@@ -165,10 +175,6 @@ export default class VideoDataSyncController {
     }
 
     async requestSubtitles() {
-        if (!this._context.hasPageScript) {
-            return;
-        }
-
         // While the picker is open on the same location, skip refresh so
         // player events do not clobber an in-progress user selection. On a
         // true soft-navigation, dismiss the stale picker and continue.
@@ -182,10 +188,18 @@ export default class VideoDataSyncController {
 
         const pageDelegate = await currentPageDelegate();
 
-        if (!pageDelegate?.isVideoPage()) {
+        // SV-44: a video played from disk (or on any site we have no delegate
+        // for) has no page script to ask for tracks — which is exactly why
+        // both gates below used to return here, taking the savi auto-load and
+        // the picker with them. There is still a video and still a filename,
+        // so it gets its own path rather than nothing.
+        if (!this._context.hasPageScript || !pageDelegate?.isVideoPage()) {
+            await this._syncGenericVideoPage();
             return;
         }
 
+        this._localVideo = undefined;
+        this._localVideoIsAFile = false;
         this._syncedData = undefined;
         this._autoSyncAttempted = false;
         this._saviAutoLoadAttempted = false;
@@ -209,6 +223,63 @@ export default class VideoDataSyncController {
         } else {
             document.dispatchEvent(new CustomEvent('asbplayer-get-synced-data'));
         }
+    }
+
+    /**
+     * Subtitle sync for a page with no delegate: a `file://` video, or any site
+     * asbplayer does not know (SV-44).
+     *
+     * There is no page script to ask for tracks, so instead of dispatching
+     * `asbplayer-get-synced-data` and awaiting a reply, we synthesize the same
+     * `VideoData` locally from the filename and feed it through the identical
+     * `_setSyncedData` path. Everything downstream — the savi auto-load, the
+     * OpenSubtitles fallback, the picker — then works unchanged.
+     *
+     * `subtitles: []` (not `undefined`) is load-bearing: `undefined` means
+     * "still loading" to `_setSyncedData` and the picker, and would leave both
+     * waiting for a reply that is never coming. An empty array is the truth —
+     * we looked, and a bare video element offers no tracks.
+     */
+    private async _syncGenericVideoPage() {
+        this._syncedData = undefined;
+        this._localVideo = undefined;
+        this._localVideoIsAFile = false;
+        this._autoSyncAttempted = false;
+        this._saviAutoLoadAttempted = false;
+
+        // Only bother when the page is actually playing something. Without
+        // this, every ordinary web page with a stray <video> would mint an
+        // episode out of its document title.
+        if (!this._hasPlayableVideo()) {
+            return;
+        }
+
+        const parsed = localVideoName(window.location.href, document.title);
+
+        if (parsed.title.trim().length === 0) {
+            console.info('[savi local video] no usable name from the URL or page title — not searching');
+            return;
+        }
+
+        // Provenance decides whether a failed search is worth interrupting for.
+        // A URL that names a video FILE means the user deliberately opened one
+        // thing to watch; a name scraped from document.title could be any page
+        // that happens to contain a <video>, and prompting on those would fire
+        // on every news-site clip and autoplaying banner. See `_promptable`.
+        this._localVideoIsAFile = videoFilenameFromUrl(window.location.href) !== undefined;
+        this._localVideo = parsed;
+        await this._setSyncedData({ basename: displayNameFor(parsed), subtitles: [] });
+    }
+
+    /** Whether this binding's video is a real, playing-capable media element —
+     *  it has a source and a duration the browser could read. */
+    private _hasPlayableVideo(): boolean {
+        const video = this._context.video;
+        if (!video) {
+            return false;
+        }
+        const hasSource = Boolean(video.currentSrc || video.src);
+        return hasSource && (Number.isFinite(video.duration) ? video.duration > 0 : true);
     }
 
     async show({ reason, fromAsbplayerId }: ShowOptions) {
@@ -348,6 +419,18 @@ export default class VideoDataSyncController {
             if (await this._trySaviAutoLoad()) {
                 return;
             }
+
+            // SV-44: on a local video file, a failed auto-load used to be a
+            // console line and nothing else — leaving a video playing with no
+            // subtitles and no hint that anything could be done about it. A
+            // streaming page still has its own tracks to fall back on; a file
+            // on disk has nothing, so open the picker with the parsed name
+            // filled in and let the user search for it by hand.
+            if (this._localVideoIsAFile && !this.pickerVisible) {
+                console.info('[savi local video] no subtitles found automatically — opening the picker to search');
+                await this.show({ reason: VideoDataUiOpenReason.failedToAutoLoadPreferredTrack });
+                return;
+            }
         }
 
         if (this._syncedData?.subtitles !== undefined && (await this._canAutoSync())) {
@@ -423,6 +506,8 @@ export default class VideoDataSyncController {
                 targetLanguage,
                 episodeId,
                 mutedEpisodes: await mutedEpisodes(),
+                siteKey: siteKeyForUrl(window.location.href),
+                mutedSites: await mutedSites(),
             });
             this._context.applySaviLanguageGate?.(verdict);
             return verdict.active;
@@ -533,18 +618,74 @@ export default class VideoDataSyncController {
             return false;
         }
 
-        const { query, seasonNumber, episodeNumber } = parseShowQuery(this._syncedData?.basename ?? document.title);
+        const { query, seasonNumber, episodeNumber } = this._openSubtitlesQuery();
 
         if (query.trim().length === 0) {
             return false;
         }
 
+        return await this.fetchAndLoadOpenSubtitles({
+            query,
+            seasonNumber,
+            episodeNumber,
+            language: targetLanguage,
+            // Automatic search: the query is our guess, so the result has to be
+            // checked against it.
+            verifyAgainstQuery: true,
+        });
+    }
+
+    /**
+     * What to ask OpenSubtitles for. Prefers the filename parse on a local
+     * video (SV-44) — it already separated title from season/episode and knows
+     * the release year — and otherwise re-reads the site's basename, which is
+     * all a streaming page gives us.
+     */
+    private _openSubtitlesQuery(): { query: string; seasonNumber?: number; episodeNumber?: number } {
+        const local = this._localVideo;
+
+        if (local !== undefined && local.title.trim().length > 0) {
+            return {
+                query: local.title,
+                seasonNumber: local.seasonNumber,
+                episodeNumber: local.episodeNumber,
+            };
+        }
+
+        return parseShowQuery(this._syncedData?.basename ?? document.title);
+    }
+
+    /**
+     * Search OpenSubtitles and load the best result. Shared by the automatic
+     * auto-load and the picker's manual search (SV-44).
+     *
+     * `verifyAgainstQuery` is the difference between the two. The search is
+     * fuzzy and never returns "nothing" — given a title it does not have, it
+     * returns its nearest match — so an AUTOMATIC search must check the result
+     * against what it asked for, or a wrong-but-plausible subtitle gets loaded
+     * and every line of it feeds glossing and counts as exposure. A MANUAL
+     * search is the user telling us what this is, so the same check would be
+     * us overriding them with a worse guess; there it stays off.
+     */
+    async fetchAndLoadOpenSubtitles({
+        query,
+        seasonNumber,
+        episodeNumber,
+        language,
+        verifyAgainstQuery,
+    }: {
+        query: string;
+        seasonNumber?: number;
+        episodeNumber?: number;
+        language: string;
+        verifyAgainstQuery: boolean;
+    }): Promise<boolean> {
         const command: SaviCommand<SaviOpenSubtitlesFetchMessage> = {
             sender: 'savi-video',
             message: {
                 command: 'savi-opensubtitles-fetch',
                 query,
-                languages: primarySubtag(targetLanguage),
+                languages: primarySubtag(language),
                 seasonNumber,
                 episodeNumber,
             },
@@ -556,11 +697,7 @@ export default class VideoDataSyncController {
             return false;
         }
 
-        // The search is fuzzy and never returns "nothing" — verify the result is
-        // actually this video before loading it. Wrong subtitles are worse than
-        // none: they look plausible, and every line feeds glossing and counts as
-        // exposure.
-        if (!titlesOverlap(query, response.name)) {
+        if (verifyAgainstQuery && !titlesOverlap(query, response.name)) {
             console.info(
                 '[savi auto-load] discarding unrelated OpenSubtitles result "%s" for "%s"',
                 response.name ?? '(unnamed)',

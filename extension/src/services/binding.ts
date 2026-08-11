@@ -108,7 +108,7 @@ import { SpeechAccumulator } from '../savi/speech-stats';
 import { SaviInteractionClock } from '../savi/interaction-clock';
 import type { LanguageGateVerdict } from '../savi/language-gate';
 import { SaviLanguageHush } from '../savi/language-hush';
-import { muteEpisode } from '../savi/muted-episodes';
+import { muteSite, siteKeyForUrl } from '../savi/muted-sites';
 import { getCachedRoamingSettings } from '../savi/cloud-settings';
 import { deriveEpisodeId } from '../savi/episode';
 
@@ -209,11 +209,14 @@ export default class Binding {
     private _saviLanguageApplied = '';
     /** Offered only while the gate is guessing (`unknown`) — see language-hush.ts. */
     readonly saviLanguageHush = new SaviLanguageHush(() => {
-        const episodeId = deriveEpisodeId(window.location.href, document.title);
-        if (episodeId === undefined) {
+        // SV-44: site scope, not episode scope. A page whose URL cannot be
+        // parsed has no site to mute, so the click is a no-op rather than a
+        // silent failure that leaves the button looking broken.
+        const siteKey = siteKeyForUrl(window.location.href);
+        if (siteKey === undefined) {
             return;
         }
-        void muteEpisode(episodeId).then(() => {
+        void muteSite(siteKey).then(() => {
             // Keep the language this verdict is about, so the guard in
             // applySaviLanguageGate compares like with like.
             this.applySaviLanguageGate({

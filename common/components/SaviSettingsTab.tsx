@@ -3,6 +3,12 @@ import Button from '@mui/material/Button';
 import Stack from '@mui/material/Stack';
 import Switch from '@mui/material/Switch';
 import Typography from '@mui/material/Typography';
+import FormHelperText from '@mui/material/FormHelperText';
+import IconButton from '@mui/material/IconButton';
+import List from '@mui/material/List';
+import ListItem from '@mui/material/ListItem';
+import ListItemText from '@mui/material/ListItemText';
+import DeleteIcon from '@mui/icons-material/Delete';
 import { AsbplayerSettings } from '../settings';
 import SettingsSection from './SettingsSection';
 import SettingsTextField from './SettingsTextField';
@@ -53,11 +59,25 @@ interface Props {
     // the auto-load fallback reads it from the account automatically.
     saviTargetLanguage?: string;
     onSaviTargetLanguageChange?: (value: string) => void;
+    // Sites savi was switched off for from the in-page button (SV-44). Extension
+    // hosts only — the list lives in browser.storage, which the web app has no
+    // access to, so it passes neither prop and the section simply does not
+    // render. Without this the button would be a one-way door: savi goes quiet
+    // on a site with nothing anywhere to say why, or to undo it.
+    saviMutedSites?: string[];
+    onSaviUnmuteSite?: (siteKey: string) => void;
+    // Whether Chrome lets the extension see file:// pages (SV-44). Extension
+    // hosts only. 'unknown' (the web app, or Firefox, which has no such toggle)
+    // renders nothing.
+    saviFileUrlAccess?: 'unknown' | 'allowed' | 'blocked';
 }
 
 const SaviSettingsTab: React.FC<Props> = ({
     settings,
     onSettingChanged,
+    saviMutedSites,
+    onSaviUnmuteSite,
+    saviFileUrlAccess,
     saviAccountEmail,
     onSaviSignIn,
     onSaviSignOut,
@@ -166,6 +186,44 @@ const SaviSettingsTab: React.FC<Props> = ({
                     value={saviDaemonToken}
                     onChange={(e) => onSettingChanged('saviDaemonToken', e.target.value)}
                 />
+            )}
+
+            {saviMutedSites !== undefined && saviMutedSites.length > 0 && onSaviUnmuteSite !== undefined && (
+                <>
+                    <SettingsSection>{'Sites Savi is switched off for'}</SettingsSection>
+                    <FormHelperText>
+                        {'You pressed “Don’t use Savi on this site” on these. Remove one to let Savi run there again.'}
+                    </FormHelperText>
+                    <List dense>
+                        {saviMutedSites.map((site) => (
+                            <ListItem
+                                key={site}
+                                secondaryAction={
+                                    <IconButton
+                                        edge="end"
+                                        aria-label={`Use Savi on ${site} again`}
+                                        onClick={() => onSaviUnmuteSite(site)}
+                                    >
+                                        <DeleteIcon fontSize="small" />
+                                    </IconButton>
+                                }
+                            >
+                                <ListItemText primary={site === 'file://' ? 'Local files (file://)' : site} />
+                            </ListItem>
+                        ))}
+                    </List>
+                </>
+            )}
+
+            {saviFileUrlAccess === 'blocked' && (
+                <>
+                    <SettingsSection>{'Local video files'}</SettingsSection>
+                    <FormHelperText>
+                        {
+                            'Savi cannot see videos you open from disk. Chrome blocks extensions from file:// pages until you allow it per-extension, and while it is off nothing Savi does runs on those pages at all — which is why this notice is here rather than on the video. Open chrome://extensions, find asbplayer, and turn on “Allow access to file URLs”, then reload the video tab.'
+                        }
+                    </FormHelperText>
+                </>
             )}
 
             <SettingsSection>{'Subtitles'}</SettingsSection>
