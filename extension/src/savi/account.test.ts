@@ -1,4 +1,4 @@
-import { currentAccessToken, daemonToken, remoteDaemonToken, signIn, signOut, storedAccount } from './account';
+import { currentAccessToken, daemonCredentials, remoteDaemonCredentials, signIn, signOut, storedAccount } from './account';
 
 // account.ts talks to browser.storage.local + fetch (GoTrue REST); both are
 // faked in-memory, following recording-intent.test.ts's browser-fake pattern.
@@ -127,8 +127,8 @@ describe('savi account', () => {
 
         expect(await currentAccessToken()).toBeUndefined();
         expect(await storedAccount()).toBeUndefined();
-        // ...and daemon requests fall back to the LAN token.
-        expect(await daemonToken(' lan-token ')).toBe('lan-token');
+        // ...and daemon requests keep their LAN bearer, with no identity sent.
+        expect(await daemonCredentials(' lan-token ')).toEqual({ bearer: 'lan-token', accountJwt: undefined });
     });
 
     it('a transient refresh failure keeps serving the still-valid token', async () => {
@@ -145,12 +145,17 @@ describe('savi account', () => {
         expect(await currentAccessToken()).toBeUndefined();
     });
 
-    it('daemonToken prefers the account token and falls back to the LAN token', async () => {
-        expect(await daemonToken('lan-token')).toBe('lan-token');
-        expect(await daemonToken('   ')).toBe('');
+    it('daemonCredentials keeps the LAN bearer and sends the account JWT separately', async () => {
+        // The credential split: signed in or not, the LAN token stays the
+        // bearer — identity rides alongside, never replacing capability.
+        expect(await daemonCredentials('lan-token')).toEqual({ bearer: 'lan-token', accountJwt: undefined });
+        expect(await daemonCredentials('   ')).toEqual({ bearer: '', accountJwt: undefined });
 
         store['saviAccount'] = storedSession(3600);
-        expect(await daemonToken('lan-token')).toBe('access-1');
+        expect(await daemonCredentials('lan-token')).toEqual({ bearer: 'lan-token', accountJwt: 'access-1' });
+        // No LAN token configured → the JWT doubles as the bearer (the daemon
+        // accepts the pinned owner's JWT as Authorization).
+        expect(await daemonCredentials('   ')).toEqual({ bearer: 'access-1', accountJwt: 'access-1' });
     });
 
     it('sign-out clears the session and best-effort revokes it', async () => {
@@ -167,9 +172,9 @@ describe('savi account', () => {
     });
 
     // The offscreen document has NO browser.storage (Chrome exposes only
-    // chrome.runtime messaging there) — remoteDaemonToken must work with
+    // chrome.runtime messaging there) — remoteDaemonCredentials must work with
     // messaging alone and never touch storage.
-    it('remoteDaemonToken asks the background and prefers its token', async () => {
+    it('remoteDaemonCredentials asks the background and carries its token as identity', async () => {
         delete (globalThis as any).browser.storage; // offscreen has no storage API
         (globalThis as any).browser.runtime = {
             sendMessage: jest.fn(async (message: any) =>
@@ -177,21 +182,23 @@ describe('savi account', () => {
             ),
         };
 
-        expect(await remoteDaemonToken('lan-token')).toBe('access-bg');
+        expect(await remoteDaemonCredentials('lan-token')).toEqual({ bearer: 'lan-token', accountJwt: 'access-bg' });
+        // No LAN token → the background's JWT doubles as the bearer.
+        expect(await remoteDaemonCredentials('  ')).toEqual({ bearer: 'access-bg', accountJwt: 'access-bg' });
     });
 
-    it('remoteDaemonToken falls back to the LAN token when the background has no session or is unreachable', async () => {
+    it('remoteDaemonCredentials keeps the LAN bearer when the background has no session or is unreachable', async () => {
         delete (globalThis as any).browser.storage;
         (globalThis as any).browser.runtime = {
             sendMessage: jest.fn(async () => ({ accessToken: undefined })),
         };
-        expect(await remoteDaemonToken(' lan-token ')).toBe('lan-token');
+        expect(await remoteDaemonCredentials(' lan-token ')).toEqual({ bearer: 'lan-token', accountJwt: undefined });
 
         (globalThis as any).browser.runtime = {
             sendMessage: jest.fn(async () => {
                 throw new Error('Could not establish connection');
             }),
         };
-        expect(await remoteDaemonToken('lan-token')).toBe('lan-token');
+        expect(await remoteDaemonCredentials('lan-token')).toEqual({ bearer: 'lan-token' });
     });
 });

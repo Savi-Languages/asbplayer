@@ -1,8 +1,11 @@
-// The savi ACCOUNT session (Supabase Auth) — unified auth's replacement for
-// the copy-pasted daemon LAN token. The user signs in once (options page /
-// popup) and every daemon request carries the account's JWT; the daemon
-// accepts it because the desktop app pinned this account as the machine's
-// owner (savi `POST /v2/auth/trust`).
+// The savi ACCOUNT session (Supabase Auth). The user signs in once (options
+// page / popup) and daemon requests carry the credential split: the LAN token
+// as the Authorization bearer (capability — may this browser talk to this
+// daemon) and the account's JWT in `X-Savi-Account` (identity — which cloud
+// account owns the request). The daemon verifies the identity against the
+// account the desktop app pinned as the machine's owner (savi
+// `POST /v2/auth/trust`); a wrong account degrades AI with a typed reason
+// instead of 401-ing every local endpoint.
 //
 // Deliberately NOT @supabase/supabase-js: we need exactly three GoTrue REST
 // calls (password grant, refresh grant, logout), storage must be
@@ -15,8 +18,8 @@
 //
 // The OFFSCREEN DOCUMENT is the exception: Chrome gives it no extension APIs
 // beyond `chrome.runtime` messaging — `browser.storage` is undefined there —
-// so it must use `remoteDaemonToken` (asks the background) instead of
-// `daemonToken`.
+// so it must use `remoteDaemonCredentials` (asks the background) instead of
+// `daemonCredentials`.
 //
 // The Supabase URL + publishable key are public client config (like a
 // Firebase web config) — the same values savi commits in apps/.env.
@@ -157,21 +160,39 @@ const accessTokenWithMargin = async (marginSeconds: number): Promise<string | un
  *  `undefined` when signed out or the session could not be kept alive. */
 export const currentAccessToken = (): Promise<string | undefined> => accessTokenWithMargin(readMarginSeconds);
 
-/** The bearer for a daemon request: the account's JWT when signed in, else the
- *  legacy LAN token from settings (the transition fallback — may be ''). Call
- *  this per REQUEST, not per session: JWTs expire ~hourly and a capture can
+/** The two credentials a daemon request carries — the credential split.
+ *  `bearer` is capability (the LAN token from settings), `accountJwt` is
+ *  identity (sent separately as `X-Savi-Account`). Keeping them apart is the
+ *  point: a wrong-account identity costs AI only, where the old JWT-as-bearer
+ *  scheme turned it into a 401 on every local endpoint.
+ *
+ *  With no LAN token configured the JWT doubles as the bearer — the daemon
+ *  accepts the pinned owner's JWT as Authorization (the desktop webview's
+ *  shape), so a signed-in extension works before any token is copied over.
+ *  `bearer` may still be '' (signed out AND no LAN token) — callers gate on it.
+ *
+ *  Resolve per REQUEST, not per session: JWTs expire ~hourly and a capture can
  *  outlive several of them. */
-export const daemonToken = async (lanToken: string): Promise<string> => (await currentAccessToken()) ?? lanToken.trim();
+export interface SaviDaemonCredentials {
+    readonly bearer: string;
+    readonly accountJwt?: string;
+}
+
+export const daemonCredentials = async (lanToken: string): Promise<SaviDaemonCredentials> => {
+    const accountJwt = await currentAccessToken();
+    const lan = lanToken.trim();
+    return { bearer: lan.length > 0 ? lan : (accountJwt ?? ''), accountJwt };
+};
 
 // ── Offscreen-document access ────────────────────────────────────────────
 // Offscreen documents have NO `browser.storage` (Chrome exposes only
-// `chrome.runtime` messaging there), so they can't call `daemonToken`
+// `chrome.runtime` messaging there), so they can't call `daemonCredentials`
 // directly — chunk uploads crashed on `undefined.local`. Instead the
 // background answers a token request over runtime messaging.
 
 const currentTokenCommand = 'savi-current-account-token';
 
-/** Background-side responder for `remoteDaemonToken`. Registered by
+/** Background-side responder for `remoteDaemonCredentials`. Registered by
  *  `bindSaviAccountRefresh` on every worker wake. Ignores (returns undefined
  *  for) every other message so coexisting listeners are unaffected. */
 const bindTokenServer = (): void => {
@@ -189,16 +210,18 @@ const bindTokenServer = (): void => {
     );
 };
 
-/** `daemonToken` for storage-less contexts (the offscreen document): asks the
- *  background for the current account token, LAN token as the fallback. Call
- *  per REQUEST, like `daemonToken`. */
-export const remoteDaemonToken = async (lanToken: string): Promise<string> => {
+/** `daemonCredentials` for storage-less contexts (the offscreen document):
+ *  asks the background for the current account token. Call per REQUEST, like
+ *  `daemonCredentials`. */
+export const remoteDaemonCredentials = async (lanToken: string): Promise<SaviDaemonCredentials> => {
+    const lan = lanToken.trim();
     try {
         const response: any = await browser.runtime.sendMessage({ command: currentTokenCommand });
-        return (response?.accessToken as string | undefined) ?? lanToken.trim();
+        const accountJwt = (response?.accessToken as string | undefined) ?? undefined;
+        return { bearer: lan.length > 0 ? lan : (accountJwt ?? ''), accountJwt };
     } catch (e) {
         // No listener / worker unreachable — the LAN token still works.
-        return lanToken.trim();
+        return { bearer: lan };
     }
 };
 

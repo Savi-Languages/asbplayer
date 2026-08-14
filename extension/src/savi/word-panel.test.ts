@@ -32,30 +32,42 @@ describe('SaviWordPanel.setExplanation', () => {
         expect(explainText()).toContain('the noun "improvement"');
     });
 
-    it('points at the desktop app — NOT at a busy provider — when there is no account', () => {
+    it('points at signing in — NOT at a busy provider — when there is no account', () => {
         // The whole point of this change. Without an account token the daemon
         // never reaches the cloud, so no provider was ever involved; the old copy
         // blamed one and sent debugging after rate limits that did not exist.
+        // The extension owns its sign-in, so signed-out means exactly that and
+        // the fix is signing in HERE (docs/auth-architecture-decision.md).
         const panel = openPanel();
         panel.setExplanation(null, 'noAccount');
         const text = explainText();
-        expect(text).toContain('Start the savi desktop app');
+        expect(text).toContain('Sign in from savi settings');
         expect(text.toLowerCase()).not.toContain('provider');
         expect(text.toLowerCase()).not.toContain('busy');
     });
 
-    it('leads with the app, and only then mentions signing in', () => {
-        // The common case is a valid account whose published session went stale
-        // because the app that refreshes it is closed. "Sign in" sends that user
-        // to fix something that is not broken, so it must not lead the message —
-        // it stays available in the hint for someone with no account at all.
+    it('a wrong account is named as such — a real session, the wrong one', () => {
+        // The daemon verified a validly-signed session for a DIFFERENT account
+        // than the one the desktop app pinned. Generic signed-out copy would
+        // send the user to sign in again into the same wrong account.
         const panel = openPanel();
-        panel.setExplanation(null, 'noAccount');
+        panel.setExplanation(null, 'accountMismatch');
         const text = explainText();
-        const app = text.indexOf('Start the savi desktop app');
-        const signIn = text.indexOf('Sign in from savi settings');
-        expect(app).toBeGreaterThanOrEqual(0);
-        expect(signIn).toBeGreaterThan(app);
+        expect(text).toContain('different savi account');
+        expect(text).toContain('same account');
+        expect(text.toLowerCase()).not.toContain('provider');
+    });
+
+    it('an unverified account points at the desktop app, not at sign-in', () => {
+        // Trust is provisioned by the desktop app; until it has run and signed
+        // in once, even the RIGHT account cannot verify. Both sign-in
+        // instructions would be wrong advice here.
+        const panel = openPanel();
+        panel.setExplanation(null, 'accountUnverified');
+        const text = explainText();
+        expect(text).toContain("hasn't verified your account");
+        expect(text).toContain('Start the desktop app');
+        expect(text.toLowerCase()).not.toContain('provider');
     });
 
     it('names the daemon when the desktop app is unreachable', () => {
@@ -91,9 +103,9 @@ describe('SaviWordPanel.setExplanation', () => {
     it('replaces a previous message instead of stacking onto it', () => {
         const panel = openPanel();
         panel.setExplanation(null, 'noAccount');
-        panel.setExplanation('App running now — 改善 means improvement.');
+        panel.setExplanation('Signed in now — 改善 means improvement.');
         const text = explainText();
         expect(text).toContain('means improvement');
-        expect(text).not.toContain('Start the savi desktop app');
+        expect(text).not.toContain('Sign in from savi settings');
     });
 });
