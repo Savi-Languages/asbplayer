@@ -1,7 +1,6 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import Grid, { GridProps } from '@mui/material/Grid';
 import IconButton from '@mui/material/IconButton';
-import Button from '@mui/material/Button';
 import NavigateBeforeIcon from '@mui/icons-material/NavigateBefore';
 import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 import TuneIcon from '@mui/icons-material/Tune';
@@ -381,28 +380,12 @@ const MobileVideoOverlay = React.forwardRef<HTMLDivElement, Props>(function Mobi
                     </Grid>
                 )}
                 {/* savi: "Playback Mode" and the offset/playback-rate number
-                    control removed per user request; pick a speed directly. */}
-                {!model.recording &&
-                    [0.5, 0.75, 1, 1.25, 1.5].map((rate) => {
-                        const active = Math.abs(model.playbackRate - rate) < 0.001;
-                        return (
-                            <Grid item key={rate}>
-                                <Button
-                                    size="small"
-                                    onClick={() => onPlaybackRate(rate)}
-                                    style={{
-                                        minWidth: 0,
-                                        padding: '2px 7px',
-                                        fontWeight: active ? 700 : 500,
-                                        color: active ? '#fff' : 'rgba(255, 255, 255, 0.6)',
-                                        backgroundColor: active ? 'rgba(255, 255, 255, 0.16)' : 'transparent',
-                                    }}
-                                >
-                                    {rate}×
-                                </Button>
-                            </Grid>
-                        );
-                    })}
+                    control removed per user request. The 0.5–1.5× speed picker
+                    lives in savi's own floating control (savi/speed-control.ts),
+                    NOT here: this bar is hidden while `model.recording`, and
+                    slowing down mid-capture is exactly when the picker is wanted
+                    (capture tempo-corrects 0.5–2.0). A copy here rendered a
+                    second, identical row over the video. */}
             </GridContainer>
             {playModeSelectorOpen && (
                 <PlayModeSelector
