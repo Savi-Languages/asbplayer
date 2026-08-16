@@ -24,6 +24,13 @@ export type LanguageGateReason = 'match' | 'mismatch' | 'unknown' | 'muted';
 export interface LanguageGateVerdict {
     readonly active: boolean;
     readonly reason: LanguageGateReason;
+    /** The target language this verdict was reached ABOUT ('' when unset).
+     *
+     *  Carried so the binding can tell "same conclusion, same language" (a
+     *  no-op re-sync) from "same conclusion, different language" — which is what
+     *  a sign-in looks like: `'' → 'fr'` while the verdict stays `active: true`
+     *  because the gate fails open both before and after (SV-38). */
+    readonly targetLanguage: string;
 }
 
 export interface LanguageGateInput {
@@ -35,6 +42,11 @@ export interface LanguageGateInput {
     readonly episodeId?: string;
     /** Episodes the user muted by hand — the escape hatch for sites with no signal. */
     readonly mutedEpisodes?: readonly string[];
+    /** Mute key for the current page (`siteKeyForUrl`), when it has one. */
+    readonly siteKey?: string;
+    /** Sites the user switched savi off for entirely (SV-44). Coarser than a
+     *  muted episode and checked the same way. */
+    readonly mutedSites?: readonly string[];
 }
 
 /**
@@ -66,25 +78,37 @@ export function decideLanguageGate({
     targetLanguage,
     episodeId,
     mutedEpisodes,
+    siteKey,
+    mutedSites,
 }: LanguageGateInput): LanguageGateVerdict {
     // A hand mute beats every automatic conclusion: it is the user telling us
     // directly, and it is the only recourse where there is no signal at all.
-    if (episodeId !== undefined && mutedEpisodes?.includes(episodeId)) {
-        return { active: false, reason: 'muted' };
+    const target = targetLanguage.trim();
+
+    // Site first — it is the broader statement ("never here"), so it should win
+    // regardless of what any per-episode entry says.
+    if (siteKey !== undefined && mutedSites?.includes(siteKey)) {
+        return { active: false, reason: 'muted', targetLanguage: target };
     }
 
-    const target = targetLanguage.trim();
+    // Per-episode mutes predate the site switch (SV-44 moved the button to site
+    // scope). They are still honoured: silently un-muting a video somebody
+    // muted on purpose would be a regression, and the entries cost nothing.
+    if (episodeId !== undefined && mutedEpisodes?.includes(episodeId)) {
+        return { active: false, reason: 'muted', targetLanguage: target };
+    }
+
     if (target.length === 0 || spokenLanguage === undefined) {
-        return { active: true, reason: 'unknown' };
+        return { active: true, reason: 'unknown', targetLanguage: target };
     }
 
     const spoken = spokenLanguage.trim();
     if (spoken.length === 0) {
-        return { active: true, reason: 'unknown' };
+        return { active: true, reason: 'unknown', targetLanguage: target };
     }
 
     // Compare primary subtags: es-419 and es-ES are both Spanish for our purposes.
     return primarySubtag(spoken) === primarySubtag(target)
-        ? { active: true, reason: 'match' }
-        : { active: false, reason: 'mismatch' };
+        ? { active: true, reason: 'match', targetLanguage: target }
+        : { active: false, reason: 'mismatch', targetLanguage: target };
 }

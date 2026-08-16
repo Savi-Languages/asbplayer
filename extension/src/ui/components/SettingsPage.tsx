@@ -21,6 +21,8 @@ import { DictionaryProvider } from '@project/common/dictionary-db';
 import { useLocationHash } from '@project/common/hooks/use-location-hash';
 import { useSaviAccount } from '../hooks/use-savi-account';
 import { useSaviRoamingSettings } from '../hooks/use-savi-roaming-settings';
+import { useSaviMutedSites } from '../hooks/use-savi-muted-sites';
+import { useFileUrlAccess } from '../hooks/use-file-url-access';
 
 const useStyles = makeStyles<Theme>((theme) => ({
     root: {
@@ -88,8 +90,10 @@ const SettingsPage = ({
     }, [updateLocalFontsPermission, updateLocalFonts]);
 
     const commands = useCommandKeyBinds();
-    const saviAccount = useSaviAccount();
-    const saviRoaming = useSaviRoamingSettings(settings?.saviCloudUrl ?? '');
+    const saviAccount = useSaviAccount(settings?.saviCloudUrl ?? '');
+    const saviRoaming = useSaviRoamingSettings(settings?.saviCloudUrl ?? '', saviAccount.email ?? '');
+    const saviMutedSites = useSaviMutedSites();
+    const saviFileUrlAccess = useFileUrlAccess();
 
     const handleOpenExtensionShortcuts = useCallback(() => {
         browser.tabs.create({ active: true, url: 'chrome://extensions/shortcuts' });
@@ -154,6 +158,9 @@ const SettingsPage = ({
                         onSaviSignOut={saviAccount.signOut}
                         saviTargetLanguage={saviRoaming.targetLanguage}
                         onSaviTargetLanguageChange={saviRoaming.setTargetLanguage}
+                        saviMutedSites={saviMutedSites.sites}
+                        onSaviUnmuteSite={saviMutedSites.unmute}
+                        saviFileUrlAccess={saviFileUrlAccess}
                     />
                 </DialogContent>
                 <Box style={{ marginBottom: theme.spacing(2) }} className={classes.profilesContainer}>

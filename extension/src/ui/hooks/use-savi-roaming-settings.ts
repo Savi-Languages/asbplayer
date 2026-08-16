@@ -25,7 +25,16 @@ export interface SaviRoamingSettingsHook {
     readonly setTargetLanguage: (value: string) => void;
 }
 
-export const useSaviRoamingSettings = (cloudUrl: string): SaviRoamingSettingsHook => {
+export const useSaviRoamingSettings = (
+    cloudUrl: string,
+    // SV-38: signing in is what makes the cloud readable at all — before it,
+    // `loadRoamingSettings` short-circuits (no token) and returns the cache.
+    // Without this in the dependency list the effect never re-ran after
+    // sign-in, so the page kept showing an empty target language until it was
+    // re-mounted. Any value that changes on sign-in works; the account email is
+    // the one this page already has.
+    accountKey: string = ''
+): SaviRoamingSettingsHook => {
     const [state, setState] = useState<SaviRoamingSettings>(DEFAULT_ROAMING_SETTINGS);
     const [loaded, setLoaded] = useState(false);
 
@@ -58,7 +67,7 @@ export const useSaviRoamingSettings = (cloudUrl: string): SaviRoamingSettingsHoo
         return () => {
             cancelled = true;
         };
-    }, [cloudUrl]);
+    }, [cloudUrl, accountKey]);
 
     const update = useCallback(
         (key: WritableRoamingKey, value: string) => {

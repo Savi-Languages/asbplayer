@@ -549,6 +549,34 @@ export interface VideoDataUiBridgeSetOnlineSubtitleSourceConfigMessage extends M
     readonly state: Partial<OnlineSubtitleSourceConfig>;
 }
 
+/** SV-44: the picker's manual OpenSubtitles search. The user typed a name for
+ *  a video we could not identify (a local file, an unrecognized site), so this
+ *  carries their term verbatim — the automatic relevance check is deliberately
+ *  skipped for it, since the user is the better authority on what they are
+ *  watching.
+ *
+ *  Goes over the picker BRIDGE, not `browser.runtime`, and extends
+ *  `MessageWithId` for the reply. The picker is a `srcdoc` iframe, which
+ *  inherits the PAGE's origin rather than the extension's — so it has no
+ *  extension APIs at all, and the content script has to make the call on its
+ *  behalf. No target language is carried: the content script reads the roaming
+ *  settings (which the iframe also cannot) and fills it in.
+ */
+export interface VideoDataUiBridgeSearchOnlineSubtitlesMessage extends MessageWithId {
+    readonly command: 'searchOnlineSubtitles';
+    readonly query: string;
+    readonly seasonNumber?: number;
+    readonly episodeNumber?: number;
+}
+
+/** SV-44: download one search result, by the same route and for the same
+ *  reason. The API key never leaves the background. */
+export interface VideoDataUiBridgeDownloadOnlineSubtitleMessage extends MessageWithId {
+    readonly command: 'downloadOnlineSubtitle';
+    readonly fileId: number;
+    readonly fileName: string;
+}
+
 export interface CropAndResizeMessage extends Message, ImageCaptureParams {
     readonly command: 'crop-and-resize';
     readonly dataUrl: string;

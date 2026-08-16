@@ -41,6 +41,13 @@ const STOPWORDS = new Set([
     'subs',
     'english',
     'spanish',
+    // SV-33 — a language name in a release filename says which SUBTITLE this
+    // is, never which show, so it carries no identity for matching.
+    'french',
+    'german',
+    'francais',
+    'français',
+    'deutsch',
     'season',
     'episode',
 ]);

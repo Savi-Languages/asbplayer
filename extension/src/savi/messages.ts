@@ -345,6 +345,56 @@ export interface SaviOpenSubtitlesFetchResponse {
     readonly errorMessage?: string;
 }
 
+// SV-44: the same catalogue, driven BY HAND from the picker's online-subtitle
+// dialog, for a video we could not identify ourselves (a local file, a site
+// with no delegate).
+//
+// Split into search + download-by-id, unlike the automatic
+// `savi-opensubtitles-fetch` above, because the two flows want different
+// things. The automatic one takes the best result sight-unseen — it has to,
+// there is nobody to ask. Here the user is watching, so they see the candidate
+// list and pick; `errorMessage` is surfaced rather than swallowed, because a
+// search the user ASKED for that quietly returns nothing is a bug report
+// waiting to happen ("I clicked search and nothing happened").
+export interface SaviOpenSubtitlesSearchMessage {
+    readonly command: 'savi-opensubtitles-search';
+    readonly query: string;
+    /** Comma-separated ISO 639-1 codes. Empty searches every language. */
+    readonly languages: string;
+    readonly seasonNumber?: number;
+    readonly episodeNumber?: number;
+}
+
+export interface SaviOpenSubtitlesSearchResult {
+    readonly fileId: number;
+    readonly fileName: string;
+    readonly language?: string;
+    readonly downloadCount?: number;
+    /** The release the subtitle was timed against. Surfaced because
+     *  OpenSubtitles' language tag is user-supplied and sometimes wrong — a
+     *  French-tagged entry really did turn out to be Czech (SV-44). */
+    readonly release?: string;
+}
+
+export interface SaviOpenSubtitlesSearchResponse {
+    readonly ok: boolean;
+    readonly results?: SaviOpenSubtitlesSearchResult[];
+    readonly errorMessage?: string;
+}
+
+export interface SaviOpenSubtitlesDownloadMessage {
+    readonly command: 'savi-opensubtitles-download';
+    readonly fileId: number;
+    readonly fileName: string;
+}
+
+export interface SaviOpenSubtitlesDownloadResponse {
+    readonly ok: boolean;
+    readonly name?: string;
+    readonly content?: string;
+    readonly errorMessage?: string;
+}
+
 // Fetch the freshest account-roaming settings (target language + OpenSubtitles
 // key) from the cloud, refreshing the local cache. The content script asks the
 // background because only it can reach the cloud (CORS / host permission). Used

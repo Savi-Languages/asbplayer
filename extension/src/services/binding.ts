@@ -108,7 +108,7 @@ import { SpeechAccumulator } from '../savi/speech-stats';
 import { SaviInteractionClock } from '../savi/interaction-clock';
 import type { LanguageGateVerdict } from '../savi/language-gate';
 import { SaviLanguageHush } from '../savi/language-hush';
-import { muteEpisode } from '../savi/muted-episodes';
+import { muteSite, siteKeyForUrl } from '../savi/muted-sites';
 import { getCachedRoamingSettings } from '../savi/cloud-settings';
 import { deriveEpisodeId } from '../savi/episode';
 
@@ -204,14 +204,26 @@ export default class Binding {
     /** Last language verdict applied, so a re-sync that reaches the same
      *  conclusion doesn't restart the cluster (or re-log) on every poll. */
     private _saviLanguageActive = true;
+    /** The target language the last verdict was applied FOR. Distinct from the
+     *  verdict itself: signing in changes '' → 'fr' without flipping `active`. */
+    private _saviLanguageApplied = '';
     /** Offered only while the gate is guessing (`unknown`) — see language-hush.ts. */
     readonly saviLanguageHush = new SaviLanguageHush(() => {
-        const episodeId = deriveEpisodeId(window.location.href, document.title);
-        if (episodeId === undefined) {
+        // SV-44: site scope, not episode scope. A page whose URL cannot be
+        // parsed has no site to mute, so the click is a no-op rather than a
+        // silent failure that leaves the button looking broken.
+        const siteKey = siteKeyForUrl(window.location.href);
+        if (siteKey === undefined) {
             return;
         }
-        void muteEpisode(episodeId).then(() => {
-            this.applySaviLanguageGate({ active: false, reason: 'muted' });
+        void muteSite(siteKey).then(() => {
+            // Keep the language this verdict is about, so the guard in
+            // applySaviLanguageGate compares like with like.
+            this.applySaviLanguageGate({
+                active: false,
+                reason: 'muted',
+                targetLanguage: this._saviLanguageApplied,
+            });
         });
     });
 
@@ -690,10 +702,24 @@ export default class Binding {
             this.saviLanguageHush.hide();
         }
 
-        if (verdict.active === this._saviLanguageActive) {
+        // Idempotent on the VERDICT AND the language it was reached about.
+        //
+        // SV-38: comparing only `active` made this the third place a sign-in
+        // went nowhere. The gate starts optimistic (`_saviLanguageActive =
+        // true`), and the video data sync fetches the target language fresh
+        // from the cloud — so the first verdict after signing in is
+        // `active: true`, identical to the optimistic default, and this
+        // returned early without ever re-running `start()`. The cluster stayed
+        // armed against the empty language it bound with.
+        //
+        // Tracking the language too means a signed-out→signed-in transition
+        // (`'' → 'fr'`) re-arms even though the verdict never flipped.
+        const lang = verdict.targetLanguage ?? '';
+        if (verdict.active === this._saviLanguageActive && lang === this._saviLanguageApplied) {
             return;
         }
         this._saviLanguageActive = verdict.active;
+        this._saviLanguageApplied = lang;
 
         if (!verdict.active) {
             console.info(
@@ -1386,8 +1412,18 @@ export default class Binding {
         this.subtitleController.subtitleAnnotations.settingsUpdated(currentSettings);
         this.subtitleController.setSubtitleSettings(currentSettings);
         // Re-arm with the current toggle + target language (both may change).
+        //
+        // SV-38: the gloss controllers belong here too. Each caches the target
+        // language at `start()` from the local roaming cache, and that cache is
+        // EMPTY while signed out — so a sign-in with this tab already open left
+        // glossing armed against `''` until the page was reloaded. The reporters
+        // were re-armed here and glossing was not, which is exactly why the
+        // language setting appeared to "take effect" for some features and not
+        // others.
         void this.saviEncounterReporter.start();
         void this.saviEngagementReporter.start();
+        void this.saviGlossController.start();
+        void this.saviGlossHover.start();
 
         if (convertNetflixRubyChanged || subtitleHtmlChanged) {
             this.subtitleController.cacheHtml();

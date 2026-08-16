@@ -33,6 +33,10 @@ import {
     SaviMineLineResponse,
     SaviOpenSubtitlesFetchMessage,
     SaviOpenSubtitlesFetchResponse,
+    SaviOpenSubtitlesSearchMessage,
+    SaviOpenSubtitlesSearchResponse,
+    SaviOpenSubtitlesDownloadMessage,
+    SaviOpenSubtitlesDownloadResponse,
     SaviPlaybackStateMessage,
     SaviPlaybackStateResponse,
     SaviRoamingSettingsResponse,
@@ -206,6 +210,26 @@ export default class SaviCommandHandler implements CommandHandler {
                         } as SaviOpenSubtitlesFetchResponse)
                     );
                 return true;
+            case 'savi-opensubtitles-search':
+                this._searchOpenSubtitles(command.message as SaviOpenSubtitlesSearchMessage)
+                    .then(sendResponse)
+                    .catch((e) =>
+                        sendResponse({
+                            ok: false,
+                            errorMessage: e instanceof Error ? e.message : String(e),
+                        } as SaviOpenSubtitlesSearchResponse)
+                    );
+                return true;
+            case 'savi-opensubtitles-download':
+                this._downloadOpenSubtitle(command.message as SaviOpenSubtitlesDownloadMessage)
+                    .then(sendResponse)
+                    .catch((e) =>
+                        sendResponse({
+                            ok: false,
+                            errorMessage: e instanceof Error ? e.message : String(e),
+                        } as SaviOpenSubtitlesDownloadResponse)
+                    );
+                return true;
             case 'savi-roaming-settings':
                 this._roamingSettings()
                     .then(sendResponse)
@@ -276,6 +300,61 @@ export default class SaviCommandHandler implements CommandHandler {
         }
 
         return { ok: true, name: subtitle.fileName, content: subtitle.content };
+    }
+
+    // SV-44: the hand-driven half of the same catalogue — list candidates for a
+    // query the USER typed, then download the one they pick.
+    //
+    // Unlike the automatic fallback above, a missing key is reported rather
+    // than swallowed: this runs because someone pressed Search, and silence
+    // would read as a broken button rather than as "you have not set a key".
+    private async _searchOpenSubtitles(
+        message: SaviOpenSubtitlesSearchMessage
+    ): Promise<SaviOpenSubtitlesSearchResponse> {
+        const { openSubtitlesApiKey } = await getCachedRoamingSettings();
+
+        if (openSubtitlesApiKey.trim().length === 0) {
+            return { ok: false, errorMessage: 'noApiKey' };
+        }
+
+        const client = new OpenSubtitlesClient({ apiKey: openSubtitlesApiKey });
+        const results = await client.search({
+            query: message.query,
+            languages: message.languages,
+            seasonNumber: message.seasonNumber,
+            episodeNumber: message.episodeNumber,
+        });
+
+        return {
+            ok: true,
+            results: results.map((file) => ({
+                fileId: file.fileId,
+                fileName: file.fileName,
+                language: file.language,
+                downloadCount: file.downloadCount,
+                release: file.release,
+            })),
+        };
+    }
+
+    private async _downloadOpenSubtitle(
+        message: SaviOpenSubtitlesDownloadMessage
+    ): Promise<SaviOpenSubtitlesDownloadResponse> {
+        const { openSubtitlesApiKey } = await getCachedRoamingSettings();
+
+        if (openSubtitlesApiKey.trim().length === 0) {
+            return { ok: false, errorMessage: 'noApiKey' };
+        }
+
+        const client = new OpenSubtitlesClient({ apiKey: openSubtitlesApiKey });
+        const { link } = await client.requestDownload(message.fileId);
+        const response = await fetch(link);
+
+        if (!response.ok) {
+            return { ok: false, errorMessage: `HTTP ${response.status}` };
+        }
+
+        return { ok: true, name: message.fileName, content: await response.text() };
     }
 
     // Fresh roaming settings from the cloud (refreshing the local cache), so a

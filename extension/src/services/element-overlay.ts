@@ -1,5 +1,11 @@
 import { OffscreenDomCache } from '@project/common';
 
+// SV-44: fullscreen survival lives in `top-layer.ts`, shared with the hover
+// overlays (gloss-hover, and hover-dict when SV-19 is picked up). Re-exported
+// because this module's own tests and callers already import it from here.
+export { needsTopLayer } from './top-layer';
+import { needsTopLayer, neutralizePopoverChrome, setTopLayer } from './top-layer';
+
 export enum OffsetAnchor {
     bottom,
     top,
@@ -55,6 +61,10 @@ export class CachingElementOverlay implements ElementOverlay {
     private fullscreenElementFullscreenChangeListener?: (this: any, event: Event) => any;
     private fullscreenElementFullscreenPollingInterval?: NodeJS.Timeout;
     private fullscreenStylesInterval?: NodeJS.Timeout;
+    /** Whether the fullscreen container is currently lifted into the top layer
+     *  (SV-44). Tracked here rather than read back with `:popover-open`, so the
+     *  logic stays testable and cannot throw where the API is absent. */
+    private fullscreenContainerInTopLayer = false;
     private onMouseOver: (event: MouseEvent) => void;
     private onMouseOut: (event: MouseEvent) => void;
     private onContainerStyles?: (container: HTMLElement) => void;
@@ -238,7 +248,13 @@ export class CachingElementOverlay implements ElementOverlay {
                 if (this.nonFullscreenContainerElement) {
                     this._transferChildren(this.nonFullscreenContainerElement, container);
                 }
+
+                // Only fires when the overlay landed outside the fullscreen
+                // element — a bare <video> going fullscreen, with no container
+                // to live in. See `needsTopLayer`.
+                this._syncTopLayer(container);
             } else if (!document.fullscreenElement) {
+                this._syncTopLayer(container);
                 container.style.setProperty('display', 'none', 'important');
                 this._transferChildren(container, this._nonFullscreenContainerElement());
             }
@@ -251,6 +267,37 @@ export class CachingElementOverlay implements ElementOverlay {
         document.addEventListener('fullscreenchange', this.fullscreenElementFullscreenChangeListener);
         this.fullscreenContainerElement = container;
         return this.fullscreenContainerElement;
+    }
+
+    /** Lift the overlay into the top layer, or drop it back, to match the
+     *  current fullscreen state. No-op where the Popover API is unavailable —
+     *  the overlay is then no worse off than before. */
+    private _syncTopLayer(container: HTMLElement) {
+        const promote = needsTopLayer(document.fullscreenElement, container);
+        const was = this.fullscreenContainerInTopLayer;
+        this.fullscreenContainerInTopLayer = setTopLayer(container, promote, was);
+
+        if (this.fullscreenContainerInTopLayer && !was) {
+            this._applyTopLayerStyleResets(container);
+        }
+    }
+
+    /** Undo the UA stylesheet a popover brings with it.
+     *
+     *  `[popover]` ships `inset: 0`, a border, padding, a background and
+     *  `overflow: auto` — none of which a subtitle overlay wants, and `inset`
+     *  in particular would fight the left/top this class computes. Inline
+     *  styles beat the UA sheet, so setting them here is enough. */
+    private _applyTopLayerStyleResets(container: HTMLElement) {
+        // Shared part: margin/border/overflow, and neutralizing whichever edges
+        // `_applyContainerStyles` left unset (the UA's `inset: 0` would
+        // otherwise stretch the overlay across the viewport).
+        neutralizePopoverChrome(container);
+        // Subtitle-specific: this container's class sets neither, so the UA
+        // popover background and padding would show through as a box behind
+        // the text.
+        container.style.padding = '0';
+        container.style.background = 'transparent';
     }
 
     private _findFullscreenParentElement(container: HTMLElement): HTMLElement {
@@ -386,6 +433,12 @@ export class CachingElementOverlay implements ElementOverlay {
     }
 
     private _applyContainerStyles(container: HTMLElement) {
+        // Re-assert the popover resets afterwards: this runs on a 1s interval
+        // and rewrites top/bottom, which is exactly what the UA `inset` fights.
+        if (this.fullscreenContainerInTopLayer && container === this.fullscreenContainerElement) {
+            queueMicrotask(() => this._applyTopLayerStyleResets(container));
+        }
+
         const rect = this.targetElement.getBoundingClientRect();
         container.style.left = rect.left + rect.width / 2 + 'px';
 

@@ -15,8 +15,9 @@
 // there), so the two never collide.
 
 import type { SettingsProvider } from '@project/common/settings';
+import { canHostChildren, needsTopLayer, overlayParent, setTopLayer } from '@/services/top-layer';
 import { GlossSegment, SaviGlossController, segmentLine } from './gloss';
-import { caretRangeFromPoint, lineElement } from './hover-dict';
+import { caretRangeFromPoint, lineElement, SUBTITLE_CONTAINER } from './hover-dict';
 
 const GAP_ABOVE_WORD_PX = 6;
 
@@ -120,6 +121,35 @@ export function wordAtOffset(
  *  laid-out rects are tested against the cursor. Unlike caret hit-testing
  *  (caretRangeFromPoint), this cannot be fooled by an invisible overlay sitting
  *  above the subtitle — the word's own geometry is the only input. */
+/** The first candidate whose box contains (x, y) and that `accept` agrees is a
+ *  real subtitle line.
+ *
+ *  Split out of the hover controller so it can be tested: the caller's half
+ *  (which elements to consider, and whether hit-testing is blind right now)
+ *  needs a live fullscreen document, but the search itself is just rectangles.
+ *  Zero-sized boxes are skipped — a hidden or unlaid-out line has a 0×0 rect at
+ *  the origin, which would otherwise "contain" a cursor at the top-left. */
+export function firstLineContaining(
+    candidates: Iterable<HTMLElement>,
+    x: number,
+    y: number,
+    accept: (el: HTMLElement) => boolean
+): HTMLElement | null {
+    for (const el of candidates) {
+        const rect = el.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) {
+            continue;
+        }
+        if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
+            continue;
+        }
+        if (accept(el)) {
+            return el;
+        }
+    }
+    return null;
+}
+
 export function wordAtPoint(
     line: HTMLElement,
     segments: GlossSegment[],
@@ -196,6 +226,8 @@ export class SaviGlossHover {
     private _deferredPaused = false; // WE held the line at its end; WE resume on mouse-out
     private _hoveredKey = ''; // line + span, so a word is translated/positioned once
     private _generation = 0; // cancels stale async translations
+    /** Whether the label is currently lifted into the top layer (SV-44). */
+    private _labelInTopLayer = false;
     private _lastLog = ''; // dedup for the hover diagnostics (mousemove fires constantly)
     private _lastLogAtMs = 0;
     // Trimmed cue texts, for telling real subtitle lines from look-alike overlays
@@ -320,12 +352,47 @@ export class SaviGlossHover {
                 return candidate;
             }
         }
-        return null;
+        return this._subtitleLineByGeometry(event.clientX, event.clientY);
     }
 
     /** Whether this line's text is one of the loaded cues (see _subtitleLineAt).
      *  Rejections log LOUDLY — a silent false here once masked the whole feature. */
-    private _isSubtitleLine(line: HTMLElement, via: 'target' | 'stack'): boolean {
+    /** Find the line by TESTING RECTS instead of asking the browser what is
+     *  under the cursor (SV-44).
+     *
+     *  Both strategies above depend on hit-testing, and hit-testing goes blind
+     *  in one specific case: when a replaced element — a bare `file://` video —
+     *  is fullscreen. The subtitle overlay is then in the browser's TOP LAYER
+     *  (the only place it can paint at all, see services/top-layer.ts), and the
+     *  top layer is not reported by `elementsFromPoint`, nor is it what
+     *  `event.target` resolves to. Measured, not assumed: over a fullscreened
+     *  video, `elementsFromPoint` at the subtitle's own centre returns the
+     *  video.
+     *
+     *  So the whole hover feature went dead there — no label, and no
+     *  end-of-line pause either, because the pause hangs off the same
+     *  detection. `mousemove` still arrives at the document, and the line's
+     *  rects are still real, so the point test is all that was missing.
+     *  `wordAtPoint` is already purely geometric, so once the line is found the
+     *  rest of the path needs no change.
+     *
+     *  Gated on that exact case rather than run as a general fallback: this
+     *  would otherwise scan the DOM on every mousemove that is not over a
+     *  subtitle, which is most of them. */
+    private _subtitleLineByGeometry(x: number, y: number): HTMLElement | null {
+        const fullscreen = document.fullscreenElement;
+        if (fullscreen === null || canHostChildren(fullscreen)) {
+            return null;
+        }
+
+        const candidates = document.querySelectorAll<HTMLElement>(
+            `.asbplayer-subtitle-text, ${SUBTITLE_CONTAINER} [data-track]`
+        );
+
+        return firstLineContaining(candidates, x, y, (el) => this._isSubtitleLine(el, 'geometry'));
+    }
+
+    private _isSubtitleLine(line: HTMLElement, via: 'target' | 'stack' | 'geometry'): boolean {
         const text = baseTextOf(line).trim();
         if (text.length === 0) {
             return false;
@@ -355,7 +422,7 @@ export class SaviGlossHover {
         }
         const baseText = baseTextOf(line);
         // Geometric word lookup — immune to overlays that fool caret hit-testing.
-        const span = wordAtPoint(line, segmentLine(baseText), x, y);
+        const span = wordAtPoint(line, segmentLine(baseText, this._sources.gloss.targetLang), x, y);
         if (!span) {
             this._clearHover(); // between words / punctuation — the normal roaming state
             return;
@@ -371,7 +438,8 @@ export class SaviGlossHover {
         // always-on pass labels every content word, and the silent skip read as
         // "hover broke".) For a labeled word, anchor the hover label above the
         // whole <ruby> so it clears the existing <rt> instead of overlapping it.
-        const anchor = range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement;
+        const anchor =
+            range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement;
         const rubyAnchor = anchor?.closest('ruby.asb-gloss') ?? null;
 
         const key = `${baseText} ${span.start} ${span.end}`;
@@ -434,11 +502,21 @@ export class SaviGlossHover {
         // the label parented inside the current fullscreen element, and back on
         // <body> when windowed (also re-attaches after an SPA wipe). Coordinates
         // stay viewport-relative (position: fixed) either way.
+        //
+        // SV-44: parenting into the fullscreen element is not always possible.
+        // A bare `file://` video is fullscreened as the <video> ITSELF, and a
+        // video is a replaced element — `appendChild` succeeds and the child is
+        // never rendered. That is why hover gloss vanished in fullscreen on a
+        // local file while working everywhere else: this code "handled"
+        // fullscreen by appending into something that cannot paint children.
+        // `overlayParent` declines those, and the label goes to the top layer
+        // instead.
         const fullscreen = document.fullscreenElement;
-        const parent = fullscreen instanceof HTMLElement ? fullscreen : document.body;
+        const parent = overlayParent(fullscreen);
         if (this._label.parentElement !== parent || !this._label.isConnected) {
             parent.appendChild(this._label);
         }
+        this._labelInTopLayer = setTopLayer(this._label, needsTopLayer(fullscreen, this._label), this._labelInTopLayer);
         return this._label;
     }
 }

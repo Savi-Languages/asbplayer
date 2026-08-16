@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import VideoDataSyncDialog from './VideoDataSyncDialog';
 import Bridge from '../bridge';
+import { v4 as uuidv4 } from 'uuid';
 import {
     ConfirmedVideoDataSubtitleTrack,
     Message,
@@ -11,6 +12,8 @@ import {
     UpdateStateMessage,
     VideoDataSubtitleTrack,
     VideoDataUiBridgeConfirmMessage,
+    VideoDataUiBridgeDownloadOnlineSubtitleMessage,
+    VideoDataUiBridgeSearchOnlineSubtitlesMessage,
     VideoDataUiBridgeOpenFileMessage,
     VideoDataUiBridgeSetOnlineSubtitleSourceConfigMessage,
     VideoDataUiModel,
@@ -332,6 +335,41 @@ export default function VideoDataSyncUi({ bridge }: Props) {
         fileInputRef.current?.click();
     }, []);
 
+    // SV-44 — OpenSubtitles on behalf of the dialog.
+    //
+    // The dialog is inside a `srcdoc` iframe, so it has no extension APIs of
+    // its own (see OnlineSubtitleSourceDialog's props). These hop over the
+    // bridge to the content script, which does have them. The generous
+    // timeouts are because both legs are real network calls made by someone
+    // else: a search plus, for a download, an extra round trip to exchange the
+    // file id for a temporary link.
+    const handleSearchOpenSubtitles = useCallback(
+        async (query: string, seasonNumber?: number, episodeNumber?: number) => {
+            const message: VideoDataUiBridgeSearchOnlineSubtitlesMessage = {
+                command: 'searchOnlineSubtitles',
+                query,
+                seasonNumber,
+                episodeNumber,
+                messageId: uuidv4(),
+            };
+            return await bridge.sendMessageFromServerAndExpectResponse(message, 30_000);
+        },
+        [bridge]
+    );
+
+    const handleDownloadOpenSubtitle = useCallback(
+        async (fileId: number, fileName: string) => {
+            const message: VideoDataUiBridgeDownloadOnlineSubtitleMessage = {
+                command: 'downloadOnlineSubtitle',
+                fileId,
+                fileName,
+                messageId: uuidv4(),
+            };
+            return await bridge.sendMessageFromServerAndExpectResponse(message, 30_000);
+        },
+        [bridge]
+    );
+
     const handleOpenOnline = useCallback((track?: number) => {
         setOnlineDialogTrackNumber(track);
         setOnlineDialogOpen(true);
@@ -342,15 +380,30 @@ export default function VideoDataSyncUi({ bridge }: Props) {
     }, []);
 
     const handleImportOnlineFile = useCallback(
-        async ({ name, url }: { name: string; url: string }) => {
-            const response = await fetch(url);
+        async ({ name, url, content }: { name: string; url?: string; content?: string }) => {
+            // SV-44: OpenSubtitles results arrive as text, already downloaded by
+            // the background (the download needs the API key, which deliberately
+            // never reaches this iframe). Jimaku results are a public URL this
+            // frame can fetch itself. Both end up as the same Blob.
+            let blob: Blob;
 
-            if (!response.ok) {
-                throw new Error(`Subtitle retrieval failed with status ${response.status} (${response.statusText}).`);
+            if (content !== undefined) {
+                blob = new Blob([content], { type: 'text/plain' });
+            } else if (url !== undefined) {
+                const response = await fetch(url);
+
+                if (!response.ok) {
+                    throw new Error(
+                        `Subtitle retrieval failed with status ${response.status} (${response.statusText}).`
+                    );
+                }
+
+                blob = await response.blob();
+            } else {
+                throw new Error('Subtitle candidate carried neither a URL nor content.');
             }
 
-            const blob = await response.blob();
-            const { normalizedName, extension } = normalizeOnlineSubtitleFileName(name, url);
+            const { normalizedName, extension } = normalizeOnlineSubtitleFileName(name, url ?? name);
             const file = new File([blob], normalizedName);
             const objectUrl = URL.createObjectURL(file);
             trackedLocalObjectUrlsRef.current.add(objectUrl);
@@ -450,6 +503,8 @@ export default function VideoDataSyncUi({ bridge }: Props) {
                     onJimakuSearchCategoryChange={(jimakuSearchCategory) =>
                         handleOnlineSubtitleSourceConfigChanged({ jimakuSearchCategory })
                     }
+                    onSearchOpenSubtitles={handleSearchOpenSubtitles}
+                    onDownloadOpenSubtitle={handleDownloadOpenSubtitle}
                     jimakuRecentWorks={onlineSubtitleSourceConfig.jimakuRecentWorks ?? []}
                     onJimakuRecentWorksChange={(jimakuRecentWorks) =>
                         handleOnlineSubtitleSourceConfigChanged({ jimakuRecentWorks })

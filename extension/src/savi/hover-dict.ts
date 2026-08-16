@@ -43,7 +43,9 @@ import { cropAndResize } from '@project/common/src/image-transformer';
 // fullscreen ('asbplayer-fullscreen-subtitles', see subtitle-controller's
 // _elementOverlayParams) — both must match, or hover dies the moment the
 // player goes fullscreen (it did).
-const SUBTITLE_CONTAINER = '.asbplayer-subtitles, .asbplayer-fullscreen-subtitles';
+/** The subtitle containers a line can live in. Exported so gloss-hover can
+ *  ENUMERATE lines when hit-testing cannot find them (SV-44). */
+export const SUBTITLE_CONTAINER = '.asbplayer-subtitles, .asbplayer-fullscreen-subtitles';
 // The embedded dictionary is Japanese; lines without any Japanese (e.g. the
 // English translation track) are skipped so we never box or tokenize them.
 const LANG = 'ja';
