@@ -365,8 +365,10 @@ export default class SaviCommandHandler implements CommandHandler {
         const { saviCloudUrl } = await this._settings.get(['saviCloudUrl']);
         // Dev builds roam against the local cloud too (resolveCloudBase), so the
         // target language the desktop wrote to localhost actually reaches here.
-        const { targetLanguage, openSubtitlesApiKey } = await loadRoamingSettings(resolveCloudBase(saviCloudUrl));
-        return { targetLanguage, openSubtitlesApiKey };
+        const { targetLanguage, nativeLanguage, openSubtitlesApiKey } = await loadRoamingSettings(
+            resolveCloudBase(saviCloudUrl)
+        );
+        return { targetLanguage, nativeLanguage, openSubtitlesApiKey };
     }
 
     // Glossing (SV-40): decide + label a whole line in one cloud round trip.

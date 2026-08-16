@@ -225,6 +225,8 @@ interface Props {
     saviMutedSites?: string[];
     onSaviUnmuteSite?: (siteKey: string) => void;
     saviFileUrlAccess?: 'unknown' | 'allowed' | 'blocked';
+    saviNativeLanguage?: string;
+    onSaviNativeLanguageChange?: (value: string) => void;
 }
 
 // Filter out keys that look like '0', '1', ... as those are invalid
@@ -282,6 +284,8 @@ export default function SettingsForm({
     saviMutedSites,
     onSaviUnmuteSite,
     saviFileUrlAccess,
+    saviNativeLanguage,
+    onSaviNativeLanguageChange,
 }: Props) {
     const supportsDictionary = !extensionInstalled || extensionSupportsDictionary;
     const supportsDictionaryBrowser = !extensionInstalled || extensionSupportsDictionaryBrowser;
@@ -618,6 +622,8 @@ export default function SettingsForm({
                         saviMutedSites={saviMutedSites}
                         onSaviUnmuteSite={onSaviUnmuteSite}
                         saviFileUrlAccess={saviFileUrlAccess}
+                        saviNativeLanguage={saviNativeLanguage}
+                        onSaviNativeLanguageChange={onSaviNativeLanguageChange}
                     />
                 </TabPanel>
                 <TabPanel value={tabIndex} index={tabIndicesById['about']} tabsOrientation={tabsOrientation}>

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import Autocomplete from '@mui/material/Autocomplete';
 import Button from '@mui/material/Button';
 import Stack from '@mui/material/Stack';
 import Switch from '@mui/material/Switch';
@@ -13,6 +14,7 @@ import { AsbplayerSettings } from '../settings';
 import SettingsSection from './SettingsSection';
 import SettingsTextField from './SettingsTextField';
 import SwitchLabelWithHoverEffect from './SwitchLabelWithHoverEffect';
+import { languageLabel, languageOptions, resolveLanguageInput } from '../languages/languages';
 
 // A text field whose value is committed (roamed to the account) on blur rather
 // than on every keystroke, so an API key isn't PUT to the cloud character by
@@ -44,6 +46,76 @@ const CommitOnBlurTextField: React.FC<{
     );
 };
 
+// A language picker over the curated list, still accepting a typed tag.
+//
+// `freeSolo` is not decoration: the list is a convenience, not a whitelist, and
+// locking the field to it would drop support for any tag it omits — including
+// values already stored from before this picker existed. Commits on selection
+// and on blur, matching CommitOnBlurTextField, so the account isn't written
+// once per keystroke.
+const LanguageAutocomplete: React.FC<{
+    label: string;
+    value: string;
+    onCommit: (value: string) => void;
+    helperText?: React.ReactNode;
+}> = ({ label, value, onCommit, helperText }) => {
+    const options = languageOptions(value);
+    // The box shows a NAME; the setting stores a TAG. `draft` is what's on
+    // screen, so it is display text, and every commit resolves it back.
+    const [draft, setDraft] = useState(() => languageLabel(value));
+    useEffect(() => setDraft(languageLabel(value)), [value]);
+
+    const commit = useCallback(
+        (text: string) => {
+            const tag = resolveLanguageInput(text, options);
+            if (tag !== value) {
+                onCommit(tag);
+            }
+            // Re-render the canonical label, so a name typed by hand ("Japanese")
+            // settles into the same text a picked option would show.
+            setDraft(languageLabel(tag));
+        },
+        [onCommit, options, value]
+    );
+
+    return (
+        <Autocomplete
+            freeSolo
+            autoHighlight
+            selectOnFocus
+            handleHomeEndKeys
+            options={options}
+            inputValue={draft}
+            onInputChange={(_, next) => setDraft(next)}
+            onChange={(_, next) => commit(typeof next === 'string' ? next : '')}
+            getOptionLabel={(option) => (typeof option === 'string' ? languageLabel(option) : '')}
+            filterOptions={(opts, { inputValue }) => {
+                const needle = inputValue.trim().toLowerCase();
+                // A freshly-focused field holds the current label; filtering by
+                // it would show one row and hide the rest of the list.
+                if (needle.length === 0 || needle === languageLabel(value).toLowerCase()) {
+                    return opts;
+                }
+                // Match the name as well as the tag — someone looking for
+                // Japanese should find it by typing "jap", not just "ja".
+                return opts.filter(
+                    (o) => o.toLowerCase().includes(needle) || languageLabel(o).toLowerCase().includes(needle)
+                );
+            }}
+            renderInput={(params) => (
+                <SettingsTextField
+                    {...params}
+                    color="primary"
+                    fullWidth
+                    label={label}
+                    helperText={helperText}
+                    onBlur={() => commit(draft)}
+                />
+            )}
+        />
+    );
+};
+
 interface Props {
     settings: AsbplayerSettings;
     onSettingChanged: <K extends keyof AsbplayerSettings>(key: K, value: AsbplayerSettings[K]) => Promise<void>;
@@ -70,6 +142,8 @@ interface Props {
     // hosts only. 'unknown' (the web app, or Firefox, which has no such toggle)
     // renders nothing.
     saviFileUrlAccess?: 'unknown' | 'allowed' | 'blocked';
+    saviNativeLanguage?: string;
+    onSaviNativeLanguageChange?: (value: string) => void;
 }
 
 const SaviSettingsTab: React.FC<Props> = ({
@@ -83,6 +157,8 @@ const SaviSettingsTab: React.FC<Props> = ({
     onSaviSignOut,
     saviTargetLanguage,
     onSaviTargetLanguageChange,
+    saviNativeLanguage,
+    onSaviNativeLanguageChange,
 }) => {
     const {
         saviAutoLoadSubtitles,
@@ -274,13 +350,22 @@ const SaviSettingsTab: React.FC<Props> = ({
                 }
             />
             {roamingSupported && (
-                <CommitOnBlurTextField
+                <LanguageAutocomplete
                     label={'Target language'}
                     value={saviTargetLanguage ?? ''}
-                    onCommit={(value) => onSaviTargetLanguageChange?.(value.trim())}
-                    helperText={`Language you're learning, as a BCP-47 code — e.g. es, es-419, ja. ${roamingHint}`}
+                    onCommit={(value) => onSaviTargetLanguageChange?.(value)}
+                    helperText={`The language you're learning. ${roamingHint}`}
                 />
             )}
+            {roamingSupported && onSaviNativeLanguageChange !== undefined && (
+                <LanguageAutocomplete
+                    label={'Native language (second subtitle line)'}
+                    value={saviNativeLanguage ?? ''}
+                    onCommit={(value) => onSaviNativeLanguageChange(value)}
+                    helperText={`Shown under the target line when the video has that track. Leave blank for a single line. ${roamingHint}`}
+                />
+            )}
+
             <SettingsSection>{'Savi capture'}</SettingsSection>
             <SwitchLabelWithHoverEffect
                 control={

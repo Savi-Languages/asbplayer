@@ -22,12 +22,20 @@ import { currentAccessToken } from './account';
 export interface SaviRoamingSettings {
     /** BCP-47 tag/subtag of the language being learned, e.g. `es`, `ja`, `es-419`. */
     readonly targetLanguage: string;
+    /** BCP-47 tag/subtag for the SECOND subtitle line — the language the learner
+     *  already reads, shown under the target line. Empty means no second line,
+     *  matching how an empty `targetLanguage` means no auto-load at all. */
+    readonly nativeLanguage: string;
     /** The first usable opensubtitles.com key from savi's api_keys rows —
      *  CACHE ONLY; managed in savi Settings, never written from here. */
     readonly openSubtitlesApiKey: string;
 }
 
-export const DEFAULT_ROAMING_SETTINGS: SaviRoamingSettings = { targetLanguage: '', openSubtitlesApiKey: '' };
+export const DEFAULT_ROAMING_SETTINGS: SaviRoamingSettings = {
+    targetLanguage: '',
+    nativeLanguage: '',
+    openSubtitlesApiKey: '',
+};
 
 // browser.storage.local key holding the cached copy.
 export const ROAMING_CACHE_KEY = 'saviRoamingSettings';
@@ -37,6 +45,7 @@ export const ROAMING_CACHE_KEY = 'saviRoamingSettings';
 // is read-only from the api_keys endpoint.
 const CLOUD_KEY = {
     targetLanguage: 'targetLanguage',
+    nativeLanguage: 'nativeLanguage',
 } as const;
 
 /** Roaming values this extension may write. The OpenSubtitles key is
@@ -49,6 +58,7 @@ const normalize = (value: unknown): SaviRoamingSettings => {
     const v = (value ?? {}) as Partial<SaviRoamingSettings>;
     return {
         targetLanguage: typeof v.targetLanguage === 'string' ? v.targetLanguage : '',
+        nativeLanguage: typeof v.nativeLanguage === 'string' ? v.nativeLanguage : '',
         openSubtitlesApiKey: typeof v.openSubtitlesApiKey === 'string' ? v.openSubtitlesApiKey : '',
     };
 };
@@ -137,6 +147,9 @@ export const loadRoamingSettings = async (cloudUrl: string): Promise<SaviRoaming
             targetLanguage: rows[CLOUD_KEY.targetLanguage]
                 ? rows[CLOUD_KEY.targetLanguage]?.value
                 : current.targetLanguage,
+            nativeLanguage: rows[CLOUD_KEY.nativeLanguage]
+                ? rows[CLOUD_KEY.nativeLanguage]?.value
+                : current.nativeLanguage,
             openSubtitlesApiKey: openSubtitlesApiKey ?? current.openSubtitlesApiKey,
         });
         await setCache(merged);
