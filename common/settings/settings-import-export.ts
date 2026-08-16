@@ -679,6 +679,9 @@ const settingsSchema = {
         saviGlossing: {
             type: 'boolean',
         },
+        saviHoldSubtitleMs: {
+            type: 'number',
+        },
         saviHoverGloss: {
             type: 'boolean',
         },

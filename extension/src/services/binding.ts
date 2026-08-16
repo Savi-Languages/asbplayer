@@ -1313,6 +1313,7 @@ export default class Binding {
         const subtitleHtmlChanged = this.subtitleController.subtitleHtml !== currentSettings.subtitleHtml;
         this.subtitleController.subtitleHtml = currentSettings.subtitleHtml;
 
+        this.subtitleController.saviHoldSubtitleMs = currentSettings.saviHoldSubtitleMs;
         this.subtitleController.subtitleAnnotations.settingsUpdated(currentSettings);
         this.subtitleController.setSubtitleSettings(currentSettings);
         // Re-arm with the current toggle + target language (both may change).
