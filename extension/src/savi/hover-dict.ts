@@ -402,8 +402,8 @@ const firstDictGloss = (entries: SaviDictEntry[]): string => entries[0]?.senses?
 
 export class SaviHoverDictionary {
     private readonly _tokenizeCache = new Map<string, SaviToken[]>();
-    // null = the daemon returned no AI segmentation for this line → use rule-based.
-    private readonly _segmentCache = new Map<string, SaviToken[] | null>();
+    // AI segmentations only — a rule-based fallback is never cached (see _segment).
+    private readonly _segmentCache = new Map<string, SaviToken[]>();
     private readonly _explainCache = new Map<string, string | null>();
     private readonly _kanjiCache = new Map<string, SaviKanjiFull[]>();
     private _wordPanel: SaviWordPanel | null = null;
@@ -611,13 +611,20 @@ export class SaviHoverDictionary {
         return tokens;
     }
 
-    /** AI segmentation for a line (cached). `null` when the daemon falls back to
-     *  rule-based (feature off / no provider / offline / a split that wouldn't
-     *  reconcile) — the caller then keeps the rule-based render. */
-    private async _segment(text: string): Promise<SaviToken[] | null> {
+    /** AI segmentation for a line (cached). `tokens` is null when the daemon fell
+     *  back to rule-based (feature off / no account / offline / a split that
+     *  wouldn't reconcile) — the caller then keeps the rule-based render — and
+     *  `unavailable` says why, so the panel can name the reason honestly.
+     *
+     *  ONLY successes are cached, for the same reason as `_explainWord`: a cached
+     *  fallback would outlive its cause AND its reason. Signed out → the note says
+     *  to sign in → the user does → the retap of the same line would be served the
+     *  cached null and keep telling them to sign in, right under an explanation
+     *  section that just succeeded. */
+    private async _segment(text: string): Promise<{ tokens: SaviToken[] | null; unavailable?: SaviAiUnavailable }> {
         const cached = this._segmentCache.get(text);
         if (cached !== undefined) {
-            return cached;
+            return { tokens: cached };
         }
         const { prevLines, nextLines } = this._neighborsOf(text);
         const res = await sendToBackground<SaviSegmentLineResponse>({
@@ -628,13 +635,15 @@ export class SaviHoverDictionary {
             nextLines,
             episodeId: deriveEpisodeId(location.href, document.title),
         });
-        const tokens = res.ai && res.tokens.length > 0 ? res.tokens : null;
+        if (!res.ai || res.tokens.length === 0) {
+            return { tokens: null, unavailable: res.unavailable };
+        }
         if (this._segmentCache.size >= TOKENIZE_CACHE_MAX) {
             const oldest = this._segmentCache.keys().next().value;
             if (oldest !== undefined) this._segmentCache.delete(oldest);
         }
-        this._segmentCache.set(text, tokens);
-        return tokens;
+        this._segmentCache.set(text, res.tokens);
+        return { tokens: res.tokens };
     }
 
     /** Focused professor-style explanation of a word in its sentence (cached).
@@ -773,7 +782,7 @@ export class SaviHoverDictionary {
         // per-hover (so the providers stop rate-limiting), and a slow/failed call
         // degrades to a graceful "unavailable" inside the panel.
         this._segment(text)
-            .then((aiTokens) => {
+            .then(({ tokens: aiTokens, unavailable }) => {
                 let featured: WordContext | null = null;
                 if (aiTokens) {
                     const aiSpan = tokenSpanAtOffset(aiTokens, offset);
@@ -781,7 +790,7 @@ export class SaviHoverDictionary {
                         featured = { gloss: aiSpan.token.gloss, grammar: aiSpan.token.grammar };
                     }
                 }
-                panel.setContext(featured, aiTokens);
+                panel.setContext(featured, aiTokens, unavailable);
                 // The AI in-context gloss is the best label for this exact
                 // sentence — overwrite the dictionary headline on the pending
                 // encounter (the line is still open: the panel pauses playback).
