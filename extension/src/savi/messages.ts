@@ -140,18 +140,28 @@ export interface SaviSegmentLineMessage {
  *  generic "provider busy" line for all of these, which is actively misleading:
  *  `noAccount` is by far the most common and has nothing to do with providers
  *  (it cost real debugging time chasing rate limits that were never involved).
- *  - `noAccount`  no usable account token, so the daemon relays none and the
- *                 cloud is never called. Named for what we KNOW — that there is
- *                 no credential — not for a cause we haven't established. The
- *                 usual cause is the desktop app not running: it publishes the
- *                 session and refreshes it hourly, and the extension has no
- *                 sign-in of its own, so a closed app means an expired token
- *                 while the account itself is perfectly fine. Telling that user
- *                 to "sign in" sends them to fix something that isn't broken.
+ *  The account states come from the DAEMON when it was reachable (it saw the
+ *  credentials; its word is authoritative) and are guessed locally only when
+ *  it wasn't.
+ *  - `noAccount`  no account credential at all — the extension is signed out.
+ *                 Named for what we KNOW: there is no identity to send.
+ *  - `accountMismatch`    the extension is signed into a REAL account that
+ *                 isn't the one this computer's app pinned as owner. The fix
+ *                 is specific: sign into the same account.
+ *  - `accountUnverified`  the identity was sent but the daemon couldn't verify
+ *                 it — expired token, or the desktop app hasn't provisioned
+ *                 trust since it started. "Sign into the same account" would
+ *                 be wrong advice, hence the separate name.
  *  - `disabled`   the AI setting is off — a deliberate choice, not a failure.
  *  - `noDaemon`   the daemon isn't configured or isn't reachable.
- *  - `provider`   we did call the cloud with a real token and got nothing back. */
-export type SaviAiUnavailable = 'noAccount' | 'disabled' | 'noDaemon' | 'provider';
+ *  - `provider`   a verified identity was relayed and the cloud gave nothing back. */
+export type SaviAiUnavailable =
+    | 'noAccount'
+    | 'accountMismatch'
+    | 'accountUnverified'
+    | 'disabled'
+    | 'noDaemon'
+    | 'provider';
 
 export interface SaviSegmentLineResponse {
     readonly ai: boolean;

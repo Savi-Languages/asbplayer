@@ -1,4 +1,4 @@
-import { browserHintFromUserAgent, postPlaybackState } from './daemon-client';
+import { browserHintFromUserAgent, explainWord, postPlaybackState, segmentLine } from './daemon-client';
 
 describe('postPlaybackState openSegment', () => {
     const replyWith = (body: Record<string, unknown>) => {
@@ -53,5 +53,68 @@ describe('browserHintFromUserAgent', () => {
             )
         ).toBeUndefined();
         expect(browserHintFromUserAgent('')).toBeUndefined();
+    });
+});
+
+describe('the credential split on the wire', () => {
+    const lastFetchHeaders = () => (global.fetch as jest.Mock).mock.calls[0][1].headers as Record<string, string>;
+
+    it('sends the bearer AND the account JWT in separate headers', async () => {
+        global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) }) as any;
+        await postPlaybackState(
+            { baseUrl: 'http://127.0.0.1:4030', token: 'lan-token', accountJwt: 'jwt-1' },
+            { captureId: 'c', seq: 1, ops: [] }
+        );
+        expect(lastFetchHeaders()['Authorization']).toBe('Bearer lan-token');
+        expect(lastFetchHeaders()['X-Savi-Account']).toBe('jwt-1');
+    });
+
+    it('sends NO identity header when signed out — absence is the signal, not an empty value', async () => {
+        global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) }) as any;
+        await postPlaybackState(
+            { baseUrl: 'http://127.0.0.1:4030', token: 'lan-token' },
+            { captureId: 'c', seq: 1, ops: [] }
+        );
+        expect(lastFetchHeaders()['Authorization']).toBe('Bearer lan-token');
+        expect('X-Savi-Account' in lastFetchHeaders()).toBe(false);
+    });
+});
+
+describe('typed unavailable passthrough', () => {
+    const config = { baseUrl: 'http://127.0.0.1:4030', token: 'lan-token' };
+    const replyWith = (body: Record<string, unknown>) => {
+        global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => body }) as any;
+    };
+
+    it('explainWord carries the daemon-named reason beside a null explanation', async () => {
+        replyWith({ explanation: null, unavailable: 'accountMismatch' });
+        expect(await explainWord(config, 'ja', '猫', '猫は寝る')).toEqual({
+            explanation: null,
+            unavailable: 'accountMismatch',
+        });
+    });
+
+    it('explainWord reports no reason when there IS an explanation', async () => {
+        replyWith({ explanation: 'It marks the topic here.', unavailable: 'provider' });
+        expect(await explainWord(config, 'ja', 'は', '猫は寝る')).toEqual({
+            explanation: 'It marks the topic here.',
+            unavailable: undefined,
+        });
+    });
+
+    it('drops reasons it does not recognize — a future daemon must degrade to the generic copy, not leak enum values into the UI', async () => {
+        replyWith({ explanation: null, unavailable: 'somethingNew' });
+        expect((await explainWord(config, 'ja', '猫', '猫は寝る')).unavailable).toBeUndefined();
+
+        replyWith({ ai: false, tokens: [], unavailable: 'somethingNew' });
+        expect((await segmentLine(config, 'ja', '猫は寝る')).unavailable).toBeUndefined();
+    });
+
+    it('segmentLine passes the reason through with the fallback tokens', async () => {
+        replyWith({ ai: false, tokens: [{ text: '猫' }], unavailable: 'accountUnverified' });
+        const result = await segmentLine(config, 'ja', '猫');
+        expect(result.ai).toBe(false);
+        expect(result.tokens).toEqual([{ text: '猫' }]);
+        expect(result.unavailable).toBe('accountUnverified');
     });
 });

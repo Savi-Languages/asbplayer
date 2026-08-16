@@ -51,7 +51,7 @@ import {
     SaviWatchedLineResponse,
     SaviEngagementSessionMessage,
 } from './messages';
-import { currentAccessToken, daemonToken } from './account';
+import { currentAccessToken, daemonCredentials } from './account';
 import {
     DEFAULT_GLOSS_THRESHOLD,
     glossThreshold as cloudGlossThreshold,
@@ -233,16 +233,16 @@ export default class SaviCommandHandler implements CommandHandler {
         return false;
     }
 
-    // Bearer preference: the signed-in account's JWT, else the legacy LAN
-    // token setting (the transition fallback). Resolved per request — JWTs
-    // expire ~hourly.
+    // The credential split: the LAN token is the bearer (capability), the
+    // account JWT rides X-Savi-Account (identity). Resolved per request —
+    // JWTs expire ~hourly.
     private async _daemonConfig(): Promise<SaviDaemonConfig | null> {
         const { saviDaemonUrl, saviDaemonToken } = await this._settings.get(['saviDaemonUrl', 'saviDaemonToken']);
-        const token = await daemonToken(saviDaemonToken);
-        if (!saviDaemonUrl.trim() || !token) {
+        const { bearer, accountJwt } = await daemonCredentials(saviDaemonToken);
+        if (!saviDaemonUrl.trim() || !bearer) {
             return null;
         }
-        return { baseUrl: normalizedBaseUrl(saviDaemonUrl), token };
+        return { baseUrl: normalizedBaseUrl(saviDaemonUrl), token: bearer, accountJwt };
     }
 
     // SV-8 fallback: search OpenSubtitles for the target-language subtitle when
@@ -391,7 +391,7 @@ export default class SaviCommandHandler implements CommandHandler {
                 }
             );
         }
-        const unavailable = await this._aiCredentialGap();
+        const localGap = await this._aiCredentialGap();
         try {
             const result = await segmentLine(config, message.lang, message.text, {
                 prevLines: message.prevLines,
@@ -400,15 +400,17 @@ export default class SaviCommandHandler implements CommandHandler {
             });
             if (result.ai && result.tokens.length > 0) {
                 await putCachedSegment(message.lang, message.text, result.ai, result.tokens);
-                return result;
+                return { ai: result.ai, tokens: result.tokens };
             }
-            return { ...result, unavailable: unavailable ?? 'provider' };
+            // The daemon's reason wins — it verified the credentials we sent.
+            // The local guess covers pre-split daemons that name no reason.
+            return { ai: result.ai, tokens: result.tokens, unavailable: result.unavailable ?? localGap ?? 'provider' };
         } catch (e) {
             return (
                 (await getCachedSegment(message.lang, message.text)) ?? {
                     ai: false,
                     tokens: [],
-                    unavailable: unavailable ?? 'provider',
+                    unavailable: localGap ?? 'provider',
                 }
             );
         }
@@ -426,39 +428,33 @@ export default class SaviCommandHandler implements CommandHandler {
         if (!config) {
             return { explanation: null, unavailable: 'noDaemon' };
         }
-        // Checked BEFORE the call, not inferred from the empty result: without an
-        // account JWT the daemon relays nothing and the cloud is never reached, so
-        // a null here would otherwise be reported as a provider failure.
-        const unavailable = await this._aiCredentialGap();
+        // The local pre-check backstops the daemon's own report: a pre-split
+        // daemon names no reason, and a thrown request leaves nothing to read.
+        const localGap = await this._aiCredentialGap();
         try {
-            const explanation = await explainWord(config, message.lang, message.term, message.text, {
+            const result = await explainWord(config, message.lang, message.term, message.text, {
                 reading: message.reading,
                 prevLines: message.prevLines,
                 nextLines: message.nextLines,
                 episodeId: message.episodeId,
             });
-            if (explanation) {
-                return { explanation };
+            if (result.explanation) {
+                return { explanation: result.explanation };
             }
-            return { explanation: null, unavailable: unavailable ?? 'provider' };
+            // The daemon's reason wins — it verified the credentials we sent.
+            return { explanation: null, unavailable: result.unavailable ?? localGap ?? 'provider' };
         } catch (e) {
-            return { explanation: null, unavailable: unavailable ?? 'provider' };
+            return { explanation: null, unavailable: localGap ?? 'provider' };
         }
     }
 
-    /** `'noAccount'` when we have no usable token to send. The daemon accepts the
-     *  LAN token for local endpoints but only relays a bearer that verifies as the
-     *  owner's Supabase JWT, so a LAN-token caller gets AI silently switched off —
-     *  no error, no log.
-     *
-     *  It reports the ABSENCE, not a cause. From here the two look identical: an
-     *  account that was never signed in, and a signed-in account whose published
-     *  session went stale because the desktop app that refreshes it isn't running.
-     *  Distinguishing them needs the native-messaging host (it answers even with
-     *  the app closed, since the BROWSER launches it — an expired session on disk
-     *  means "app not running", a `signedOut` reply means "no account"). That
-     *  lives on the shared-sign-in branch, so the copy leads with the likelier
-     *  cause instead of guessing here. */
+    /** `'noAccount'` when we have no account credential to send — the extension
+     *  is signed out, so the daemon has nothing to relay and the cloud is never
+     *  reached. A LOCAL guess, used only when the daemon's own `unavailable`
+     *  report is absent (pre-split daemon, or the request itself failed): the
+     *  daemon is the authority on the credentials it actually received, and can
+     *  distinguish states this check can't (`accountMismatch`,
+     *  `accountUnverified`). */
     private async _aiCredentialGap(): Promise<'noAccount' | undefined> {
         return (await currentAccessToken()) === undefined ? 'noAccount' : undefined;
     }
@@ -848,14 +844,17 @@ export const finishCaptureForClosedTab = async (tabId: number, settings: Setting
 
     await clearCaptureSession();
     const { saviDaemonUrl, saviDaemonToken } = await settings.get(['saviDaemonUrl', 'saviDaemonToken']);
-    const token = await daemonToken(saviDaemonToken);
+    const { bearer, accountJwt } = await daemonCredentials(saviDaemonToken);
 
-    if (!saviDaemonUrl.trim() || !token) {
+    if (!saviDaemonUrl.trim() || !bearer) {
         return;
     }
 
     try {
-        await finishCapture({ baseUrl: normalizedBaseUrl(saviDaemonUrl), token }, session.captureId);
+        await finishCapture(
+            { baseUrl: normalizedBaseUrl(saviDaemonUrl), token: bearer, accountJwt },
+            session.captureId
+        );
     } catch (e) {
         console.warn('savi: finishing capture for closed tab failed', e);
     }

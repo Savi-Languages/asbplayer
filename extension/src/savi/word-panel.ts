@@ -15,17 +15,28 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
  *  busy" for all of them, which pointed debugging at rate limits when the real
  *  cause was usually that there was no credential to call with.
  *
- *  Each note names an ACTION. "Sign in" was the first attempt for `noAccount`
- *  and was wrong for the common case: the account is fine and already signed in
- *  — the desktop app simply isn't running to refresh the session it publishes.
- *  Leading with the app fixes the real cause; the hint keeps the sign-in route
- *  for someone who genuinely has no account yet. */
+ *  Each note names an ACTION, and the account cases stay distinct on purpose:
+ *  `noAccount` means the extension is signed out (it owns its own sign-in —
+ *  the fix is signing in here, not starting anything), `accountMismatch` means
+ *  signed into the WRONG account (a real session; sign into the right one),
+ *  and `accountUnverified` means the daemon can't verify accounts yet — where
+ *  either sign-in instruction would send the user to fix the wrong thing. */
 function unavailableMessage(why?: SaviAiUnavailable): { note: string; hint?: string } {
     switch (why) {
         case 'noAccount':
             return {
-                note: 'Start the savi desktop app to see AI explanations.',
-                hint: 'It keeps the extension signed in. Not signed up yet? Sign in from savi settings.',
+                note: 'Sign in from savi settings to see AI explanations.',
+                hint: 'The dictionary above works without an account.',
+            };
+        case 'accountMismatch':
+            return {
+                note: "This browser is signed into a different savi account than this computer's app.",
+                hint: 'Sign into the same account in savi settings to get AI explanations.',
+            };
+        case 'accountUnverified':
+            return {
+                note: "The savi desktop app hasn't verified your account yet.",
+                hint: 'Start the desktop app and sign in there once, then tap the word again.',
             };
         case 'disabled':
             return { note: 'AI explanations are turned off in savi settings.' };

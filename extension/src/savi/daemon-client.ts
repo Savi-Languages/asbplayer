@@ -16,10 +16,15 @@
 //   POST {base}/v2/capture/finish    {captureId} → episode summary, or
 //        {transcriptOnly, totalLines} when the session had no audio.
 //
-// All requests carry `Authorization: Bearer <token>`. The extension
-// declares host permissions for localhost/127.0.0.1/*.local, which is
-// what exempts these cross-origin fetches from CORS (the daemon serves
-// no CORS headers by design — it expects same-origin or trusted callers).
+// All requests carry `Authorization: Bearer <token>` (capability), and —
+// when signed in — the account's JWT in `X-Savi-Account` (identity, the
+// credential split). The daemon relays only a verified identity to the
+// cloud AI proxy; a wrong or stale one degrades AI with a typed
+// `unavailable` reason while every local endpoint keeps working. The
+// extension declares host permissions for localhost/127.0.0.1/*.local,
+// which is what exempts these cross-origin fetches from CORS (the daemon
+// serves no CORS headers by design — it expects same-origin or trusted
+// callers).
 //
 // PORT DISCOVERY: if the daemon's preferred port is taken by another program,
 // the desktop shell walks preferred..preferred+5 and binds the first free one.
@@ -30,7 +35,13 @@
 
 export interface SaviDaemonConfig {
     readonly baseUrl: string;
+    /** The Authorization bearer — the LAN token normally; the account JWT
+     *  doubles here only when no LAN token is configured. */
     readonly token: string;
+    /** The signed-in account's JWT, sent as `X-Savi-Account` when present.
+     *  Identity only — it opens nothing; it decides what the AI endpoints
+     *  relay to the cloud. */
+    readonly accountJwt?: string;
 }
 
 export interface CaptureFinishInfo {
@@ -99,6 +110,7 @@ const doFetch = async (base: string, config: SaviDaemonConfig, path: string, ini
         headers: {
             ...init.headers,
             Authorization: `Bearer ${config.token}`,
+            ...(config.accountJwt ? { 'X-Savi-Account': config.accountJwt } : {}),
         },
     });
 
@@ -364,15 +376,27 @@ export const tokenize = async (config: SaviDaemonConfig, lang: string, text: str
     return body.tokens ?? [];
 };
 
+/** The daemon's word on why AI had nothing — it saw the credentials, so its
+ *  account reasons are authoritative over anything guessed client-side.
+ *  Absent on responses from a pre-split daemon. */
+export type SaviDaemonUnavailable = 'noAccount' | 'accountMismatch' | 'accountUnverified' | 'provider';
+
+const daemonUnavailable = (value: unknown): SaviDaemonUnavailable | undefined =>
+    value === 'noAccount' || value === 'accountMismatch' || value === 'accountUnverified' || value === 'provider'
+        ? value
+        : undefined;
+
 export interface SaviSegmentResult {
     readonly ai: boolean;
     readonly tokens: SaviToken[];
+    /** Only when `ai:false` — the daemon's reason for the fallback. */
+    readonly unavailable?: SaviDaemonUnavailable;
 }
 
 /** AI context-aware segmentation of a line (resolves でも-conjunction vs で+も, は-topic
  *  vs 葉, …). A superset of `tokenize`: tokens still concatenate back to the line, and
  *  AI chunks carry `gloss`/`grammar`. `ai:false` = the daemon fell back to the rule-based
- *  split (no provider / offline / a split that wouldn't reconcile with the line). */
+ *  split, and `unavailable` names its reason. */
 export const segmentLine = async (
     config: SaviDaemonConfig,
     lang: string,
@@ -390,19 +414,25 @@ export const segmentLine = async (
             episodeId: opts?.episodeId,
         })
     );
-    return { ai: body.ai === true, tokens: body.tokens ?? [] };
+    return { ai: body.ai === true, tokens: body.tokens ?? [], unavailable: daemonUnavailable(body.unavailable) };
 };
 
+export interface SaviExplainResult {
+    readonly explanation: string | null;
+    /** Only when `explanation` is null — the daemon's reason. */
+    readonly unavailable?: SaviDaemonUnavailable;
+}
+
 /** A professor-style explanation of one word in the context of its sentence — the
- *  detailed "in this sentence" teaching note for the tap panel. `null` when no
- *  provider is configured / every provider fails. */
+ *  detailed "in this sentence" teaching note for the tap panel. `explanation` is
+ *  `null` when there's nothing to show, with the daemon's reason beside it. */
 export const explainWord = async (
     config: SaviDaemonConfig,
     lang: string,
     term: string,
     text: string,
     opts?: { reading?: string; prevLines?: string[]; nextLines?: string[]; episodeId?: string }
-): Promise<string | null> => {
+): Promise<SaviExplainResult> => {
     const body = await request(
         config,
         '/v2/explain',
@@ -416,7 +446,9 @@ export const explainWord = async (
             episodeId: opts?.episodeId,
         })
     );
-    return typeof body.explanation === 'string' && body.explanation.trim().length > 0 ? body.explanation : null;
+    const explanation =
+        typeof body.explanation === 'string' && body.explanation.trim().length > 0 ? body.explanation : null;
+    return { explanation, unavailable: explanation === null ? daemonUnavailable(body.unavailable) : undefined };
 };
 
 /** JP→EN dictionary lookup + per-kanji breakdown; both empty when nothing
