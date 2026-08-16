@@ -51,7 +51,7 @@ import {
     SaviWatchedLineResponse,
     SaviEngagementSessionMessage,
 } from './messages';
-import { daemonToken } from './account';
+import { currentAccessToken, daemonToken } from './account';
 import {
     DEFAULT_GLOSS_THRESHOLD,
     glossThreshold as cloudGlossThreshold,
@@ -219,9 +219,7 @@ export default class SaviCommandHandler implements CommandHandler {
             case 'savi-word-proficiency':
                 this._wordProficiency(command.message as SaviWordProficiencyMessage)
                     .then(sendResponse)
-                    .catch(() =>
-                        sendResponse({ threshold: DEFAULT_GLOSS_THRESHOLD } as SaviWordProficiencyResponse)
-                    );
+                    .catch(() => sendResponse({ threshold: DEFAULT_GLOSS_THRESHOLD } as SaviWordProficiencyResponse));
                 return true;
             case 'savi-word-buckets':
                 this._wordBuckets(command.message as SaviWordBucketsMessage)
@@ -379,12 +377,19 @@ export default class SaviCommandHandler implements CommandHandler {
     private async _segment(message: SaviSegmentLineMessage): Promise<SaviSegmentLineResponse> {
         const { saviAiSegmentation } = await this._settings.get(['saviAiSegmentation']);
         if (!saviAiSegmentation) {
-            return { ai: false, tokens: [] };
+            return { ai: false, tokens: [], unavailable: 'disabled' };
         }
         const config = await this._daemonConfig();
         if (!config) {
-            return (await getCachedSegment(message.lang, message.text)) ?? { ai: false, tokens: [] };
+            return (
+                (await getCachedSegment(message.lang, message.text)) ?? {
+                    ai: false,
+                    tokens: [],
+                    unavailable: 'noDaemon',
+                }
+            );
         }
+        const unavailable = await this._aiCredentialGap();
         try {
             const result = await segmentLine(config, message.lang, message.text, {
                 prevLines: message.prevLines,
@@ -393,10 +398,17 @@ export default class SaviCommandHandler implements CommandHandler {
             });
             if (result.ai && result.tokens.length > 0) {
                 await putCachedSegment(message.lang, message.text, result.ai, result.tokens);
+                return result;
             }
-            return result;
+            return { ...result, unavailable: unavailable ?? 'provider' };
         } catch (e) {
-            return (await getCachedSegment(message.lang, message.text)) ?? { ai: false, tokens: [] };
+            return (
+                (await getCachedSegment(message.lang, message.text)) ?? {
+                    ai: false,
+                    tokens: [],
+                    unavailable: unavailable ?? 'provider',
+                }
+            );
         }
     }
 
@@ -406,12 +418,16 @@ export default class SaviCommandHandler implements CommandHandler {
     private async _explain(message: SaviExplainWordMessage): Promise<SaviExplainWordResponse> {
         const { saviAiSegmentation } = await this._settings.get(['saviAiSegmentation']);
         if (!saviAiSegmentation) {
-            return { explanation: null };
+            return { explanation: null, unavailable: 'disabled' };
         }
         const config = await this._daemonConfig();
         if (!config) {
-            return { explanation: null };
+            return { explanation: null, unavailable: 'noDaemon' };
         }
+        // Checked BEFORE the call, not inferred from the empty result: without an
+        // account JWT the daemon relays nothing and the cloud is never reached, so
+        // a null here would otherwise be reported as a provider failure.
+        const unavailable = await this._aiCredentialGap();
         try {
             const explanation = await explainWord(config, message.lang, message.term, message.text, {
                 reading: message.reading,
@@ -419,10 +435,30 @@ export default class SaviCommandHandler implements CommandHandler {
                 nextLines: message.nextLines,
                 episodeId: message.episodeId,
             });
-            return { explanation };
+            if (explanation) {
+                return { explanation };
+            }
+            return { explanation: null, unavailable: unavailable ?? 'provider' };
         } catch (e) {
-            return { explanation: null };
+            return { explanation: null, unavailable: unavailable ?? 'provider' };
         }
+    }
+
+    /** `'noAccount'` when we have no usable token to send. The daemon accepts the
+     *  LAN token for local endpoints but only relays a bearer that verifies as the
+     *  owner's Supabase JWT, so a LAN-token caller gets AI silently switched off —
+     *  no error, no log.
+     *
+     *  It reports the ABSENCE, not a cause. From here the two look identical: an
+     *  account that was never signed in, and a signed-in account whose published
+     *  session went stale because the desktop app that refreshes it isn't running.
+     *  Distinguishing them needs the native-messaging host (it answers even with
+     *  the app closed, since the BROWSER launches it — an expired session on disk
+     *  means "app not running", a `signedOut` reply means "no account"). That
+     *  lives on the shared-sign-in branch, so the copy leads with the likelier
+     *  cause instead of guessing here. */
+    private async _aiCredentialGap(): Promise<'noAccount' | undefined> {
+        return (await currentAccessToken()) === undefined ? 'noAccount' : undefined;
     }
 
     // Full kanji breakdown for the tap panel (offline KANJIDIC/RTK data — no LLM,
