@@ -1,4 +1,12 @@
-import { currentAccessToken, daemonCredentials, remoteDaemonCredentials, signIn, signOut, storedAccount } from './account';
+import {
+    currentAccessToken,
+    daemonCredentials,
+    observeTokenResolution,
+    remoteDaemonCredentials,
+    signIn,
+    signOut,
+    storedAccount,
+} from './account';
 
 // account.ts talks to browser.storage.local + fetch (GoTrue REST); both are
 // faked in-memory, following recording-intent.test.ts's browser-fake pattern.
@@ -156,6 +164,42 @@ describe('savi account', () => {
         // No LAN token configured → the JWT doubles as the bearer (the daemon
         // accepts the pinned owner's JWT as Authorization).
         expect(await daemonCredentials('   ')).toEqual({ bearer: 'access-1', accountJwt: 'access-1' });
+    });
+
+    it('notifies the resolution observer with whether a token was produced', async () => {
+        const seen: boolean[] = [];
+        observeTokenResolution((hasAccountToken) => seen.push(hasAccountToken));
+
+        try {
+            await currentAccessToken();
+            store['saviAccount'] = storedSession(3600);
+            await currentAccessToken();
+            // Every daemon request resolves its identity through
+            // daemonCredentials, so the observer sees those resolutions too —
+            // that steady flow is what makes the credential transition
+            // observable without polling. The credential split moved the JWT
+            // to X-Savi-Account but kept it sourced from currentAccessToken,
+            // so the signal survives it.
+            await daemonCredentials('lan-token');
+
+            expect(seen).toEqual([false, true, true]);
+        } finally {
+            observeTokenResolution(undefined);
+        }
+    });
+
+    it('a throwing observer never costs the caller its token', async () => {
+        jest.spyOn(console, 'warn').mockImplementation(() => {});
+        store['saviAccount'] = storedSession(3600);
+        observeTokenResolution(() => {
+            throw new Error('observer blew up');
+        });
+
+        try {
+            expect(await currentAccessToken()).toBe('access-1');
+        } finally {
+            observeTokenResolution(undefined);
+        }
     });
 
     it('sign-out clears the session and best-effort revokes it', async () => {

@@ -156,9 +156,59 @@ const accessTokenWithMargin = async (marginSeconds: number): Promise<string | un
     return await refreshInFlight;
 };
 
+// ── Resolution observer ──────────────────────────────────────────────────
+// The session moves without anyone signing in or out. `signIn`/`signOut` are
+// the loud transitions; the quiet ones are the common ones:
+//
+//   - the `browser.alarms` heartbeat refreshes ahead of expiry, on its own
+//     timer, in the background — no UI involved
+//   - a denied refresh CLEARS the session right here in `refresh()`, so the
+//     account goes from signed-in to signed-out with no `signOut()` call
+//   - a transient failure serves the stored token until it lapses, then stops
+//   - the browser was closed over the token's whole lifetime and the first
+//     resolution after waking has to refresh before it can answer
+//
+// Anything hung off the ceremony misses all of that. So expose the STATE
+// instead, at the one place every reader already funnels through: cloud calls
+// take their bearer from here and daemon calls take their `X-Savi-Account`
+// identity from here (via `daemonCredentials`), so the transition is observable
+// with no new polling — and stays observable while glossing is dead, exactly
+// when a gloss-driven trigger would go quiet. credential-watch.ts is the
+// observer; see it for what happens on a rising edge.
+//
+// The credential split moved the JWT off the daemon Authorization header, but
+// left it sourced from this function, so the signal is unchanged by it.
+//
+// One observer, not a list: there is exactly one interested party (the
+// background), and a list would invite content scripts to register handlers
+// that fire per-frame.
+
+type TokenResolutionObserver = (hasAccountToken: boolean) => void;
+
+let resolutionObserver: TokenResolutionObserver | undefined;
+
+/** Watch every account-token resolution in THIS context. Registering in the
+ *  background is what turns a session coming back into a re-arm; other contexts
+ *  leave it unset and resolution stays a plain read. */
+export const observeTokenResolution = (observer: TokenResolutionObserver | undefined): void => {
+    resolutionObserver = observer;
+};
+
 /** The signed-in account's access token, refreshed if it is about to expire.
  *  `undefined` when signed out or the session could not be kept alive. */
-export const currentAccessToken = (): Promise<string | undefined> => accessTokenWithMargin(readMarginSeconds);
+export const currentAccessToken = async (): Promise<string | undefined> => {
+    const token = await accessTokenWithMargin(readMarginSeconds);
+
+    // Never let a broken observer take down a request that already resolved
+    // its token — the token is the caller's whole reason for being here.
+    try {
+        resolutionObserver?.(token !== undefined);
+    } catch (e) {
+        console.warn('savi: token resolution observer failed', e);
+    }
+
+    return token;
+};
 
 /** The two credentials a daemon request carries — the credential split.
  *  `bearer` is capability (the LAN token from settings), `accountJwt` is
