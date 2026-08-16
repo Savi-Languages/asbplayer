@@ -6,8 +6,78 @@
 // hover popup. Inline-styled + appended to document.body, like the toast/popup.
 
 import { SaviDictEntry, SaviKanjiFull, SaviKanjiInfo, SaviToken } from './daemon-client';
+import { SaviAiUnavailable } from './messages';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/** What to tell the user when an AI section is empty. Each case has a different
+ *  fix, and only one of them is about a provider — the old copy claimed "provider
+ *  busy" for all of them, which pointed debugging at rate limits when the real
+ *  cause was usually that there was no credential to call with.
+ *
+ *  Each note names an ACTION, and the account cases stay distinct on purpose:
+ *  `noAccount` means the extension is signed out (it owns its own sign-in —
+ *  the fix is signing in here, not starting anything), `accountMismatch` means
+ *  signed into the WRONG account (a real session; sign into the right one),
+ *  and `accountUnverified` means the daemon can't verify accounts yet — where
+ *  either sign-in instruction would send the user to fix the wrong thing. */
+function unavailableMessage(why?: SaviAiUnavailable): { note: string; hint?: string } {
+    switch (why) {
+        case 'noAccount':
+            return {
+                note: 'Sign in from savi settings to see AI explanations.',
+                hint: 'The dictionary above works without an account.',
+            };
+        case 'accountMismatch':
+            return {
+                note: "This browser is signed into a different savi account than this computer's app.",
+                hint: 'Sign into the same account in savi settings to get AI explanations.',
+            };
+        case 'accountUnverified':
+            return {
+                note: "The savi desktop app hasn't verified your account yet.",
+                hint: 'Start the desktop app and sign in there once, then tap the word again.',
+            };
+        case 'disabled':
+            return { note: 'AI explanations are turned off in savi settings.' };
+        case 'noDaemon':
+            return {
+                note: "The savi desktop app isn't reachable.",
+                hint: 'Start it to get AI explanations; the dictionary above works without it.',
+            };
+        case 'provider':
+            return { note: "The AI provider didn't respond — the dictionary above still applies." };
+        default:
+            return { note: 'No AI explanation for this word right now.' };
+    }
+}
+
+/** The one line the "Sentence breakdown" section shows when segmentation came
+ *  back rule-based (`ai:false`). Deliberately ONE line and never a hint: the
+ *  breakdown is collapsed by default and, when the account is the problem, the
+ *  explanation section above already carries the loud, actionable message —
+ *  a second copy of "sign in" here would just be noise. So the account /
+ *  setting / daemon reasons reuse `unavailableMessage`'s note verbatim (one
+ *  source of truth for that copy), and only the two reasons whose meaning
+ *  differs for SEGMENTATION get their own wording:
+ *  - `provider` on `/v2/segment` means a verified identity was relayed and the
+ *    AI still produced no usable split — the cloud failed, the answer didn't
+ *    parse, or its chunks didn't reconcile with the line's text (the daemon
+ *    rejects a hallucinated boundary rather than render it). Either way the
+ *    rule-based reading was kept, and the copy says so instead of blaming a
+ *    "provider" the user can't see.
+ *  - no reason at all (a pre-split background, or the request itself threw)
+ *    stays neutral — the panel must not invent a cause. */
+function breakdownUnavailableMessage(why?: SaviAiUnavailable): string {
+    switch (why) {
+        case 'provider':
+            return "The AI didn't return a split that matches this line — kept the rule-based reading instead.";
+        case undefined:
+            return 'No AI breakdown for this line right now.';
+        default:
+            return unavailableMessage(why).note;
+    }
+}
 
 /** A tiny SMIL-animated spinner — no CSS/keyframes dependency, animates anywhere. */
 function spinner(): SVGSVGElement {
@@ -366,8 +436,9 @@ export class SaviWordPanel {
     }
 
     /** Fill the detailed teaching note (the professor-style in-context explanation).
-     *  null ⇒ no provider / all fail — show a graceful note; the dictionary stands. */
-    setExplanation(text: string | null) {
+     *  null ⇒ nothing to show; `why` says which of the several very different causes
+     *  it was, so the note can be acted on. The dictionary above always stands. */
+    setExplanation(text: string | null, why?: SaviAiUnavailable) {
         if (!this._explainBody) {
             return;
         }
@@ -380,9 +451,18 @@ export class SaviWordPanel {
                 p.textContent = para.trim();
                 this._explainBody.appendChild(p);
             }
-        } else {
-            Object.assign(this._explainBody.style, { color: '#93a0ad', fontStyle: 'italic', fontSize: '13px' });
-            this._explainBody.textContent = 'Detailed explanation unavailable right now (provider busy).';
+            return;
+        }
+        Object.assign(this._explainBody.style, { color: '#93a0ad', fontStyle: 'italic', fontSize: '13px' });
+        const { note, hint } = unavailableMessage(why);
+        const line = document.createElement('div');
+        line.textContent = note;
+        this._explainBody.appendChild(line);
+        if (hint) {
+            const sub = document.createElement('div');
+            Object.assign(sub.style, { marginTop: '3px', fontSize: '12px', color: '#7d8894' });
+            sub.textContent = hint;
+            this._explainBody.appendChild(sub);
         }
     }
 
@@ -396,8 +476,10 @@ export class SaviWordPanel {
 
     /** Fill the AI sections once the daemon segmentation resolves. `featured` is the
      *  tapped word's contextual reading; `aiTokens` drives the whole-line breakdown.
-     *  Both null ⇒ the AI call failed/was unavailable (graceful, rule-based stands). */
-    setContext(featured: WordContext | null, aiTokens: SaviToken[] | null) {
+     *  Both null ⇒ the AI call failed/was unavailable (graceful, rule-based stands),
+     *  and `why` is the daemon's/background's reason for it — see
+     *  `breakdownUnavailableMessage` for what each reason renders as. */
+    setContext(featured: WordContext | null, aiTokens: SaviToken[] | null, why?: SaviAiUnavailable) {
         if (this._ctxBody) {
             this._ctxBody.replaceChildren();
             if (featured && (featured.gloss || featured.grammar)) {
@@ -416,9 +498,13 @@ export class SaviWordPanel {
         if (this._breakdownBody) {
             this._breakdownBody.replaceChildren();
             if (!aiTokens) {
+                // Same division of labour as the terse line above: when the
+                // explanation ALSO failed, setExplanation() carries the loud,
+                // actionable message (note + hint) — this stays a single honest
+                // line naming the reason, never a second copy of the fix.
                 const note = document.createElement('div');
                 Object.assign(note.style, { color: '#93a0ad', fontStyle: 'italic', fontSize: '13px' });
-                note.textContent = 'unavailable';
+                note.textContent = breakdownUnavailableMessage(why);
                 this._breakdownBody.appendChild(note);
                 return;
             }

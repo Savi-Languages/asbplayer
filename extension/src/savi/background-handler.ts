@@ -57,7 +57,7 @@ import {
     SaviWatchedLineResponse,
     SaviEngagementSessionMessage,
 } from './messages';
-import { daemonToken } from './account';
+import { currentAccessToken, daemonCredentials } from './account';
 import {
     DEFAULT_GLOSS_THRESHOLD,
     glossThreshold as cloudGlossThreshold,
@@ -78,6 +78,7 @@ import {
 } from './capture-session';
 import {
     browserHintFromUserAgent,
+    captureState,
     finishCapture,
     lookupDict,
     mineLine,
@@ -105,6 +106,7 @@ import {
 import { captureVisibleTab } from '@/services/capture-visible-tab';
 import { OpenSubtitlesClient } from '@/services/subtitle-sources';
 import { getCachedRoamingSettings, loadRoamingSettings } from './cloud-settings';
+import { isStaleCaptureSession } from './capture-staleness';
 
 export default class SaviCommandHandler implements CommandHandler {
     private readonly _settings: SettingsProvider;
@@ -263,16 +265,16 @@ export default class SaviCommandHandler implements CommandHandler {
         return false;
     }
 
-    // Bearer preference: the signed-in account's JWT, else the legacy LAN
-    // token setting (the transition fallback). Resolved per request — JWTs
-    // expire ~hourly.
+    // The credential split: the LAN token is the bearer (capability), the
+    // account JWT rides X-Savi-Account (identity). Resolved per request —
+    // JWTs expire ~hourly.
     private async _daemonConfig(): Promise<SaviDaemonConfig | null> {
         const { saviDaemonUrl, saviDaemonToken } = await this._settings.get(['saviDaemonUrl', 'saviDaemonToken']);
-        const token = await daemonToken(saviDaemonToken);
-        if (!saviDaemonUrl.trim() || !token) {
+        const { bearer, accountJwt } = await daemonCredentials(saviDaemonToken);
+        if (!saviDaemonUrl.trim() || !bearer) {
             return null;
         }
-        return { baseUrl: normalizedBaseUrl(saviDaemonUrl), token };
+        return { baseUrl: normalizedBaseUrl(saviDaemonUrl), token: bearer, accountJwt };
     }
 
     // SV-8 fallback: search OpenSubtitles for the target-language subtitle when
@@ -478,12 +480,19 @@ export default class SaviCommandHandler implements CommandHandler {
     private async _segment(message: SaviSegmentLineMessage): Promise<SaviSegmentLineResponse> {
         const { saviAiSegmentation } = await this._settings.get(['saviAiSegmentation']);
         if (!saviAiSegmentation) {
-            return { ai: false, tokens: [] };
+            return { ai: false, tokens: [], unavailable: 'disabled' };
         }
         const config = await this._daemonConfig();
         if (!config) {
-            return (await getCachedSegment(message.lang, message.text)) ?? { ai: false, tokens: [] };
+            return (
+                (await getCachedSegment(message.lang, message.text)) ?? {
+                    ai: false,
+                    tokens: [],
+                    unavailable: 'noDaemon',
+                }
+            );
         }
+        const localGap = await this._aiCredentialGap();
         try {
             const result = await segmentLine(config, message.lang, message.text, {
                 prevLines: message.prevLines,
@@ -492,10 +501,19 @@ export default class SaviCommandHandler implements CommandHandler {
             });
             if (result.ai && result.tokens.length > 0) {
                 await putCachedSegment(message.lang, message.text, result.ai, result.tokens);
+                return { ai: result.ai, tokens: result.tokens };
             }
-            return result;
+            // The daemon's reason wins — it verified the credentials we sent.
+            // The local guess covers pre-split daemons that name no reason.
+            return { ai: result.ai, tokens: result.tokens, unavailable: result.unavailable ?? localGap ?? 'provider' };
         } catch (e) {
-            return (await getCachedSegment(message.lang, message.text)) ?? { ai: false, tokens: [] };
+            return (
+                (await getCachedSegment(message.lang, message.text)) ?? {
+                    ai: false,
+                    tokens: [],
+                    unavailable: localGap ?? 'provider',
+                }
+            );
         }
     }
 
@@ -505,23 +523,41 @@ export default class SaviCommandHandler implements CommandHandler {
     private async _explain(message: SaviExplainWordMessage): Promise<SaviExplainWordResponse> {
         const { saviAiSegmentation } = await this._settings.get(['saviAiSegmentation']);
         if (!saviAiSegmentation) {
-            return { explanation: null };
+            return { explanation: null, unavailable: 'disabled' };
         }
         const config = await this._daemonConfig();
         if (!config) {
-            return { explanation: null };
+            return { explanation: null, unavailable: 'noDaemon' };
         }
+        // The local pre-check backstops the daemon's own report: a pre-split
+        // daemon names no reason, and a thrown request leaves nothing to read.
+        const localGap = await this._aiCredentialGap();
         try {
-            const explanation = await explainWord(config, message.lang, message.term, message.text, {
+            const result = await explainWord(config, message.lang, message.term, message.text, {
                 reading: message.reading,
                 prevLines: message.prevLines,
                 nextLines: message.nextLines,
                 episodeId: message.episodeId,
             });
-            return { explanation };
+            if (result.explanation) {
+                return { explanation: result.explanation };
+            }
+            // The daemon's reason wins — it verified the credentials we sent.
+            return { explanation: null, unavailable: result.unavailable ?? localGap ?? 'provider' };
         } catch (e) {
-            return { explanation: null };
+            return { explanation: null, unavailable: localGap ?? 'provider' };
         }
+    }
+
+    /** `'noAccount'` when we have no account credential to send — the extension
+     *  is signed out, so the daemon has nothing to relay and the cloud is never
+     *  reached. A LOCAL guess, used only when the daemon's own `unavailable`
+     *  report is absent (pre-split daemon, or the request itself failed): the
+     *  daemon is the authority on the credentials it actually received, and can
+     *  distinguish states this check can't (`accountMismatch`,
+     *  `accountUnverified`). */
+    private async _aiCredentialGap(): Promise<'noAccount' | undefined> {
+        return (await currentAccessToken()) === undefined ? 'noAccount' : undefined;
     }
 
     // Full kanji breakdown for the tap panel (offline KANJIDIC/RTK data — no LLM,
@@ -692,17 +728,15 @@ export default class SaviCommandHandler implements CommandHandler {
         const existing = await getCaptureSession();
 
         if (existing !== undefined) {
-            // One session at a time (the daemon has one tap). A session whose
-            // tab is gone is stale bookkeeping — sweep it and continue.
-            try {
-                await browser.tabs.get(existing.tabId);
+            if (await isStaleCaptureSession(existing, message.episodeId, tabId, config)) {
+                await clearCaptureSession();
+            } else {
+                // One session at a time (the daemon has one tap).
                 return {
                     started: false,
                     errorCode: 'already-capturing',
                     errorMessage: 'a savi capture is already running',
                 };
-            } catch (e) {
-                await clearCaptureSession();
             }
         }
 
@@ -865,6 +899,23 @@ export default class SaviCommandHandler implements CommandHandler {
             return { active: false };
         }
 
+        // Reconcile with the daemon rather than reporting our record as fact.
+        // It can end a capture on its own (idle sweep), and a UI that keeps
+        // claiming "recording" afterwards is the visible half of the same bug
+        // that made the record button and the start guard contradict each other.
+        // Silence from the daemon leaves the record alone — see
+        // isStaleCaptureSession for why that direction is the safe one.
+        const config = await this._daemonConfig();
+
+        if (config) {
+            const active = await captureState(config);
+
+            if (active !== undefined && !active.includes(session.episodeId)) {
+                await clearCaptureSession();
+                return { active: false };
+            }
+        }
+
         return { active: true, episodeId: session.episodeId, title: session.title, tabId: session.tabId };
     }
 
@@ -894,14 +945,17 @@ export const finishCaptureForClosedTab = async (tabId: number, settings: Setting
 
     await clearCaptureSession();
     const { saviDaemonUrl, saviDaemonToken } = await settings.get(['saviDaemonUrl', 'saviDaemonToken']);
-    const token = await daemonToken(saviDaemonToken);
+    const { bearer, accountJwt } = await daemonCredentials(saviDaemonToken);
 
-    if (!saviDaemonUrl.trim() || !token) {
+    if (!saviDaemonUrl.trim() || !bearer) {
         return;
     }
 
     try {
-        await finishCapture({ baseUrl: normalizedBaseUrl(saviDaemonUrl), token }, session.captureId);
+        await finishCapture(
+            { baseUrl: normalizedBaseUrl(saviDaemonUrl), token: bearer, accountJwt },
+            session.captureId
+        );
     } catch (e) {
         console.warn('savi: finishing capture for closed tab failed', e);
     }

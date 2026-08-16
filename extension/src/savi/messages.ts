@@ -136,9 +136,37 @@ export interface SaviSegmentLineMessage {
     readonly episodeId?: string;
 }
 
+/** Why an AI-backed section has nothing to show. The panel used to render one
+ *  generic "provider busy" line for all of these, which is actively misleading:
+ *  `noAccount` is by far the most common and has nothing to do with providers
+ *  (it cost real debugging time chasing rate limits that were never involved).
+ *  The account states come from the DAEMON when it was reachable (it saw the
+ *  credentials; its word is authoritative) and are guessed locally only when
+ *  it wasn't.
+ *  - `noAccount`  no account credential at all — the extension is signed out.
+ *                 Named for what we KNOW: there is no identity to send.
+ *  - `accountMismatch`    the extension is signed into a REAL account that
+ *                 isn't the one this computer's app pinned as owner. The fix
+ *                 is specific: sign into the same account.
+ *  - `accountUnverified`  the identity was sent but the daemon couldn't verify
+ *                 it — expired token, or the desktop app hasn't provisioned
+ *                 trust since it started. "Sign into the same account" would
+ *                 be wrong advice, hence the separate name.
+ *  - `disabled`   the AI setting is off — a deliberate choice, not a failure.
+ *  - `noDaemon`   the daemon isn't configured or isn't reachable.
+ *  - `provider`   a verified identity was relayed and the cloud gave nothing back. */
+export type SaviAiUnavailable =
+    | 'noAccount'
+    | 'accountMismatch'
+    | 'accountUnverified'
+    | 'disabled'
+    | 'noDaemon'
+    | 'provider';
+
 export interface SaviSegmentLineResponse {
     readonly ai: boolean;
     readonly tokens: SaviToken[];
+    readonly unavailable?: SaviAiUnavailable;
 }
 
 // Professor-style in-context explanation of ONE word — the tap panel's "in this
@@ -156,6 +184,7 @@ export interface SaviExplainWordMessage {
 
 export interface SaviExplainWordResponse {
     readonly explanation: string | null;
+    readonly unavailable?: SaviAiUnavailable;
 }
 
 // Full per-kanji breakdown (readings, RTK keyword/components/stories, examples)

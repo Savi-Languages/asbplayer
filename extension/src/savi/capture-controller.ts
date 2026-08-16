@@ -14,10 +14,16 @@
 // here so the upstream diff stays minimal.
 
 import { SettingsProvider } from '@project/common/settings';
-import { daemonToken } from './account';
+import { daemonCredentials } from './account';
 import { SegmentMeta, Segmenter, SegmenterOutput } from './segmenter';
 import { serializeToSrt, SerializableSubtitle } from './subtitle-serializer';
-import { deriveEpisodeId, deriveShowAndTitle, deriveShowAndTitleFromBasename } from './episode';
+import {
+    deriveEpisodeId,
+    deriveShowAndTitle,
+    deriveShowAndTitleFromBasename,
+    youtubeShowAndTitle,
+    youtubeShowId,
+} from './episode';
 import { NativeSubtitleHider, nativeSubtitleSelectorForHost } from './native-subtitle-hider';
 import { SaviRecordButton } from './record-button';
 import { SaviReplayButton } from './replay-button';
@@ -236,10 +242,6 @@ export class SaviCaptureController {
         this._host.settings
             .get(['saviCaptureEnabled', 'saviHideNativeSubtitles', 'saviDaemonUrl'])
             .then(({ saviCaptureEnabled, saviHideNativeSubtitles }) => {
-                // Speed selection now lives in asbplayer's own top control bar
-                // (MobileVideoOverlay), so the separate floating control stays
-                // hidden — kept around only as a fallback.
-
                 // Hiding the site's own subtitles is independent of capture:
                 // run it first and regardless of whether auto-capture is on.
                 if (saviHideNativeSubtitles) {
@@ -258,8 +260,9 @@ export class SaviCaptureController {
                     this._recordButton.show();
                     // The speed selector rides with the Record control: both are
                     // capture affordances, and SAVI.md documents them together.
-                    // (It was constructed and hidden but never shown, so the
-                    // documented 0.5x-1.5x picker could not appear at all.)
+                    // This is the ONLY speed picker — MobileVideoOverlay used to
+                    // render its own identical row, which showed up as a second
+                    // panel over the video whenever capture was enabled.
                     this._speedControl.show();
                     const { episodeId } = this._pageMetadata();
                     // No stable id yet (Netflix mid-navigation) — the next
@@ -349,8 +352,9 @@ export class SaviCaptureController {
                     'saviRecordingGuard',
                 ]);
 
-            // Account JWT when signed in, legacy LAN token otherwise.
-            if (!saviDaemonUrl.trim() || !(await daemonToken(saviDaemonToken))) {
+            // The LAN token opens the daemon; the account JWT covers a setup
+            // that never configured one (the JWT doubles as the bearer then).
+            if (!saviDaemonUrl.trim() || !(await daemonCredentials(saviDaemonToken)).bearer) {
                 this._host.notify('Savi: sign in (or set a daemon token) in the extension settings');
                 return;
             }
@@ -383,7 +387,7 @@ export class SaviCaptureController {
                     command: 'savi-start-capture',
                     episodeId,
                     show,
-                    showId: this._showId,
+                    showId: this._showId ?? this._youtubeShowId(),
                     title,
                     lang,
                     subtitles: serializeToSrt(subtitles),
@@ -472,11 +476,67 @@ export class SaviCaptureController {
     // existing DOM/document.title derivation second. Never throws.
     private _resolveShowAndTitle(url: string, documentTitle: string): { show?: string; title: string } {
         const fromBasename = deriveShowAndTitleFromBasename(this._safeSubtitleFileName());
+
+        // YouTube first, and BEFORE the basename early-return. YouTube has no
+        // series/episode structure, so the basename yields a usable TITLE but
+        // never a `show` — returning it early is exactly how every capture
+        // ended up in "Unknown Show". The channel is the natural grouping, so
+        // take the channel as the show and keep the best title available.
+        const owner = this._readYoutubeOwner();
+
+        if (owner !== undefined) {
+            const fromOwner = youtubeShowAndTitle(owner.channelName, owner.videoTitle || documentTitle);
+
+            if (fromOwner.show !== undefined) {
+                const title = fromOwner.title.trim() || fromBasename.title.trim();
+
+                if (title.length > 0) {
+                    return { show: fromOwner.show, title };
+                }
+            }
+        }
+
         if (fromBasename.title.trim().length > 0) {
             return fromBasename;
         }
 
         return deriveShowAndTitle(url, documentTitle, this._readNetflixOverlay());
+    }
+
+    /** Channel name + video title + channel href from a YouTube watch page, or
+     *  undefined off YouTube / before the owner link renders. Never throws —
+     *  a DOM change must degrade to the old behaviour, not break capture. */
+    private _readYoutubeOwner(): { channelName: string; videoTitle: string; href: string } | undefined {
+        try {
+            if (!/(^|\.)youtube\.com$/i.test(window.location.host)) {
+                return undefined;
+            }
+
+            const anchor =
+                document.querySelector('ytd-video-owner-renderer ytd-channel-name a') ??
+                document.querySelector('#owner #channel-name a') ??
+                document.querySelector('ytd-channel-name a');
+
+            if (anchor === null) {
+                return undefined;
+            }
+
+            const videoTitle = document.querySelector<HTMLMetaElement>('meta[property="og:title"]')?.content ?? '';
+
+            return {
+                channelName: anchor.textContent ?? '',
+                videoTitle,
+                href: anchor.getAttribute('href') ?? '',
+            };
+        } catch (e) {
+            return undefined;
+        }
+    }
+
+    /** `youtube:<UC… | @handle>` from the owner link, for library grouping. */
+    private _youtubeShowId(): string | undefined {
+        const owner = this._readYoutubeOwner();
+        return owner === undefined ? undefined : youtubeShowId(owner.href);
     }
 
     private _safeSubtitleFileName(): string {

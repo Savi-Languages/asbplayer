@@ -28,6 +28,7 @@ import {
     SaviKanjiResponse,
     SaviTokenizeMessage,
     SaviTokenizeResponse,
+    SaviAiUnavailable,
 } from './messages';
 import { serializeToSrt, SerializableSubtitle } from './subtitle-serializer';
 import { deriveEpisodeId } from './episode';
@@ -403,8 +404,8 @@ const firstDictGloss = (entries: SaviDictEntry[]): string => entries[0]?.senses?
 
 export class SaviHoverDictionary {
     private readonly _tokenizeCache = new Map<string, SaviToken[]>();
-    // null = the daemon returned no AI segmentation for this line → use rule-based.
-    private readonly _segmentCache = new Map<string, SaviToken[] | null>();
+    // AI segmentations only — a rule-based fallback is never cached (see _segment).
+    private readonly _segmentCache = new Map<string, SaviToken[]>();
     private readonly _explainCache = new Map<string, string | null>();
     private readonly _kanjiCache = new Map<string, SaviKanjiFull[]>();
     private _wordPanel: SaviWordPanel | null = null;
@@ -612,13 +613,20 @@ export class SaviHoverDictionary {
         return tokens;
     }
 
-    /** AI segmentation for a line (cached). `null` when the daemon falls back to
-     *  rule-based (feature off / no provider / offline / a split that wouldn't
-     *  reconcile) — the caller then keeps the rule-based render. */
-    private async _segment(text: string): Promise<SaviToken[] | null> {
+    /** AI segmentation for a line (cached). `tokens` is null when the daemon fell
+     *  back to rule-based (feature off / no account / offline / a split that
+     *  wouldn't reconcile) — the caller then keeps the rule-based render — and
+     *  `unavailable` says why, so the panel can name the reason honestly.
+     *
+     *  ONLY successes are cached, for the same reason as `_explainWord`: a cached
+     *  fallback would outlive its cause AND its reason. Signed out → the note says
+     *  to sign in → the user does → the retap of the same line would be served the
+     *  cached null and keep telling them to sign in, right under an explanation
+     *  section that just succeeded. */
+    private async _segment(text: string): Promise<{ tokens: SaviToken[] | null; unavailable?: SaviAiUnavailable }> {
         const cached = this._segmentCache.get(text);
         if (cached !== undefined) {
-            return cached;
+            return { tokens: cached };
         }
         const { prevLines, nextLines } = this._neighborsOf(text);
         const res = await sendToBackground<SaviSegmentLineResponse>({
@@ -629,22 +637,33 @@ export class SaviHoverDictionary {
             nextLines,
             episodeId: deriveEpisodeId(location.href, document.title),
         });
-        const tokens = res.ai && res.tokens.length > 0 ? res.tokens : null;
+        if (!res.ai || res.tokens.length === 0) {
+            return { tokens: null, unavailable: res.unavailable };
+        }
         if (this._segmentCache.size >= TOKENIZE_CACHE_MAX) {
             const oldest = this._segmentCache.keys().next().value;
             if (oldest !== undefined) this._segmentCache.delete(oldest);
         }
-        this._segmentCache.set(text, tokens);
-        return tokens;
+        this._segmentCache.set(text, res.tokens);
+        return { tokens: res.tokens };
     }
 
-    /** Focused professor-style explanation of a word in its sentence (cached). null
-     *  when the daemon falls back (feature off / no provider / all fail). */
-    private async _explainWord(text: string, term: string, reading?: string): Promise<string | null> {
-        const cacheKey = `${term} ${text}`;
+    /** Focused professor-style explanation of a word in its sentence (cached).
+     *  `explanation` is null when there is nothing to show; `unavailable` says why,
+     *  so the panel can name the actual fix instead of blaming a provider.
+     *
+     *  ONLY successes are cached. Caching a failure would outlive its cause: the
+     *  common one is "signed out", the panel then says to sign in, and the retap
+     *  that should prove it worked would be served the cached null instead. */
+    private async _explainWord(
+        text: string,
+        term: string,
+        reading?: string
+    ): Promise<{ explanation: string | null; unavailable?: SaviAiUnavailable }> {
+        const cacheKey = `${term}\u0000${text}`;
         const cached = this._explainCache.get(cacheKey);
         if (cached !== undefined) {
-            return cached;
+            return { explanation: cached };
         }
         const { prevLines, nextLines } = this._neighborsOf(text);
         const res = await sendToBackground<SaviExplainWordResponse>({
@@ -658,12 +677,15 @@ export class SaviHoverDictionary {
             episodeId: deriveEpisodeId(location.href, document.title),
         });
         const explanation = res.explanation ?? null;
+        if (explanation === null) {
+            return { explanation: null, unavailable: res.unavailable };
+        }
         if (this._explainCache.size >= TOKENIZE_CACHE_MAX) {
             const oldest = this._explainCache.keys().next().value;
             if (oldest !== undefined) this._explainCache.delete(oldest);
         }
         this._explainCache.set(cacheKey, explanation);
-        return explanation;
+        return { explanation };
     }
 
     /** Full kanji breakdown for a word's kanji (cached). Offline RTK/KANJIDIC data
@@ -762,7 +784,7 @@ export class SaviHoverDictionary {
         // per-hover (so the providers stop rate-limiting), and a slow/failed call
         // degrades to a graceful "unavailable" inside the panel.
         this._segment(text)
-            .then((aiTokens) => {
+            .then(({ tokens: aiTokens, unavailable }) => {
                 let featured: WordContext | null = null;
                 if (aiTokens) {
                     const aiSpan = tokenSpanAtOffset(aiTokens, offset);
@@ -770,7 +792,7 @@ export class SaviHoverDictionary {
                         featured = { gloss: aiSpan.token.gloss, grammar: aiSpan.token.grammar };
                     }
                 }
-                panel.setContext(featured, aiTokens);
+                panel.setContext(featured, aiTokens, unavailable);
                 // The AI in-context gloss is the best label for this exact
                 // sentence — overwrite the dictionary headline on the pending
                 // encounter (the line is still open: the panel pauses playback).
@@ -782,7 +804,7 @@ export class SaviHoverDictionary {
         // In parallel, fetch the detailed "explain like a sensei" note for the
         // tapped word and fill the panel's teaching section when it lands.
         this._explainWord(text, term, span.token.reading)
-            .then((explanation) => panel.setExplanation(explanation))
+            .then(({ explanation, unavailable }) => panel.setExplanation(explanation, unavailable))
             .catch(() => panel.setExplanation(null));
         // Full RTK/KANJIDIC kanji breakdown (readings, components, mnemonic stories,
         // example compounds) — upgrades the panel's compact kanji section.

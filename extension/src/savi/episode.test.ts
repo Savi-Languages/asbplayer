@@ -6,6 +6,8 @@ import {
     showAndTitleFromDocumentTitle,
     slugify,
     stripSiteSuffix,
+    youtubeShowAndTitle,
+    youtubeShowId,
 } from './episode';
 
 describe('slugify', () => {
@@ -412,3 +414,47 @@ describe('deriveEpisodeId — local files', () => {
     });
 });
 
+describe('youtubeShowAndTitle', () => {
+    it('groups by channel: channel is the show, video is the title', () => {
+        expect(youtubeShowAndTitle('Japanese super immersion', '１時間リアル日本語会話')).toEqual({
+            show: 'Japanese super immersion',
+            title: '１時間リアル日本語会話',
+        });
+    });
+
+    it('strips the trailing site suffix from the video title', () => {
+        expect(youtubeShowAndTitle('Some Channel', 'Real Japanese - YouTube').title).toBe('Real Japanese');
+    });
+
+    it('yields no show for a blank channel, so the caller can fall back', () => {
+        // Grouping everything under '' would be worse than Unknown Show.
+        expect(youtubeShowAndTitle('', 'A video')).toEqual({ title: 'A video' });
+        expect(youtubeShowAndTitle('   ', 'A video').show).toBeUndefined();
+    });
+
+    it('is total on non-string input', () => {
+        expect(youtubeShowAndTitle(undefined as any, null as any)).toEqual({ title: '' });
+    });
+});
+
+describe('youtubeShowId', () => {
+    it('prefers the canonical channel id, which never changes', () => {
+        expect(youtubeShowId('/channel/UCabcdefghijklmnopqrstuv')).toBe('youtube:UCabcdefghijklmnopqrstuv');
+        expect(youtubeShowId('https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv/videos')).toBe(
+            'youtube:UCabcdefghijklmnopqrstuv'
+        );
+    });
+
+    it('falls back to the handle when that is all YouTube renders', () => {
+        // What the live watch page actually gives: href="/@JSI55".
+        expect(youtubeShowId('/@JSI55')).toBe('youtube:@JSI55');
+        expect(youtubeShowId('https://www.youtube.com/@Some.Channel_1')).toBe('youtube:@Some.Channel_1');
+    });
+
+    it('returns undefined rather than a junk id', () => {
+        expect(youtubeShowId('')).toBeUndefined();
+        expect(youtubeShowId('/watch?v=rgl7VbmYjiU')).toBeUndefined();
+        expect(youtubeShowId('/channel/NOT_A_UC_ID')).toBeUndefined();
+        expect(youtubeShowId(undefined as any)).toBeUndefined();
+    });
+});

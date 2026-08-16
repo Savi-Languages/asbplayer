@@ -1,5 +1,6 @@
-import { lookupTermFor, rangeForCharSpan, tokenAtOffset, tokenSpanAtOffset } from './hover-dict';
+import { SaviHoverDictionary, lookupTermFor, rangeForCharSpan, tokenAtOffset, tokenSpanAtOffset } from './hover-dict';
 import { SaviToken } from './daemon-client';
+import { SaviSegmentLineResponse } from './messages';
 
 const tok = (text: string, lemma?: string): SaviToken => ({ text, lemma });
 
@@ -81,5 +82,82 @@ describe('rangeForCharSpan', () => {
         document.body.innerHTML = '<span class="line">あい</span>';
         const root = document.querySelector('.line') as HTMLElement;
         expect(rangeForCharSpan(root, 0, 5)).toBeNull();
+    });
+});
+
+describe('SaviHoverDictionary._segment — the reason travels, the fallback is not cached', () => {
+    // The content script's segment call sits between the background (which
+    // knows WHY segmentation fell back to rule-based) and the tap panel (which
+    // says so). It used to collapse the response to `SaviToken[] | null` — the
+    // reason died here and the panel could only print "unavailable". It also
+    // cached the null, so a fallback outlived its cause: sign in, retap the
+    // same line, still told to sign in. The background is faked at the
+    // browser.runtime seam, the way hover-dict actually reaches it.
+    let responses: SaviSegmentLineResponse[];
+    let sent: unknown[];
+
+    beforeEach(() => {
+        responses = [];
+        sent = [];
+        (globalThis as any).browser = {
+            runtime: {
+                sendMessage: async (command: unknown) => {
+                    sent.push(command);
+                    const next = responses.shift();
+                    if (!next) throw new Error('unexpected savi-segment-line call');
+                    return next;
+                },
+            },
+        };
+    });
+
+    afterEach(() => {
+        delete (globalThis as any).browser;
+    });
+
+    const segment = (dict: SaviHoverDictionary, text: string) =>
+        (dict as any)._segment(text) as Promise<{ tokens: SaviToken[] | null; unavailable?: string }>;
+
+    it('passes the background reason through with a null result on ai:false', async () => {
+        const dict = new SaviHoverDictionary();
+        responses.push({ ai: false, tokens: [tok('改善', '改善'), tok('を')], unavailable: 'accountMismatch' });
+        const res = await segment(dict, '改善を');
+        // The rule-based tokens the daemon returned are NOT the AI breakdown —
+        // the caller keeps its own rule-based render, so tokens is null and the
+        // reason rides beside it.
+        expect(res).toEqual({ tokens: null, unavailable: 'accountMismatch' });
+        expect(sent).toHaveLength(1);
+        expect((sent[0] as any).message.command).toBe('savi-segment-line');
+    });
+
+    it('does NOT cache the fallback — the retap after signing in gets the real split', async () => {
+        const dict = new SaviHoverDictionary();
+        responses.push({ ai: false, tokens: [], unavailable: 'noAccount' });
+        expect(await segment(dict, '改善を')).toEqual({ tokens: null, unavailable: 'noAccount' });
+        // Now the user has signed in and taps the same line again.
+        const aiTokens = [{ ...tok('改善', '改善'), gloss: 'improvement', grammar: 'noun' }, tok('を')];
+        responses.push({ ai: true, tokens: aiTokens });
+        expect(await segment(dict, '改善を')).toEqual({ tokens: aiTokens });
+        expect(sent).toHaveLength(2); // asked again — the null was never remembered
+    });
+
+    it('DOES cache a success — a second tap on the line asks nothing', async () => {
+        const dict = new SaviHoverDictionary();
+        const aiTokens = [{ ...tok('改善', '改善'), gloss: 'improvement' }, tok('を')];
+        responses.push({ ai: true, tokens: aiTokens });
+        expect(await segment(dict, '改善を')).toEqual({ tokens: aiTokens });
+        expect(await segment(dict, '改善を')).toEqual({ tokens: aiTokens });
+        expect(sent).toHaveLength(1);
+    });
+
+    it('treats ai:true with no tokens as a fallback too, with whatever reason came along', async () => {
+        // Defensive: an "AI" answer that segments into nothing is not a
+        // breakdown the panel can draw. Not cached either.
+        const dict = new SaviHoverDictionary();
+        responses.push({ ai: true, tokens: [] });
+        expect(await segment(dict, '改善を')).toEqual({ tokens: null, unavailable: undefined });
+        responses.push({ ai: true, tokens: [tok('改善', '改善')] });
+        expect((await segment(dict, '改善を')).tokens).toHaveLength(1);
+        expect(sent).toHaveLength(2);
     });
 });

@@ -204,6 +204,56 @@ export const netflixShowAndTitleFromDom = (
 // the DOM overlay above is preferred when available).
 const watchPrefix = /^watch\s+/iu;
 
+// ── YouTube: group by channel ─────────────────────────────────────────────
+//
+// YouTube has no series/episode structure, so the document.title fallback
+// yields no `show` at all and every capture piles into "Unknown Show". The
+// channel is the natural grouping — it is what a learner actually follows —
+// so the owner link on the watch page supplies both halves: its text is the
+// show, its href the stable id.
+
+/** The channel name → `show`, the video title → `title`. Pure and total:
+ *  non-strings coerce to '' and a blank channel simply yields no `show`, so
+ *  the caller falls back to its existing derivation rather than grouping
+ *  everything under an empty name. */
+export const youtubeShowAndTitle = (channelName: string, videoTitle: string): ShowAndTitle => {
+    const show = asString(channelName).trim();
+    const title = stripSiteSuffix(asString(videoTitle).trim());
+
+    if (show.length === 0) {
+        return { title };
+    }
+
+    return { show, title };
+};
+
+/**
+ * A stable show id from the channel link's href.
+ *
+ * Prefers `/channel/UC…` — the canonical channel id, which never changes.
+ * Falls back to `/@handle`, which is stable in practice but user-changeable;
+ * a renamed handle re-groups later captures, which is why the UC form wins
+ * when YouTube renders it. Anything else (a /watch link, a relative path we
+ * don't recognise) yields undefined rather than a junk id.
+ */
+export const youtubeShowId = (href: string): string | undefined => {
+    const raw = asString(href).trim();
+
+    if (raw.length === 0) {
+        return undefined;
+    }
+
+    const channel = raw.match(/\/channel\/(UC[A-Za-z0-9_-]{20,})/);
+
+    if (channel) {
+        return `youtube:${channel[1]}`;
+    }
+
+    const handle = raw.match(/\/(@[A-Za-z0-9._-]{2,})(?:[/?#]|$)/);
+
+    return handle ? `youtube:${handle[1]}` : undefined;
+};
+
 export const showAndTitleFromDocumentTitle = (documentTitle: string): ShowAndTitle => {
     const raw = asString(documentTitle);
     const cleaned = stripSiteSuffix(raw).replace(watchPrefix, '').trim();
