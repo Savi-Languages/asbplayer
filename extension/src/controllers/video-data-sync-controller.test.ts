@@ -15,11 +15,12 @@ jest.mock('../services/ui-frame', () => ({
     default: class {},
     uiFrameForHtml: () => fakeFrame,
 }));
+let pageKey = 'netflix';
 jest.mock('../services/pages', () => ({
     currentPageDelegate: async () => ({
         isVideoPage: () => true,
         canAutoSync: () => false,
-        config: { key: 'netflix' },
+        config: { key: pageKey },
     }),
 }));
 jest.mock('../services/localization-fetcher', () => ({ fetchLocalization: async () => ({}) }));
@@ -37,6 +38,7 @@ jest.mock('@/savi/cloud-settings', () => ({ getCachedRoamingSettings: jest.fn() 
 
 import VideoDataSyncController from './video-data-sync-controller';
 import { getCachedRoamingSettings } from '@/savi/cloud-settings';
+import { resetMutedEpisodesMemo } from '@/savi/muted-episodes';
 
 const roamingCacheMock = getCachedRoamingSettings as jest.Mock;
 
@@ -57,9 +59,13 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
     // Replies the background gives for each command the controller sends.
     let roamingResponse: any;
     let openSubtitlesResponse: any;
+    let applySaviLanguageGate: jest.Mock;
 
     const makeController = () =>
-        new VideoDataSyncController({ loadSubtitles, settings: { set: settingsSet } } as any, { getSingle } as any);
+        new VideoDataSyncController(
+            { loadSubtitles, settings: { set: settingsSet }, applySaviLanguageGate } as any,
+            { getSingle } as any
+        );
 
     const opensubtitlesCall = () =>
         sendMessage.mock.calls.find((c) => c[0]?.message?.command === 'savi-opensubtitles-fetch');
@@ -78,7 +84,16 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
         });
         roamingCacheMock.mockReset();
         roamingCacheMock.mockResolvedValue({ targetLanguage: '', openSubtitlesApiKey: '' });
-        (globalThis as any).browser = { runtime: { getURL: (p: string) => p, sendMessage } };
+        applySaviLanguageGate = jest.fn();
+        pageKey = 'netflix'; // per-test override; YouTube skips OpenSubtitles
+        // The mute list keeps an in-process mirror; drop it so tests don't
+        // inherit each other's storage view.
+        resetMutedEpisodesMemo();
+        // storage.local backs the muted-episode list the gate consults.
+        (globalThis as any).browser = {
+            runtime: { getURL: (p: string) => p, sendMessage },
+            storage: { local: { get: async () => ({}), set: async () => {} } },
+        };
         (globalThis as any).fetch = jest.fn().mockResolvedValue({
             ok: true,
             // "WEBVTT" bytes — jsdom's jest env has no global TextEncoder.
@@ -101,6 +116,88 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
         expect(settingsSet).toHaveBeenCalledWith({ streamingLastLanguagesSynced: { localhost: ['es'] } });
     });
 
+    // The fallback searches a FILM/TV database with a fuzzy query that never
+    // returns "nothing" — so its result has to be checked, and on YouTube it
+    // should not run at all.
+    describe('OpenSubtitles relevance', () => {
+        it('discards a result that is not this video', async () => {
+            roamingResponse = { targetLanguage: 'es', openSubtitlesApiKey: 'k-1' };
+            openSubtitlesResponse = {
+                ok: true,
+                name: 'Hussain_ Who Said No HD (English . +20 Subs).srt',
+                content: '1\n00:00:01,000 --> 00:00:02,000\nHola\n',
+            };
+            controller._syncedData = {
+                basename: 'Garfunkel and Oates - Pregnant Women Are Smug',
+                subtitles: [track('1', 'en', 'English')],
+            };
+
+            expect(await controller._trySaviAutoLoad()).toBe(false);
+            expect(loadSubtitles).not.toHaveBeenCalled();
+        });
+
+        it('does not query OpenSubtitles at all on YouTube', async () => {
+            pageKey = 'youtube';
+            roamingResponse = { targetLanguage: 'es', openSubtitlesApiKey: 'k-1' };
+            controller._syncedData = {
+                basename: 'Garfunkel and Oates - Pregnant Women Are Smug',
+                subtitles: [track('1', 'en', 'English')],
+            };
+
+            expect(await controller._trySaviAutoLoad()).toBe(false);
+            expect(opensubtitlesCall()).toBeUndefined();
+            expect(loadSubtitles).not.toHaveBeenCalled();
+        });
+    });
+
+    // SV-41: the gate runs before auto-load, and judges the SPOKEN language.
+    describe('language gate', () => {
+        it('suppresses auto-load when the spoken language is not the target', async () => {
+            controller._syncedData = {
+                basename: 'Show',
+                spokenLanguage: 'en',
+                // YouTube offers an auto-translated Spanish track on English
+                // videos — the false signal that used to switch savi on here.
+                subtitles: [track('2', 'es', 'Spanish')],
+            };
+
+            expect(await controller._trySaviAutoLoad()).toBe(false);
+            expect(loadSubtitles).not.toHaveBeenCalled();
+            expect(applySaviLanguageGate).toHaveBeenCalledWith({ active: false, reason: 'mismatch' });
+        });
+
+        it('loads as usual when the spoken language matches', async () => {
+            controller._syncedData = {
+                basename: 'Show',
+                spokenLanguage: 'es-419',
+                subtitles: [track('2', 'es', 'Spanish')],
+            };
+
+            expect(await controller._trySaviAutoLoad()).toBe(true);
+            expect(loadSubtitles).toHaveBeenCalledTimes(1);
+            expect(applySaviLanguageGate).toHaveBeenCalledWith({ active: true, reason: 'match' });
+        });
+
+        it('fails open when the page gives no spoken language', async () => {
+            controller._syncedData = { basename: 'Show', subtitles: [track('2', 'es', 'Spanish')] };
+
+            expect(await controller._trySaviAutoLoad()).toBe(true);
+            expect(applySaviLanguageGate).toHaveBeenCalledWith({ active: true, reason: 'unknown' });
+        });
+
+        it('fails open when the gate itself throws', async () => {
+            // A broken gate must never be why savi went quiet. Note this case
+            // would otherwise be a MISMATCH (en vs es), so returning true here
+            // proves the failure path won, not the language comparison.
+            applySaviLanguageGate.mockImplementation(() => {
+                throw new Error('binding exploded');
+            });
+            controller._syncedData = { basename: 'Show', spokenLanguage: 'en', subtitles: [track('2', 'es', 'x')] };
+
+            expect(await controller._trySaviAutoLoad()).toBe(true);
+        });
+    });
+
     it('does nothing when auto-load is disabled', async () => {
         getSingle.mockResolvedValue(false);
         controller._syncedData = { basename: 'Show', subtitles: [track('2', 'es', 'Spanish')] };
@@ -119,7 +216,13 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
 
     it('Path B: falls back to OpenSubtitles when no track matches and a key is set', async () => {
         roamingResponse = { targetLanguage: 'es', openSubtitlesApiKey: 'k-1' };
-        openSubtitlesResponse = { ok: true, name: 'Show.es.srt', content: '1\n00:00:01,000 --> 00:00:02,000\nHola\n' };
+        // The name must actually resemble the query now — an unrelated result
+        // is discarded (see the relevance tests below).
+        openSubtitlesResponse = {
+            ok: true,
+            name: 'Dark.S01E03.es.srt',
+            content: '1\n00:00:01,000 --> 00:00:02,000\nHola\n',
+        };
         controller._syncedData = { basename: 'Dark S01E03 Secrets', subtitles: [track('1', 'en', 'English')] };
 
         expect(await controller._trySaviAutoLoad()).toBe(true);
@@ -132,7 +235,7 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
             episodeNumber: 3,
         });
         expect(loadSubtitles).toHaveBeenCalledTimes(1);
-        expect(loadSubtitles.mock.calls[0][0][0].name).toBe('Show.es.srt');
+        expect(loadSubtitles.mock.calls[0][0][0].name).toBe('Dark.S01E03.es.srt');
         expect(settingsSet).toHaveBeenCalledWith({ streamingLastLanguagesSynced: { localhost: ['es'] } });
     });
 

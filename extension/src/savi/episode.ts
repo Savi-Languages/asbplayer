@@ -131,8 +131,19 @@ export const deriveEpisodeId = (url: string, title: string): string | undefined 
     // Generic fallback: hostname namespace + stable slug of the title (no
     // date). Drop a leading "www." so the namespace is the bare domain.
     const host = (parsed?.host ?? '').replace(/^www\./, '');
-    const slug = slugify(stripSiteSuffix(title));
+    const cleaned = stripSiteSuffix(title);
 
+    // A title with no letters or numbers at all cannot name an episode —
+    // `slugify` would mint its 'episode' placeholder, ONE bucket shared by
+    // every untitled capture anywhere (a hostless page with a bare title
+    // really did file a whole recording under `.capture/episode/`, where it
+    // sat unfinishable for days). Same contract as the platform branches:
+    // no identity yet → `undefined` → the caller asks again in a moment.
+    if (!/[\p{L}\p{N}]/u.test(cleaned)) {
+        return undefined;
+    }
+
+    const slug = slugify(cleaned);
     return host.length > 0 ? `${host}:${slug}` : slug;
 };
 

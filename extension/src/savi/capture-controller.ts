@@ -657,6 +657,15 @@ export class SaviCaptureController {
                 this._host.notify(`Savi: episode saved — ${lines} lines, ${minutes} min of dialogue`);
             }
 
+            // The daemon's sanity check on what a finish actually kept (0.45.5):
+            // a 24-minute watch once condensed to 3.45 seconds — a tap dead for
+            // most of the session — and shipped as "episode saved" with no other
+            // sign. Loud, in the console of the tab where the person watched.
+            if (typeof result.info.condenseWarning === 'string') {
+                console.error(`savi: SUSPICIOUS CAPTURE — ${result.info.condenseWarning}`);
+                this._host.notify(`Savi: episode saved, but ${result.info.condenseWarning}`);
+            }
+
             if (result.failedSegments !== undefined && result.failedSegments > 0) {
                 console.warn(`savi: ${result.failedSegments} segment(s) failed to upload and were dropped`);
             }

@@ -1,6 +1,7 @@
 import { VideoData, VideoDataSubtitleTrack } from '@project/common';
 import { poll, trackFromDef, trackId } from '@/pages/util';
 import { decodePoToken, fetchPlayerContextForPage } from '@/services/youtube';
+import { spokenLanguageFromTracks } from '@/savi/language-gate';
 
 declare global {
     interface Window {
@@ -64,7 +65,7 @@ const tracksToSubtitleTracks = (tracks: any[]): VideoDataSubtitleTrack[] =>
 const tracksFromPlayerAudioTrack = async (videoId: string) => {
     // YouTube's player exposes caption URLs after it has initialized the audio track. These URLs can include
     // runtime-only params such as POT that are not available in ytInitialPlayerResponse or sessionStorage.
-    let info: { basename: string; subtitles: VideoDataSubtitleTrack[] } | undefined;
+    let info: { basename: string; subtitles: VideoDataSubtitleTrack[]; spokenLanguage?: string } | undefined;
     const ready = await poll(() => {
         const player = document.querySelector('#movie_player') as any;
         const playerVideoId = player?.getVideoData?.()?.video_id;
@@ -82,6 +83,7 @@ const tracksFromPlayerAudioTrack = async (videoId: string) => {
                 info = {
                     basename: player?.getVideoData?.()?.title || '',
                     subtitles,
+                    spokenLanguage: spokenLanguageFromTracks(tracks),
                 };
                 return true;
             }
@@ -132,7 +134,7 @@ const androidInnerTubeTracks = async (videoId: string) => {
 
     const tracks = payload.captions.playerCaptionsTracklistRenderer.captionTracks;
     const subtitles: VideoDataSubtitleTrack[] = tracksToSubtitleTracks(tracks);
-    return { basename, subtitles };
+    return { basename, subtitles, spokenLanguage: spokenLanguageFromTracks(tracks) };
 };
 
 const timedTextTracksUsingPot = async (videoId: string) => {
@@ -153,7 +155,7 @@ const timedTextTracksUsingPot = async (videoId: string) => {
     });
     const subtitles = tracksToSubtitleTracks(tracksWithPot);
     const basename = playerContext.videoDetails?.title;
-    return { basename, subtitles };
+    return { basename, subtitles, spokenLanguage: spokenLanguageFromTracks(tracks) };
 };
 
 const includeTranslationsForLanguageCodes = async (tracks: VideoDataSubtitleTrack[], languageCodes: string[]) => {

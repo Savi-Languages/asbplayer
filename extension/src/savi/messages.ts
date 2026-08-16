@@ -383,11 +383,13 @@ export interface SaviGlossLineMessage {
     readonly words: readonly string[];
 }
 
-/** One word's verdict. `skip` absent ⇒ render `gloss` above it. */
+/** One word's verdict. `skip` absent ⇒ render `gloss` above it.
+ *  `no-analyzer` is a request-level verdict stamped on every word: savi has no
+ *  analyzer for the requested language (unsupported, or a stale target). */
 export interface SaviGlossDecision {
     readonly word: string;
     readonly lemma?: string;
-    readonly skip?: 'known' | 'function-word' | 'untokenized';
+    readonly skip?: 'known' | 'function-word' | 'untokenized' | 'no-analyzer';
     readonly proficiency?: number;
     readonly gloss?: string;
 }
@@ -429,6 +431,18 @@ export interface SaviWordBucketsMessage {
 
 export interface SaviWordBucketsResponse {
     readonly buckets: Record<string, 'new' | 'word_box' | 'known'>;
+}
+
+// Trigger the cloud's Level-2 fold at video bind (SV-40 follow-up), so the
+// first subtitle line doesn't pay for it. Fire-and-forget — the response
+// carries nothing the content script uses, and MUST NOT feed any decision path.
+export interface SaviWarmProjectionsMessage {
+    readonly command: 'savi-warm-projections';
+    readonly lang: string;
+}
+
+export interface SaviWarmProjectionsResponse {
+    readonly ok?: boolean;
 }
 
 // Per-lemma proficiency [0,1] from the SV-20 review engine — the graded

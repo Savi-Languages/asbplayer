@@ -212,6 +212,12 @@ export interface VideoData {
     basename: string;
     error?: string;
     subtitles?: VideoDataSubtitleTrack[];
+    /** BCP-47 tag of the language actually SPOKEN, when the page can tell
+     *  (YouTube: the `kind:"asr"` caption track, which is derived FROM the
+     *  audio). Distinct from `subtitles`, which merely lists what is on offer —
+     *  auto-translated tracks make that a useless proxy. Undefined means "no
+     *  signal", and savi's language gate then fails open. */
+    spokenLanguage?: string;
 }
 
 export enum VideoDataUiOpenReason {

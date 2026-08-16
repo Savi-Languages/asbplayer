@@ -16,9 +16,12 @@ import {
 // The only thing `gloss.ts` pulls from cloud-settings, and the one piece of
 // `start()` that needs a signed-in browser. Stubbed so the lifecycle tests
 // below can reach the code after the early return; every other test in this
-// file runs with glossing off and never touches it.
+// file runs with glossing off and never touches it. Mutable because the
+// controller re-reads it per line (the stale-language fix) — a test flips it
+// mid-session to prove the change is picked up without a rebind.
+let mockTargetLanguage = 'es';
 jest.mock('./cloud-settings', () => ({
-    getCachedRoamingSettings: async () => ({ targetLanguage: 'es' }),
+    getCachedRoamingSettings: async () => ({ targetLanguage: mockTargetLanguage }),
 }));
 
 describe('isGlossableLanguage', () => {
@@ -361,7 +364,132 @@ describe('SaviGlossController debug logging', () => {
     });
 });
 
+describe('per-line target language re-read (the stale-"fr" bug)', () => {
+    // A language switched in the app mid-watch never reached a running
+    // binding: `start()` read the roaming cache once, so a stale "fr" glossed
+    // half an episode as all-"untokenized" until a page refresh. The fix
+    // re-reads the cache on every line.
+    afterEach(() => {
+        mockTargetLanguage = 'es';
+    });
+
+    it('picks up a language change without a rebind', async () => {
+        const { controller, sent } = makeGlossController();
+        await controller.start();
+        const glossLine = (controller as any)._glossLine.bind(controller);
+
+        await glossLine('Hola mundo', ['mundo'], true);
+        mockTargetLanguage = 'ja';
+        await glossLine('Hola cielo', ['cielo'], true);
+
+        const langs = sent
+            .filter((c) => c.message?.command === 'savi-gloss-line')
+            .map((c) => c.message.lang);
+        expect(langs).toEqual(['es', 'ja']);
+    });
+
+    it('logs the server no-analyzer verdict as its own reason, without the words', async () => {
+        const debug = jest.spyOn(console, 'debug').mockImplementation(() => {});
+        (globalThis as any).browser = {
+            runtime: {
+                sendMessage: jest.fn(async () => ({
+                    words: [
+                        { word: 'mundo', skip: 'no-analyzer' },
+                        { word: 'cielo', skip: 'no-analyzer' },
+                    ],
+                    threshold: 0.8,
+                })),
+            },
+        };
+        const settings = { get: async () => ({ saviGlossing: true }) as any };
+        const controller = new SaviGlossController(settings, () => {});
+        const glossLine = (controller as any)._glossLine.bind(controller);
+
+        const labels = await glossLine('mundo cielo', ['mundo', 'cielo'], true);
+
+        expect(labels.size).toBe(0);
+        const logged = debug.mock.calls.map((c) => String(c[0])).join('\n');
+        expect(logged).toContain('no analyzer');
+        // Hard constraint #2: the debug log never carries the line's words.
+        expect(logged).not.toContain('mundo');
+        expect(logged).not.toContain('cielo');
+        debug.mockRestore();
+    });
+});
+
 // ── the duplicate-request bug ───────────────────────────────────────────────
+
+// ── bind-time projection warm ───────────────────────────────────────────────
+
+/** Build a `SaviGlossController` with faked settings + a faked
+ *  `browser.runtime.sendMessage`, returning `{ controller, sent }` where
+ *  `sent` records every message passed to `sendMessage`. `failCommands`
+ *  makes those specific commands reject, so a test can simulate one call
+ *  failing (e.g. the warm call timing out) without the rest of the fakes
+ *  changing behaviour.
+ *
+ *  `settingsOverrides.targetLanguage` is a NO-OP: `start()` reads the target
+ *  language from `getCachedRoamingSettings()`, which this file mocks at the
+ *  top to always return 'es' — the real language always comes from there,
+ *  never from this options object. Passing anything but 'es' here would be
+ *  silently ignored, not honored. */
+function makeGlossController(
+    settingsOverrides: { saviGlossing?: boolean; targetLanguage?: string } = {},
+    options: { failCommands?: string[] } = {}
+): { controller: SaviGlossController; sent: Array<{ message: any }> } {
+    const failCommands = new Set(options.failCommands ?? []);
+    const sent: Array<{ message: any }> = [];
+    (globalThis as any).browser = {
+        runtime: {
+            sendMessage: jest.fn(async (command: any) => {
+                sent.push(command);
+                if (failCommands.has(command?.message?.command)) {
+                    throw new Error(`simulated failure: ${command?.message?.command}`);
+                }
+                return {};
+            }),
+        },
+    };
+    const settings = { get: async () => ({ saviGlossing: true, ...settingsOverrides }) as any };
+    const controller = new SaviGlossController(settings, () => {});
+    return { controller, sent };
+}
+
+describe('bind-time projection warm', () => {
+    it('fires exactly one warm message per bind', async () => {
+        const { controller, sent } = makeGlossController({ saviGlossing: true, targetLanguage: 'es' });
+        await controller.start();
+        const warms = sent.filter((m) => m.message?.command === 'savi-warm-projections');
+        expect(warms).toHaveLength(1);
+        expect(warms[0].message.lang).toBe('es');
+    });
+
+    it('keeps glossing enabled when the warm call fails', async () => {
+        const { controller, sent } = makeGlossController(
+            { saviGlossing: true, targetLanguage: 'es' },
+            { failCommands: ['savi-warm-projections'] }
+        );
+        await controller.start();
+        // The warm call is fire-and-forget: its only job is the server-side
+        // side effect, so a failure must never take glossing down with it.
+        // `glossable` is the actual discriminator here — `glossHtmlFor`
+        // returns undefined both when glossing is off AND when a line simply
+        // hasn't settled yet, so it can't tell the two cases apart on its own.
+        expect(controller.glossable).toBe(true);
+        expect(controller.glossHtmlFor('hola mundo')).toBeUndefined();
+        expect(sent.some((m) => m.message?.command === 'savi-warm-projections')).toBe(true);
+    });
+
+    it('never populates the client-side known set', async () => {
+        // SV-40 moved the decision server-side because the client keys by
+        // SURFACE while the data keys by LEMMA. Reviving a client-side known
+        // set would reintroduce exactly that bug, so the warm response must
+        // never be read back into a decision path.
+        const { controller } = makeGlossController({ saviGlossing: true, targetLanguage: 'es' });
+        await controller.start();
+        expect((controller as unknown as { _known: Set<string> })._known.size).toBe(0);
+    });
+});
 
 describe('SaviGlossController.start is re-entrant', () => {
     // The founder saw the same line requested twice, back to back, with

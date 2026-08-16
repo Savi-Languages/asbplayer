@@ -144,6 +144,21 @@ describe('deriveEpisodeId — generic fallback', () => {
     it('never throws on garbage input', () => {
         expect(() => deriveEpisodeId(null as unknown as string, undefined as unknown as string)).not.toThrow();
     });
+
+    it("never mints the bare 'episode' placeholder — an untitled page has no identity", () => {
+        // A hostless page (about:blank / blob iframe) with an empty
+        // document.title used to yield the literal id 'episode' — ONE bucket
+        // shared by every untitled capture anywhere. The daemon filed a real
+        // recording under `.capture/episode/` exactly this way, where it sat
+        // unfinishable (and re-alarming its owner) for days.
+        expect(deriveEpisodeId('about:blank', '')).toBeUndefined();
+        expect(deriveEpisodeId('', '')).toBeUndefined();
+        expect(deriveEpisodeId('not a url', '!!! ###')).toBeUndefined();
+    });
+
+    it('refuses a title that is nothing but a site suffix', () => {
+        expect(deriveEpisodeId('https://example.org/v', ' - Netflix')).toBeUndefined();
+    });
 });
 
 describe('netflixShowAndTitleFromDom', () => {

@@ -24,6 +24,10 @@ import { ExtensionGlobalStateProvider } from '@/services/extension-global-state-
 import { isOnTutorialPage } from '@/services/tutorial';
 import { extractExtension } from '@/pages/util';
 import { parseShowQuery, primarySubtag, selectTrackForLanguage } from '@/savi/track-select';
+import { decideLanguageGate } from '@/savi/language-gate';
+import { titlesOverlap } from '@/savi/subtitle-relevance';
+import { mutedEpisodes } from '@/savi/muted-episodes';
+import { deriveEpisodeId } from '@/savi/episode';
 import { getCachedRoamingSettings, SaviRoamingSettings } from '@/savi/cloud-settings';
 import {
     SaviCommand,
@@ -399,6 +403,38 @@ export default class VideoDataSyncController {
         return await getCachedRoamingSettings();
     }
 
+    /**
+     * Decide whether savi should run on this video at all (SV-41), and apply it.
+     *
+     * Runs BEFORE the auto-load attempt: when the answer is no, there is nothing
+     * to load either — savi should leave the page alone entirely.
+     *
+     * The judgement uses the SPOKEN language (`spokenLanguage`, from YouTube's
+     * asr caption track), never the list of available subtitle tracks. YouTube
+     * offers auto-translated tracks in many languages, so "a Spanish track
+     * exists" is true for most English videos and is exactly the false signal
+     * that made savi switch itself on over English speech.
+     */
+    private async _applySaviLanguageGate(targetLanguage: string): Promise<boolean> {
+        try {
+            const episodeId = deriveEpisodeId(window.location.href, document.title);
+            const verdict = decideLanguageGate({
+                spokenLanguage: this._syncedData?.spokenLanguage,
+                targetLanguage,
+                episodeId,
+                mutedEpisodes: await mutedEpisodes(),
+            });
+            this._context.applySaviLanguageGate?.(verdict);
+            return verdict.active;
+        } catch (e) {
+            // Fail open, loudly. A broken gate must never be the reason savi
+            // went quiet — that failure is invisible to the user and costs real
+            // exposure, which is the whole reason this gate fails open by design.
+            console.warn('[savi language-gate] gate failed, leaving savi on', e);
+            return true;
+        }
+    }
+
     private async _trySaviAutoLoad(): Promise<boolean> {
         try {
             if (!(await this._settings.getSingle('saviAutoLoadSubtitles'))) {
@@ -407,6 +443,10 @@ export default class VideoDataSyncController {
             }
 
             const { targetLanguage, openSubtitlesApiKey } = await this._saviRoamingSettings();
+
+            if (!(await this._applySaviLanguageGate(targetLanguage))) {
+                return false;
+            }
             const detected = this._syncedData?.subtitles ?? [];
             const detectedLangs = detected.map((s) => s.language ?? '?');
 
@@ -483,6 +523,16 @@ export default class VideoDataSyncController {
     }
 
     private async _trySaviOpenSubtitlesFallback(targetLanguage: string): Promise<boolean> {
+        // OpenSubtitles is a FILM/TV database. YouTube titles are not in it, so
+        // every search is a fuzzy miss that still returns its nearest match —
+        // which is how a comedy song loaded an unrelated film's subtitles. Skip
+        // the whole path there rather than pay an API call to be wrong.
+        const pageDelegate = await currentPageDelegate();
+        if (pageDelegate?.config.key === 'youtube') {
+            console.info('[savi auto-load] skipping OpenSubtitles on YouTube (not a film/TV catalogue)');
+            return false;
+        }
+
         const { query, seasonNumber, episodeNumber } = parseShowQuery(this._syncedData?.basename ?? document.title);
 
         if (query.trim().length === 0) {
@@ -503,6 +553,19 @@ export default class VideoDataSyncController {
         const response = (await browser.runtime.sendMessage(command)) as SaviOpenSubtitlesFetchResponse | undefined;
 
         if (!response?.ok || !response.content) {
+            return false;
+        }
+
+        // The search is fuzzy and never returns "nothing" — verify the result is
+        // actually this video before loading it. Wrong subtitles are worse than
+        // none: they look plausible, and every line feeds glossing and counts as
+        // exposure.
+        if (!titlesOverlap(query, response.name)) {
+            console.info(
+                '[savi auto-load] discarding unrelated OpenSubtitles result "%s" for "%s"',
+                response.name ?? '(unnamed)',
+                query
+            );
             return false;
         }
 

@@ -19,6 +19,8 @@ import {
     SaviGlossLineResponse,
     SaviGlossTranslateMessage,
     SaviGlossTranslateResponse,
+    SaviWarmProjectionsMessage,
+    SaviWarmProjectionsResponse,
     SaviWordBucketsMessage,
     SaviWordBucketsResponse,
     SaviWordProficiencyMessage,
@@ -60,6 +62,7 @@ import {
     translate as cloudTranslate,
     wordBuckets as cloudWordBuckets,
     wordsProficiency as cloudWordsProficiency,
+    warmProjections as cloudWarmProjections,
 } from './cloud-client';
 import {
     clearCaptureSession,
@@ -228,6 +231,11 @@ export default class SaviCommandHandler implements CommandHandler {
                     .then(sendResponse)
                     .catch(() => sendResponse({ buckets: {} } as SaviWordBucketsResponse));
                 return true;
+            case 'savi-warm-projections':
+                this._warmProjections(command.message as SaviWarmProjectionsMessage)
+                    .then(sendResponse)
+                    .catch(() => sendResponse({} as SaviWarmProjectionsResponse));
+                return true;
         }
 
         return false;
@@ -335,6 +343,20 @@ export default class SaviCommandHandler implements CommandHandler {
             return { buckets: await cloudWordBuckets(saviCloudUrl, message.lang) };
         } catch (e) {
             return { buckets: {} };
+        }
+    }
+
+    // Fold the cloud's Level-2 projection for this language at bind time, so
+    // the first gloss of a video doesn't absorb the ~20s cold fold. Failure is
+    // silent: the call exists for its server-side side effect, and glossing
+    // must work whether or not it landed.
+    private async _warmProjections(message: SaviWarmProjectionsMessage): Promise<SaviWarmProjectionsResponse> {
+        try {
+            const { saviCloudUrl } = await this._settings.get(['saviCloudUrl']);
+            await cloudWarmProjections(saviCloudUrl, message.lang);
+            return { ok: true };
+        } catch (e) {
+            return {};
         }
     }
 

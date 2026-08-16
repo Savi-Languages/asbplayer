@@ -23,6 +23,8 @@ import {
     SaviGlossLineResponse,
     SaviGlossTranslateMessage,
     SaviGlossTranslateResponse,
+    SaviWarmProjectionsMessage,
+    SaviWarmProjectionsResponse,
 } from './messages';
 import { getCachedRoamingSettings } from './cloud-settings';
 import type { SettingsProvider } from '@project/common/settings';
@@ -191,7 +193,7 @@ export interface GlossDecision {
     readonly word: string;
     /** The dictionary form it resolved to — server-side truth, unavailable here. */
     readonly lemma?: string;
-    readonly skip?: 'known' | 'function-word' | 'untokenized';
+    readonly skip?: 'known' | 'function-word' | 'untokenized' | 'no-analyzer';
     readonly proficiency?: number;
     readonly gloss?: string;
 }
@@ -219,7 +221,7 @@ export function glossCandidates(segments: GlossSegment[]): string[] {
 
 /** The coarse reason a line went bare, used to suppress repeats in the debug
  *  log. Not user-visible. */
-type WhyKind = 'off' | 'track' | 'no-candidates' | 'call-failed' | 'all-skipped';
+type WhyKind = 'off' | 'track' | 'no-candidates' | 'call-failed' | 'all-skipped' | 'no-analyzer';
 
 /** Why a line's words were skipped, as counts BY REASON — never word by word.
  *
@@ -354,7 +356,7 @@ export function isReasonableGloss(gloss: string): boolean {
 // ── The controller ────────────────────────────────────────────────────────
 
 const sendToBackground = <R>(
-    message: SaviGlossLineMessage | SaviGlossTranslateMessage
+    message: SaviGlossLineMessage | SaviGlossTranslateMessage | SaviWarmProjectionsMessage
 ): Promise<R> => {
     const command: SaviCommand<typeof message> = { sender: 'savi-video', message };
     return browser.runtime.sendMessage(command) as Promise<R>;
@@ -418,8 +420,16 @@ export class SaviGlossController implements GlossProvider {
     private _enabled = false;
     private _targetLang = '';
     private _glossable = false;
-    // lemma → 'known' means "already learned" (skip). Empty when signed out /
-    // unfetched → every content word is glossed (SV-12 behaviour).
+    // INTENTIONALLY never populated (SV-40). This was the old known-lemma
+    // cache, keyed by LEMMA — but the client only ever sees SURFACES, and
+    // `sabía` (surface) can never match a known `saber` (lemma) in a plain
+    // Set lookup. That mismatch is exactly why the gloss decision moved
+    // server-side, where the lemmatizer lives: `sabía` and `saber` are the
+    // same word there. Populating this again would silently reintroduce the
+    // bug — every conjugation of a known word would stay labelled forever,
+    // since it could never match its own lemma here. Left in place only so a
+    // regression that starts writing to it again gets caught (see the test
+    // guarding that it stays empty), not because anything reads it.
     private _known: Set<string> = new Set();
     // FINAL gloss HTML per line ('' = nothing to gloss). A line is present here
     // only once it has settled (success, empty, or gave-up).
@@ -516,9 +526,22 @@ export class SaviGlossController implements GlossProvider {
             this._glossable = false;
         }
         if (this._glossable) {
-            // SV-40: nothing to preload. The known-set fetch is gone — every
-            // decision now comes back with its line, which also means the first
-            // labels no longer wait on a whole-history projection.
+            // Warm the cloud's Level-2 projection now. SV-40 removed the old
+            // bind-time known-set fetch and claimed "the first labels no longer
+            // wait on a whole-history projection" — which turned out to be
+            // false in the way that matters: the wait didn't disappear, it moved
+            // to EVERY line. A cold fold takes ~20s against a remote Postgres,
+            // past this client's 8s budget, so the first lines of a video were
+            // unglossable until something warmed the cache.
+            //
+            // Fire-and-forget, and deliberately not awaited: prefetch must start
+            // immediately, and the response carries nothing we read. It must
+            // NEVER feed a decision path — the surface-vs-lemma gap is exactly
+            // why SV-40 moved the decision server-side.
+            void sendToBackground<SaviWarmProjectionsResponse>({
+                command: 'savi-warm-projections',
+                lang: this._targetLang,
+            }).catch(() => {});
             this._prefetchTimer = setInterval(() => this._prefetchTick(), PREFETCH_TICK_MS);
         }
     }
@@ -725,6 +748,16 @@ export class SaviGlossController implements GlossProvider {
         }
         await this._acquire(priority);
         try {
+            // Re-read the roaming target language on EVERY call, not once per
+            // bind. `start()` races the background's cloud refresh at video
+            // load, and a language switched in the app mid-watch never reached
+            // a running binding at all — a stale "fr" here once glossed half
+            // an episode as all-"untokenized", fixable only by a page refresh.
+            // A storage.local read per line is nothing; self-healing is not.
+            const { targetLanguage } = await getCachedRoamingSettings();
+            if (targetLanguage.length > 0 && targetLanguage !== this._targetLang) {
+                this._targetLang = targetLanguage;
+            }
             const response = await withTimeout(
                 sendToBackground<SaviGlossLineResponse>({
                     command: 'savi-gloss-line',
@@ -754,10 +787,21 @@ export class SaviGlossController implements GlossProvider {
             // suppressed or broken?") without carrying any of the content.
             const skipped = response.words.filter((w) => w.skip);
             if (skipped.length === response.words.length) {
-                this._why(
-                    'all-skipped',
-                    `all ${skipped.length} word(s) skipped — ${skipSummary(response.words)}`
-                );
+                // The server's request-level verdict gets its own line: it
+                // names the ONE thing actually wrong (the language), where the
+                // generic summary reads as per-word noise.
+                if (response.words.some((w) => w.skip === 'no-analyzer')) {
+                    this._why(
+                        'no-analyzer',
+                        `glossing unavailable — savi has no analyzer for ${JSON.stringify(this._targetLang)} ` +
+                            `(unsupported or stale target language; it re-checks every line)`
+                    );
+                } else {
+                    this._why(
+                        'all-skipped',
+                        `all ${skipped.length} word(s) skipped — ${skipSummary(response.words)}`
+                    );
+                }
             }
             const labels = labelsFrom(response.words);
             for (const [word, gloss] of labels) {
