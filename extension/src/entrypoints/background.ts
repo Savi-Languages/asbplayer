@@ -78,7 +78,8 @@ import OpenStatisticsHandler from '@/handlers/video/open-statistics-handler';
 import StatisticsOverlayForwarderHandler from '@/handlers/statistics-overlay/statistics-overlay-forwarder-handler';
 import OpenStatisticsOverlayHandler from '@/handlers/open-statistics-overlay-handler';
 import SaviCommandHandler, { finishCaptureForClosedTab } from '@/savi/background-handler';
-import { bindSaviAccountRefresh } from '@/savi/account';
+import { bindSaviAccountRefresh, observeTokenResolution } from '@/savi/account';
+import { bindCredentialWatch } from '@/savi/credential-watch';
 import { SaviCommand } from '@/savi/messages';
 import { requestStartWithFeedback } from '@/savi/request-start';
 
@@ -116,6 +117,13 @@ export default defineBackground(() => {
     bindSaviAccountRefresh();
 
     const settings = new SettingsProvider(new ExtensionSettingsStorage());
+
+    // Re-arm the content scripts when credentials APPEAR without a sign-in —
+    // a session coming back after expiry, an offline lapse, or an alarm
+    // refresh. See savi/credential-watch.ts; registered in the background only,
+    // so the pull happens once rather than per frame. Re-registered on every
+    // worker wake, like every other MV3 listener.
+    observeTokenResolution(bindCredentialWatch(async () => (await settings.get(['saviCloudUrl'])).saviCloudUrl));
 
     // SV-18: when the captured tab closes, finish the in-flight session so the
     // episode-so-far reaches the library instead of idling in the daemon.
