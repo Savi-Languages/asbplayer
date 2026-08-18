@@ -125,8 +125,12 @@ const rearm = async (cloudUrl: string): Promise<void> => {
  *
  * Resolves once the reaction has settled so tests — and callers that care — can
  * await it; `noteTokenResolution` itself is never awaited on the hot path.
+ *
+ * `readCloudUrl` is a thunk, deliberately: it is only invoked on a rising edge.
+ * Every daemon and cloud request lands here via the token observer, so the
+ * no-edge path must not touch storage.
  */
-export const noteTokenResolution = async (hasToken: boolean, cloudUrl: string): Promise<void> => {
+export const noteTokenResolution = async (hasToken: boolean, readCloudUrl: () => Promise<string>): Promise<void> => {
     if (cached === undefined) {
         seeding = seeding ?? readStoredState();
         const seeded = await seeding;
@@ -151,7 +155,12 @@ export const noteTokenResolution = async (hasToken: boolean, cloudUrl: string): 
         return;
     }
 
-    reacting = reacting ?? rearm(cloudUrl).finally(() => (reacting = undefined));
+    // The cloud URL is read HERE, past both early returns — not by the caller
+    // before every call. This runs on every token resolution, i.e. every gloss,
+    // dictionary lookup, and watched-line report; in the steady state (no
+    // edge) it must cost nothing, and a settings read per request is not
+    // nothing. Only a rising edge pays for the read, and it pays once.
+    reacting = reacting ?? readCloudUrl().then(rearm).finally(() => (reacting = undefined));
     await reacting;
 };
 
@@ -160,14 +169,11 @@ export const noteTokenResolution = async (hasToken: boolean, cloudUrl: string): 
 export const bindCredentialWatch = (readCloudUrl: () => Promise<string>): ((hasToken: boolean) => void) => {
     return (hasToken: boolean) => {
         // Detached: `currentAccessToken` must not wait on a settings read and a
-        // cloud pull to hand back a token it already resolved.
-        void (async () => {
-            try {
-                await noteTokenResolution(hasToken, await readCloudUrl());
-            } catch (e) {
-                console.warn('savi: credential watch failed', e);
-            }
-        })();
+        // cloud pull to hand back a token it already resolved. The thunk is
+        // passed through unread — see noteTokenResolution for why.
+        void noteTokenResolution(hasToken, readCloudUrl).catch((e) => {
+            console.warn('savi: credential watch failed', e);
+        });
     };
 };
 

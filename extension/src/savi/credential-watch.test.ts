@@ -24,6 +24,12 @@ describe('savi credential watch', () => {
     let calls: string[];
 
     const cloudUrl = 'https://cloud.example';
+    /** The settings read, made observable: it appears in `calls` when it
+     *  actually happens, so tests can assert it did NOT on the no-edge path. */
+    const readCloudUrl = async () => {
+        calls.push('read-cloud-url');
+        return cloudUrl;
+    };
 
     beforeEach(() => {
         resetCredentialWatchForTests();
@@ -61,19 +67,42 @@ describe('savi credential watch', () => {
         // Nothing stored = no credentials last time. A session coming back —
         // refreshed after expiry, or restored when the network did — shows up
         // here as the first resolution that yields a token.
-        await noteTokenResolution(true, cloudUrl);
+        await noteTokenResolution(true, readCloudUrl);
 
         // The order is the fix: broadcasting first would have every content
         // script re-read the cache the pull has not filled yet.
-        expect(calls).toEqual(['pull', 'broadcast:settings-updated']);
+        expect(calls).toEqual(['read-cloud-url', 'pull', 'broadcast:settings-updated']);
         expect(loadMock).toHaveBeenCalledWith(cloudUrl);
         expect(session[CREDENTIAL_STATE_KEY]).toBe(true);
+    });
+
+    it('never reads the cloud url on the no-edge path — the one that runs per request', async () => {
+        // Every gloss, dictionary lookup, and watched-line report resolves its
+        // token through the observer that lands here. In the steady state
+        // (credentials present, unchanged) that has to cost nothing: before
+        // this, the caller read `saviCloudUrl` from storage BEFORE the early
+        // return, once per request, and used it never (savi#33).
+        session[CREDENTIAL_STATE_KEY] = true;
+        for (let i = 0; i < 25; i++) {
+            await noteTokenResolution(true, readCloudUrl);
+        }
+        expect(calls).toEqual([]);
+
+        // A falling edge writes state but reads nothing either — there is
+        // nothing to pull with.
+        await noteTokenResolution(false, readCloudUrl);
+        expect(calls).toEqual([]);
+
+        // Only the rising edge pays for the read, and pays once.
+        await noteTokenResolution(true, readCloudUrl);
+        expect(calls).toEqual(['read-cloud-url', 'pull', 'broadcast:settings-updated']);
+        expect(calls.filter((c) => c === 'read-cloud-url')).toHaveLength(1);
     });
 
     it('does nothing when credentials were already there', async () => {
         session[CREDENTIAL_STATE_KEY] = true;
 
-        await noteTokenResolution(true, cloudUrl);
+        await noteTokenResolution(true, readCloudUrl);
 
         expect(calls).toEqual([]);
     });
@@ -83,20 +112,20 @@ describe('savi credential watch', () => {
 
         // Losing the token needs no pull — there is nothing to pull with — and
         // no broadcast: requests stop being authorized on their own.
-        await noteTokenResolution(false, cloudUrl);
+        await noteTokenResolution(false, readCloudUrl);
         expect(calls).toEqual([]);
         expect(session[CREDENTIAL_STATE_KEY]).toBe(false);
 
         // ...and a session lapsing offline, then refreshing when the network
         // comes back, is exactly this sequence — no sign-in anywhere in it.
-        await noteTokenResolution(true, cloudUrl);
-        expect(calls).toEqual(['pull', 'broadcast:settings-updated']);
+        await noteTokenResolution(true, readCloudUrl);
+        expect(calls).toEqual(['read-cloud-url', 'pull', 'broadcast:settings-updated']);
     });
 
     it('fires once per edge, not once per resolution', async () => {
-        await noteTokenResolution(true, cloudUrl);
-        await noteTokenResolution(true, cloudUrl);
-        await noteTokenResolution(true, cloudUrl);
+        await noteTokenResolution(true, readCloudUrl);
+        await noteTokenResolution(true, readCloudUrl);
+        await noteTokenResolution(true, readCloudUrl);
 
         expect(loadMock).toHaveBeenCalledTimes(1);
         expect(sendMessageMock).toHaveBeenCalledTimes(1);
@@ -106,10 +135,10 @@ describe('savi credential watch', () => {
         // Every gloss, dict and watched-line request resolves a bearer, so a
         // busy moment produces many resolutions at once.
         await Promise.all([
-            noteTokenResolution(true, cloudUrl),
-            noteTokenResolution(true, cloudUrl),
-            noteTokenResolution(true, cloudUrl),
-            noteTokenResolution(true, cloudUrl),
+            noteTokenResolution(true, readCloudUrl),
+            noteTokenResolution(true, readCloudUrl),
+            noteTokenResolution(true, readCloudUrl),
+            noteTokenResolution(true, readCloudUrl),
         ]);
 
         expect(loadMock).toHaveBeenCalledTimes(1);
@@ -117,7 +146,7 @@ describe('savi credential watch', () => {
     });
 
     it('re-seeds from storage after a service-worker restart instead of re-firing', async () => {
-        await noteTokenResolution(true, cloudUrl);
+        await noteTokenResolution(true, readCloudUrl);
         expect(loadMock).toHaveBeenCalledTimes(1);
 
         // MV3 unloads the background after ~30s idle. In-memory state is gone;
@@ -125,7 +154,7 @@ describe('savi credential watch', () => {
         // read as a fresh rising edge and re-arm every bound video for nothing.
         resetCredentialWatchForTests();
 
-        await noteTokenResolution(true, cloudUrl);
+        await noteTokenResolution(true, readCloudUrl);
 
         expect(loadMock).toHaveBeenCalledTimes(1);
         expect(sendMessageMock).toHaveBeenCalledTimes(1);
@@ -139,7 +168,7 @@ describe('savi credential watch', () => {
         // Guessing "none" would manufacture a rising edge on every wake. A
         // missed re-arm is recovered by the next real transition; a spurious
         // one restarts the controllers on a timer.
-        await noteTokenResolution(true, cloudUrl);
+        await noteTokenResolution(true, readCloudUrl);
 
         expect(calls).toEqual([]);
     });
@@ -148,18 +177,18 @@ describe('savi credential watch', () => {
         loadMock.mockRejectedValue(new Error('offline'));
         jest.spyOn(console, 'warn').mockImplementation(() => {});
 
-        await noteTokenResolution(true, cloudUrl);
+        await noteTokenResolution(true, readCloudUrl);
 
         // The re-arm is worth having on its own — the next video data sync
         // fetches the language from the cloud anyway.
-        expect(calls).toEqual(['broadcast:settings-updated']);
+        expect(calls).toEqual(['read-cloud-url', 'broadcast:settings-updated']);
         expect(session[CREDENTIAL_STATE_KEY]).toBe(true);
     });
 
     it('survives a broadcast with no receiver', async () => {
         sendMessageMock.mockRejectedValue(new Error('could not establish connection'));
 
-        await expect(noteTokenResolution(true, cloudUrl)).resolves.toBeUndefined();
+        await expect(noteTokenResolution(true, readCloudUrl)).resolves.toBeUndefined();
         expect(loadMock).toHaveBeenCalledTimes(1);
     });
 
