@@ -282,6 +282,7 @@ export const defaultSettings: AsbplayerSettings = {
     saviHideNativeSubtitles: true,
     saviRecordingGuard: true,
     saviAiSegmentation: true,
+    saviLanguageHushButton: false,
     saviAutoLoadSubtitles: true,
     saviGlossing: true,
     saviHoldSubtitleMs: 2000,

@@ -169,6 +169,7 @@ const SaviSettingsTab: React.FC<Props> = ({
         saviHideNativeSubtitles,
         saviRecordingGuard,
         saviAiSegmentation,
+        saviLanguageHushButton,
         saviGlossing,
         saviHoverGloss,
         saviEncounterRecording,
@@ -264,13 +265,31 @@ const SaviSettingsTab: React.FC<Props> = ({
                 />
             )}
 
+            <SwitchLabelWithHoverEffect
+                control={
+                    <Switch
+                        checked={saviLanguageHushButton}
+                        onChange={(e) => onSettingChanged('saviLanguageHushButton', e.target.checked)}
+                    />
+                }
+                label={'Show a "Don\u2019t use Savi on this site" button when Savi can\u2019t tell the spoken language'}
+                labelPlacement="start"
+            />
+            <FormHelperText>
+                {
+                    'Off by default. On sites that never say what language is spoken (Netflix), Savi is always guessing, so the button would sit on every episode as a one-tap site-wide off switch. Sites you switch off are listed below either way.'
+                }
+            </FormHelperText>
+
             {/* Rendered whenever the host supplies the props (i.e. the extension —
                 the web app has no browser.storage and passes neither), INCLUDING
                 when the list is empty. Hiding an empty list made the feature
                 invisible to anyone who had not already muted something, so
                 there was no way to tell "nothing is blacklisted" apart from
                 "the list is broken" — which is exactly the confusion a silent
-                wipe bug produced. */}
+                wipe bug produced. It matters more with the button off by
+                default: the section is now the only place the feature is
+                visible at all. */}
             {saviMutedSites !== undefined && onSaviUnmuteSite !== undefined && (
                 <>
                     <SettingsSection>{'Sites Savi is switched off for'}</SettingsSection>

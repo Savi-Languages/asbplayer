@@ -55,6 +55,23 @@ export const useSaviMutedSites = (
         };
     }, [readLocal, cloudUrl, accountKey]);
 
+    // Refresh on every storage change to the list, not only on mount. The
+    // in-page button writes from a content script while this page may already
+    // be open — mount-only reading meant a settings page opened BEFORE the
+    // click never showed the mute, so the button's own "Undo in Settings →
+    // Savi" tooltip sent the user somewhere the entry wasn't. Seen live: a
+    // site muted, `saviMutedSites: ["netflix.com"]` on disk, and an empty
+    // "Sites Savi is switched off for" section.
+    useEffect(() => {
+        const onChanged = (changes: Record<string, unknown>, area: string) => {
+            if (area === 'local' && 'saviMutedSites' in changes) {
+                void readLocal();
+            }
+        };
+        browser.storage.onChanged.addListener(onChanged);
+        return () => browser.storage.onChanged.removeListener(onChanged);
+    }, [readLocal]);
+
     const unmute = useCallback(
         (siteKey: string) => {
             void unmuteSite(siteKey)
