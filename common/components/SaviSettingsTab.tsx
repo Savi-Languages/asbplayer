@@ -268,7 +268,8 @@ const SaviSettingsTab: React.FC<Props> = ({
                 <>
                     <SettingsSection>{'Sites Savi is switched off for'}</SettingsSection>
                     <FormHelperText>
-                        {'You pressed “Don’t use Savi on this site” on these. Remove one to let Savi run there again.'}
+                        {'You pressed “Don’t use Savi on this site” on these. Remove one to let Savi run there again. ' +
+                            'The list is saved to your Savi account, so it follows you to your other browsers and devices.'}
                     </FormHelperText>
                     <List dense>
                         {saviMutedSites.map((site) => (

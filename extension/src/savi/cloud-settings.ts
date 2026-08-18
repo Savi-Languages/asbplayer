@@ -18,6 +18,7 @@
 // never a streaming-site content script — that would hit CORS.
 
 import { currentAccessToken } from './account';
+import { replaceMutedSites } from './muted-sites';
 
 export interface SaviRoamingSettings {
     /** BCP-47 tag/subtag of the language being learned, e.g. `es`, `ja`, `es-419`. */
@@ -29,12 +30,33 @@ export interface SaviRoamingSettings {
     /** The first usable opensubtitles.com key from savi's api_keys rows —
      *  CACHE ONLY; managed in savi Settings, never written from here. */
     readonly openSubtitlesApiKey: string;
+    /** Sites savi has been switched off for — the blacklist behind the in-page
+     *  "Don't use Savi on this site" button, roamed so the decision follows the
+     *  account rather than the browser profile it was made in. */
+    readonly mutedSites: readonly string[];
 }
+
+// The blacklist crosses the wire as ONE newline-joined string, which is not a
+// stylistic choice: the settings store decomposes a value into typed scalar
+// leaves and REJECTS arrays outright, and an object keyed by hostname is worse
+// — `flatten` builds dotted paths, so `youtube.com` would be stored as, and
+// read back as, a nested `{youtube: {com: …}}`. A hostname can contain neither
+// a newline nor whitespace, so joining on one is lossless.
+const SITE_SEPARATOR = '\n';
+
+const parseSiteList = (value: unknown): string[] =>
+    typeof value === 'string'
+        ? value
+              .split(SITE_SEPARATOR)
+              .map((site) => site.trim())
+              .filter((site) => site.length > 0)
+        : [];
 
 export const DEFAULT_ROAMING_SETTINGS: SaviRoamingSettings = {
     targetLanguage: '',
     nativeLanguage: '',
     openSubtitlesApiKey: '',
+    mutedSites: [],
 };
 
 // browser.storage.local key holding the cached copy.
@@ -46,11 +68,15 @@ export const ROAMING_CACHE_KEY = 'saviRoamingSettings';
 const CLOUD_KEY = {
     targetLanguage: 'targetLanguage',
     nativeLanguage: 'nativeLanguage',
+    mutedSites: 'mutedSites',
 } as const;
 
 /** Roaming values this extension may write. The OpenSubtitles key is
  *  deliberately absent — it is entered and managed in savi Settings. */
 export type WritableRoamingKey = keyof typeof CLOUD_KEY;
+
+/** What a given roaming key's value looks like on this side of the wire. */
+export type RoamingValue<K extends WritableRoamingKey> = K extends 'mutedSites' ? readonly string[] : string;
 
 const normalizeBaseUrl = (baseUrl: string) => baseUrl.trim().replace(/\/+$/, '');
 
@@ -60,6 +86,9 @@ const normalize = (value: unknown): SaviRoamingSettings => {
         targetLanguage: typeof v.targetLanguage === 'string' ? v.targetLanguage : '',
         nativeLanguage: typeof v.nativeLanguage === 'string' ? v.nativeLanguage : '',
         openSubtitlesApiKey: typeof v.openSubtitlesApiKey === 'string' ? v.openSubtitlesApiKey : '',
+        mutedSites: Array.isArray(v.mutedSites)
+            ? v.mutedSites.filter((site): site is string => typeof site === 'string')
+            : [],
     };
 };
 
@@ -151,8 +180,20 @@ export const loadRoamingSettings = async (cloudUrl: string): Promise<SaviRoaming
                 ? rows[CLOUD_KEY.nativeLanguage]?.value
                 : current.nativeLanguage,
             openSubtitlesApiKey: openSubtitlesApiKey ?? current.openSubtitlesApiKey,
+            // Presence, not truthiness: an EMPTY string is a real value someone
+            // wrote (the last site removed on another device) and must clear
+            // this device's list, while an ABSENT key means the account has
+            // never had one and the local list is all there is.
+            mutedSites: rows[CLOUD_KEY.mutedSites]
+                ? parseSiteList(rows[CLOUD_KEY.mutedSites]?.value)
+                : current.mutedSites,
         });
         await setCache(merged);
+        // Mirror into the list the CONTENT SCRIPTS read. They cannot reach the
+        // cloud, and the language gate consults `muted-sites.ts` directly, so
+        // without this a blacklist entry made on another device would sit in
+        // the roaming cache and never actually switch savi off anywhere.
+        await replaceMutedSites([...merged.mutedSites]);
         return merged;
     } catch (e) {
         return await getCachedRoamingSettings();
@@ -163,18 +204,20 @@ export const loadRoamingSettings = async (cloudUrl: string): Promise<SaviRoaming
  *  offline), then write through to the cloud (LWW). Throws AFTER the cache is
  *  updated if the write could not be persisted to the account — the caller
  *  surfaces that while the value already works on this device. */
-export const putRoamingSetting = async (
+export const putRoamingSetting = async <K extends WritableRoamingKey>(
     cloudUrl: string,
-    key: WritableRoamingKey,
-    value: string
+    key: K,
+    value: RoamingValue<K>
 ): Promise<SaviRoamingSettings> => {
     const next: SaviRoamingSettings = { ...(await getCachedRoamingSettings()), [key]: value };
     await setCache(next);
 
+    // Arrays are not storable (see SITE_SEPARATOR) — join on the way out.
+    const wire = Array.isArray(value) ? value.join(SITE_SEPARATOR) : (value as string);
     const response = await cloudFetch(cloudUrl, `/v2/settings/${CLOUD_KEY[key]}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ value, updatedAtMs: Date.now() }),
+        body: JSON.stringify({ value: wire, updatedAtMs: Date.now() }),
     });
 
     if (response === undefined) {

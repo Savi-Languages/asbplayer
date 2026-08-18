@@ -109,6 +109,7 @@ import { SaviInteractionClock } from '../savi/interaction-clock';
 import type { LanguageGateVerdict } from '../savi/language-gate';
 import { SaviLanguageHush } from '../savi/language-hush';
 import { muteSite, siteKeyForUrl } from '../savi/muted-sites';
+import { dismissHushFor, isHushDismissed } from '../savi/hush-dismissed';
 import { getCachedRoamingSettings } from '../savi/cloud-settings';
 import { deriveEpisodeId } from '../savi/episode';
 
@@ -208,6 +209,10 @@ export default class Binding {
      *  verdict itself: signing in changes '' → 'fr' without flipping `active`. */
     private _saviLanguageApplied = '';
     /** Offered only while the gate is guessing (`unknown`) — see language-hush.ts. */
+    /** Whether the gate's latest verdict still WANTS the hush prompt. Read
+     *  after the async dismissal check, so a verdict that flipped while that
+     *  was in flight cannot resurrect a prompt the gate has since retracted. */
+    private _saviHushWanted = false;
     readonly saviLanguageHush = new SaviLanguageHush(() => {
         // SV-44: site scope, not episode scope. A page whose URL cannot be
         // parsed has no site to mute, so the click is a no-op rather than a
@@ -217,6 +222,15 @@ export default class Binding {
             return;
         }
         void muteSite(siteKey).then(() => {
+            // Roam the decision. The content script cannot reach the cloud, so
+            // the background pushes the list; a failure there is silent by
+            // design — the mute already holds on this device.
+            void browser.runtime
+                .sendMessage({
+                    sender: 'savi-video',
+                    message: { command: 'savi-muted-sites-changed' },
+                })
+                .catch(() => {});
             // Keep the language this verdict is about, so the guard in
             // applySaviLanguageGate compares like with like.
             this.applySaviLanguageGate({
@@ -225,6 +239,17 @@ export default class Binding {
                 targetLanguage: this._saviLanguageApplied,
             });
         });
+    },
+    // The ✕: the user wants savi HERE, so change nothing about the gate and
+    // simply stop asking on this site. Without it the prompt is a one-way
+    // door — its only answer switches savi off — and it reappears on every
+    // video of a site the user has already decided about.
+    () => {
+        const siteKey = siteKeyForUrl(window.location.href);
+        if (siteKey === undefined) {
+            return;
+        }
+        void dismissHushFor(siteKey);
     });
 
     private copyToClipboardOnMine: boolean;
@@ -701,11 +726,25 @@ export default class Binding {
      * Idempotent: a re-sync reaching the same verdict is a no-op, so this can be
      * called from every data sync without restarting anything.
      */
+    /** Offer the hush prompt unless the user already closed it on this site.
+     *  The storage read is memoized in-process, so calling this from every
+     *  data sync costs nothing after the first. */
+    private async _showHushUnlessDismissed(): Promise<void> {
+        const siteKey = siteKeyForUrl(window.location.href);
+        if (siteKey !== undefined && (await isHushDismissed(siteKey))) {
+            return;
+        }
+        if (this._saviHushWanted) {
+            this.saviLanguageHush.show();
+        }
+    }
+
     applySaviLanguageGate(verdict: LanguageGateVerdict) {
         // Offer the manual hush only while we are guessing. Outside `unknown`
         // the control is either noise (we matched) or moot (savi is already off).
-        if (verdict.reason === 'unknown') {
-            this.saviLanguageHush.show();
+        this._saviHushWanted = verdict.reason === 'unknown';
+        if (this._saviHushWanted) {
+            void this._showHushUnlessDismissed();
         } else {
             this.saviLanguageHush.hide();
         }
