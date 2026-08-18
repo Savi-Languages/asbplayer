@@ -266,6 +266,11 @@ export interface SaviEpisodeTranscriptResponse {
 export interface GlossedWordEntry {
     readonly word: string;
     readonly gloss: string;
+    /** HOVER entries only: how long the revealed label was actually on screen
+     *  (longest single continuous reveal, ms). Absent means no qualifying
+     *  dwell is claimed — the user mined the word rather than looked it up.
+     *  Level 2 reads a dwell past its threshold as a partial "Again". */
+    readonly dwellMs?: number;
 }
 
 export interface SaviWatchedLineMessage {

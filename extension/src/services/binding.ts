@@ -301,7 +301,14 @@ export default class Binding {
             // A JA hover popup / tap panel showed a word's meaning — recorded
             // as a hover_glossed encounter carrying the shown label (SV-20).
             // This is what makes the Japanese path feed the reviewer.
-            (lineText, word, gloss) => this.saviEncounterReporter.noteHoverReveal(lineText, word, gloss)
+            (lineText, word, gloss) => this.saviEncounterReporter.noteHoverReveal(lineText, word, gloss),
+            // …and how long it stayed up. A reveal held past the Level-2
+            // threshold is read as a partial "Again" — nobody looks up a word
+            // they can read — so the dwell has to be measured, not assumed.
+            (lineText, word) => this.saviEncounterReporter.noteHoverRevealEnd(lineText, word),
+            // Mining is collection, not failed recall: withdraw the reveal so
+            // adding a card never lapses the card you just added.
+            (lineText, word) => this.saviEncounterReporter.noteHoverRetract(lineText, word)
         );
         // Glossing (SV-12/13): supplies gloss-ruby HTML to the subtitle controller;
         // a resolved gloss asks the controller to re-render the showing lines. The
@@ -330,6 +337,7 @@ export default class Binding {
             // A revealed hover gloss is an active lookup — recorded on the
             // line's watched encounter as hover_glossed context, with the
             // shown label (SV-20).
+            onRevealEnd: (lineText, word) => this.saviEncounterReporter.noteHoverRevealEnd(lineText, word),
             onReveal: (lineText, word, gloss) => {
                 this.saviEncounterReporter.noteHoverReveal(lineText, word, gloss);
                 // …and it's also the strongest evidence that a PAUSED line is

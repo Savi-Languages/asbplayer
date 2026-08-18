@@ -300,7 +300,7 @@ export const postWatchedLine = async (
         source?: string;
         occurredAtMs?: number;
         glossedWords?: { word: string; gloss: string }[];
-        hoverGlossedWords?: { word: string; gloss: string }[];
+        hoverGlossedWords?: { word: string; gloss: string; dwellMs?: number }[];
     }
 ): Promise<void> => {
     await request(
