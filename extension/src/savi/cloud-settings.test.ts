@@ -6,6 +6,7 @@ import {
     ROAMING_CACHE_KEY,
 } from './cloud-settings';
 import { currentAccessToken } from './account';
+import { muteSite, mutedSites, resetMutedSitesMemo } from './muted-sites';
 
 jest.mock('./account', () => ({ currentAccessToken: jest.fn() }));
 
@@ -67,7 +68,14 @@ describe('savi roaming cloud settings', () => {
     it('treats an absent cloud blacklist as unknown, not as empty', async () => {
         // Otherwise the first refresh on a fresh account would wipe a list the
         // user built on this device before signing in.
-        store[ROAMING_CACHE_KEY] = { targetLanguage: 'es', mutedSites: ['kept.com'] };
+        //
+        // The seed goes into the REAL store (muted-sites.ts), not the roaming
+        // cache. Seeding the roaming cache is what the first version of this
+        // test did, and it is why the wipe shipped: it asserted the fallback
+        // came from the same wrong place the code read it from, so it passed
+        // while the actual list was being destroyed.
+        resetMutedSitesMemo();
+        await muteSite('kept.com');
         mockCloud(okJson({ settings: {} }), okJson({ keys: [] }));
 
         expect((await loadRoamingSettings('https://cloud.example')).mutedSites).toEqual(['kept.com']);
@@ -77,7 +85,10 @@ describe('savi roaming cloud settings', () => {
         // An empty string is a real value someone wrote — the last site was
         // removed on another device — and must clear this device's list.
         store[ROAMING_CACHE_KEY] = { mutedSites: ['stale.com'] };
-        mockCloud(okJson({ settings: { mutedSites: { value: '', version: 2, updatedAtMs: 2 } } }), okJson({ keys: [] }));
+        mockCloud(
+            okJson({ settings: { mutedSites: { value: '', version: 2, updatedAtMs: 2 } } }),
+            okJson({ keys: [] })
+        );
 
         expect((await loadRoamingSettings('https://cloud.example')).mutedSites).toEqual([]);
     });
@@ -90,6 +101,37 @@ describe('savi roaming cloud settings', () => {
         const [url, init] = fetchMock.mock.calls[0];
         expect(url).toBe('https://cloud.example/v2/settings/mutedSites');
         expect(JSON.parse(init.body).value).toBe('a.com\nb.com');
+    });
+
+    it('does not wipe the real local blacklist when the account has no row yet', async () => {
+        // The blacklist lives in `saviMutedSites` (muted-sites.ts) — a DIFFERENT
+        // store from the roaming cache. Seeding the "keep what's local" fallback
+        // from the roaming cache reads a field that is empty for every existing
+        // user, so the mirror wrote [] back over a real list: opening settings
+        // (or auto-loading any video) silently un-muted every blacklisted site.
+        resetMutedSitesMemo();
+        await muteSite('youtube.com');
+        mockCloud(okJson({ settings: {} }), okJson({ keys: [] }));
+
+        const loaded = await loadRoamingSettings('https://cloud.example');
+
+        resetMutedSitesMemo();
+        expect(await mutedSites()).toEqual(['youtube.com']);
+        expect(loaded.mutedSites).toEqual(['youtube.com']);
+    });
+
+    it('mirrors the account list into the store the content scripts read', async () => {
+        resetMutedSitesMemo();
+        await muteSite('stale.com');
+        mockCloud(
+            okJson({ settings: { mutedSites: { value: 'netflix.com', version: 3, updatedAtMs: 3 } } }),
+            okJson({ keys: [] })
+        );
+
+        await loadRoamingSettings('https://cloud.example');
+
+        resetMutedSitesMemo();
+        expect(await mutedSites()).toEqual(['netflix.com']);
     });
 
     it('returns defaults when nothing is cached', async () => {
@@ -109,7 +151,12 @@ describe('savi roaming cloud settings', () => {
 
         const loaded = await loadRoamingSettings('https://cloud.example');
 
-        expect(loaded).toEqual({ targetLanguage: 'es', nativeLanguage: '', openSubtitlesApiKey: 'k-123', mutedSites: [] });
+        expect(loaded).toEqual({
+            targetLanguage: 'es',
+            nativeLanguage: '',
+            openSubtitlesApiKey: 'k-123',
+            mutedSites: [],
+        });
         expect(store[ROAMING_CACHE_KEY]).toEqual({
             targetLanguage: 'es',
             nativeLanguage: '',
@@ -199,7 +246,12 @@ describe('savi roaming cloud settings', () => {
 
         const loaded = await loadRoamingSettings('https://cloud.example');
 
-        expect(loaded).toEqual({ targetLanguage: 'ja', nativeLanguage: '', openSubtitlesApiKey: 'k-9', mutedSites: [] });
+        expect(loaded).toEqual({
+            targetLanguage: 'ja',
+            nativeLanguage: '',
+            openSubtitlesApiKey: 'k-9',
+            mutedSites: [],
+        });
         expect(fetchMock).not.toHaveBeenCalled();
     });
 
@@ -239,13 +291,23 @@ describe('savi roaming cloud settings', () => {
         tokenMock.mockResolvedValue(undefined);
 
         await expect(putRoamingSetting('https://cloud.example', 'targetLanguage', 'ja')).rejects.toThrow(/sign in/i);
-        expect(store[ROAMING_CACHE_KEY]).toEqual({ targetLanguage: 'ja', nativeLanguage: '', openSubtitlesApiKey: '', mutedSites: [] });
+        expect(store[ROAMING_CACHE_KEY]).toEqual({
+            targetLanguage: 'ja',
+            nativeLanguage: '',
+            openSubtitlesApiKey: '',
+            mutedSites: [],
+        });
     });
 
     it('caches locally but throws when the cloud rejects the write', async () => {
         fetchMock.mockResolvedValue({ ok: false, status: 400, json: async () => ({}) });
 
         await expect(putRoamingSetting('https://cloud.example', 'targetLanguage', 'es')).rejects.toThrow(/savi cloud/i);
-        expect(store[ROAMING_CACHE_KEY]).toEqual({ targetLanguage: 'es', nativeLanguage: '', openSubtitlesApiKey: '', mutedSites: [] });
+        expect(store[ROAMING_CACHE_KEY]).toEqual({
+            targetLanguage: 'es',
+            nativeLanguage: '',
+            openSubtitlesApiKey: '',
+            mutedSites: [],
+        });
     });
 });

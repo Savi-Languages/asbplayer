@@ -264,12 +264,22 @@ const SaviSettingsTab: React.FC<Props> = ({
                 />
             )}
 
-            {saviMutedSites !== undefined && saviMutedSites.length > 0 && onSaviUnmuteSite !== undefined && (
+            {/* Rendered whenever the host supplies the props (i.e. the extension —
+                the web app has no browser.storage and passes neither), INCLUDING
+                when the list is empty. Hiding an empty list made the feature
+                invisible to anyone who had not already muted something, so
+                there was no way to tell "nothing is blacklisted" apart from
+                "the list is broken" — which is exactly the confusion a silent
+                wipe bug produced. */}
+            {saviMutedSites !== undefined && onSaviUnmuteSite !== undefined && (
                 <>
                     <SettingsSection>{'Sites Savi is switched off for'}</SettingsSection>
                     <FormHelperText>
-                        {'You pressed “Don’t use Savi on this site” on these. Remove one to let Savi run there again. ' +
-                            'The list is saved to your Savi account, so it follows you to your other browsers and devices.'}
+                        {saviMutedSites.length === 0
+                            ? 'No sites yet. Press “Don’t use Savi on this site” on a site to add one — it will be listed here, ' +
+                              'saved to your Savi account, and removable at any time.'
+                            : 'You pressed “Don’t use Savi on this site” on these. Remove one to let Savi run there again. ' +
+                              'The list is saved to your Savi account, so it follows you to your other browsers and devices.'}
                     </FormHelperText>
                     <List dense>
                         {saviMutedSites.map((site) => (

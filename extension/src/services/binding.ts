@@ -213,44 +213,46 @@ export default class Binding {
      *  after the async dismissal check, so a verdict that flipped while that
      *  was in flight cannot resurrect a prompt the gate has since retracted. */
     private _saviHushWanted = false;
-    readonly saviLanguageHush = new SaviLanguageHush(() => {
-        // SV-44: site scope, not episode scope. A page whose URL cannot be
-        // parsed has no site to mute, so the click is a no-op rather than a
-        // silent failure that leaves the button looking broken.
-        const siteKey = siteKeyForUrl(window.location.href);
-        if (siteKey === undefined) {
-            return;
-        }
-        void muteSite(siteKey).then(() => {
-            // Roam the decision. The content script cannot reach the cloud, so
-            // the background pushes the list; a failure there is silent by
-            // design — the mute already holds on this device.
-            void browser.runtime
-                .sendMessage({
-                    sender: 'savi-video',
-                    message: { command: 'savi-muted-sites-changed' },
-                })
-                .catch(() => {});
-            // Keep the language this verdict is about, so the guard in
-            // applySaviLanguageGate compares like with like.
-            this.applySaviLanguageGate({
-                active: false,
-                reason: 'muted',
-                targetLanguage: this._saviLanguageApplied,
+    readonly saviLanguageHush = new SaviLanguageHush(
+        () => {
+            // SV-44: site scope, not episode scope. A page whose URL cannot be
+            // parsed has no site to mute, so the click is a no-op rather than a
+            // silent failure that leaves the button looking broken.
+            const siteKey = siteKeyForUrl(window.location.href);
+            if (siteKey === undefined) {
+                return;
+            }
+            void muteSite(siteKey).then(() => {
+                // Roam the decision. The content script cannot reach the cloud, so
+                // the background pushes the list; a failure there is silent by
+                // design — the mute already holds on this device.
+                void browser.runtime
+                    .sendMessage({
+                        sender: 'savi-video',
+                        message: { command: 'savi-muted-sites-changed' },
+                    })
+                    .catch(() => {});
+                // Keep the language this verdict is about, so the guard in
+                // applySaviLanguageGate compares like with like.
+                this.applySaviLanguageGate({
+                    active: false,
+                    reason: 'muted',
+                    targetLanguage: this._saviLanguageApplied,
+                });
             });
-        });
-    },
-    // The ✕: the user wants savi HERE, so change nothing about the gate and
-    // simply stop asking on this site. Without it the prompt is a one-way
-    // door — its only answer switches savi off — and it reappears on every
-    // video of a site the user has already decided about.
-    () => {
-        const siteKey = siteKeyForUrl(window.location.href);
-        if (siteKey === undefined) {
-            return;
+        },
+        // The ✕: the user wants savi HERE, so change nothing about the gate and
+        // simply stop asking on this site. Without it the prompt is a one-way
+        // door — its only answer switches savi off — and it reappears on every
+        // video of a site the user has already decided about.
+        () => {
+            const siteKey = siteKeyForUrl(window.location.href);
+            if (siteKey === undefined) {
+                return;
+            }
+            void dismissHushFor(siteKey);
         }
-        void dismissHushFor(siteKey);
-    });
+    );
 
     private copyToClipboardOnMine: boolean;
     private clickToMineDefaultAction: PostMineAction;

@@ -18,7 +18,7 @@
 // never a streaming-site content script — that would hit CORS.
 
 import { currentAccessToken } from './account';
-import { replaceMutedSites } from './muted-sites';
+import { mutedSites, replaceMutedSites, resetMutedSitesMemo } from './muted-sites';
 
 export interface SaviRoamingSettings {
     /** BCP-47 tag/subtag of the language being learned, e.g. `es`, `ja`, `es-419`. */
@@ -172,6 +172,16 @@ export const loadRoamingSettings = async (cloudUrl: string): Promise<SaviRoaming
         // for it, so a value set locally (e.g. while signed out) is not clobbered
         // by an absent cloud key before its own write-through lands.
         const current = await getCachedRoamingSettings();
+        // The blacklist's "keep what's local" fallback must come from the store
+        // that actually HOLDS it. `getCachedRoamingSettings` reads the roaming
+        // cache, whose `mutedSites` is empty for every user who predates this
+        // field — seeding from it made the mirror below write [] over a real
+        // list, silently un-muting every blacklisted site the first time
+        // settings opened or a video auto-loaded. Drop the memo first: another
+        // context (the content-script mute) may have written since this one
+        // last read.
+        resetMutedSitesMemo();
+        const currentSites = await mutedSites();
         const merged = normalize({
             targetLanguage: rows[CLOUD_KEY.targetLanguage]
                 ? rows[CLOUD_KEY.targetLanguage]?.value
@@ -184,9 +194,7 @@ export const loadRoamingSettings = async (cloudUrl: string): Promise<SaviRoaming
             // wrote (the last site removed on another device) and must clear
             // this device's list, while an ABSENT key means the account has
             // never had one and the local list is all there is.
-            mutedSites: rows[CLOUD_KEY.mutedSites]
-                ? parseSiteList(rows[CLOUD_KEY.mutedSites]?.value)
-                : current.mutedSites,
+            mutedSites: rows[CLOUD_KEY.mutedSites] ? parseSiteList(rows[CLOUD_KEY.mutedSites]?.value) : currentSites,
         });
         await setCache(merged);
         // Mirror into the list the CONTENT SCRIPTS read. They cannot reach the

@@ -98,7 +98,10 @@ export class SaviLanguageHush {
             gap: '6px',
             padding: '6px 10px',
         } as Partial<CSSStyleDeclaration>);
-        hush.addEventListener('click', this._handler(() => this._onHush()));
+        hush.addEventListener(
+            'click',
+            this._handler(() => this._onHush())
+        );
 
         const dismiss = document.createElement('button');
         dismiss.className = 'savi-language-hush-dismiss';
@@ -111,7 +114,10 @@ export class SaviLanguageHush {
             borderLeft: '1px solid rgba(255,255,255,0.2)',
             opacity: '0.75',
         } as Partial<CSSStyleDeclaration>);
-        dismiss.addEventListener('click', this._handler(() => this._onDismiss()));
+        dismiss.addEventListener(
+            'click',
+            this._handler(() => this._onDismiss())
+        );
 
         row.append(hush, dismiss);
         document.body.appendChild(row);
