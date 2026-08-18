@@ -673,6 +673,9 @@ const settingsSchema = {
         saviAiSegmentation: {
             type: 'boolean',
         },
+        saviLanguageHushButton: {
+            type: 'boolean',
+        },
         saviAutoLoadSubtitles: {
             type: 'boolean',
         },

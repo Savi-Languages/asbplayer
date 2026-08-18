@@ -728,14 +728,33 @@ export default class Binding {
      * Idempotent: a re-sync reaching the same verdict is a no-op, so this can be
      * called from every data sync without restarting anything.
      */
-    /** Offer the hush prompt unless the user already closed it on this site.
-     *  The storage read is memoized in-process, so calling this from every
-     *  data sync costs nothing after the first. */
-    private async _showHushUnlessDismissed(): Promise<void> {
+    /** Offer the hush prompt only when all three agree: the gate is guessing,
+     *  the user opted the button IN, and they have not already closed it on
+     *  this site.
+     *
+     *  Two suppressions, deliberately kept separate. The SETTING is global and
+     *  off by default — on a site that never exposes a spoken language
+     *  (Netflix) `unknown` is every video, so a permanent one-tap site-wide off
+     *  switch is a trap rather than a recourse. The DISMISSAL is per-site and
+     *  is the ✕: "I want Savi here, stop asking". Neither implies the other,
+     *  and the mute itself stays reachable from Settings → Savi regardless.
+     *
+     *  Both reads are memoized or cheap, so calling this from every data sync
+     *  costs nothing after the first. */
+    private async _showHushUnlessSuppressed(): Promise<void> {
+        const { saviLanguageHushButton } = await this.settings.get(['saviLanguageHushButton']);
+        if (!saviLanguageHushButton) {
+            // Hide rather than merely not-show: the setting can be turned off
+            // while a prompt is already on screen.
+            this.saviLanguageHush.hide();
+            return;
+        }
         const siteKey = siteKeyForUrl(window.location.href);
         if (siteKey !== undefined && (await isHushDismissed(siteKey))) {
             return;
         }
+        // Re-checked after the awaits: a verdict that flipped while they were
+        // in flight must not resurrect a prompt the gate has since retracted.
         if (this._saviHushWanted) {
             this.saviLanguageHush.show();
         }
@@ -746,7 +765,7 @@ export default class Binding {
         // the control is either noise (we matched) or moot (savi is already off).
         this._saviHushWanted = verdict.reason === 'unknown';
         if (this._saviHushWanted) {
-            void this._showHushUnlessDismissed();
+            void this._showHushUnlessSuppressed();
         } else {
             this.saviLanguageHush.hide();
         }
