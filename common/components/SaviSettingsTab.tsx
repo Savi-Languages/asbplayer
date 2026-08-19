@@ -355,9 +355,11 @@ const SaviSettingsTab: React.FC<Props> = ({
                     onSettingChanged('saviHoldSubtitleMs', Number.isFinite(ms) ? Math.trunc(ms) : -1);
                 }}
                 helperText={
-                    'Auto-timed tracks often end a line before the speaker stops. -1 (default) keeps ' +
-                    'it up until the next line is due; 0 turns this off; a positive number caps it in ' +
-                    'ms. It never overlaps the next line either way.'
+                    'Auto-timed tracks often end a line before the speaker stops, so the last line is ' +
+                    'held briefly. 2000 (default) caps the hold in ms; 0 turns it off; -1 holds until ' +
+                    'the next line is due — best for auto-timed tracks (YouTube ASR), but on a ' +
+                    'human-timed track it parks a finished line over real silence. It never overlaps ' +
+                    'the next line either way.'
                 }
             />
             {roamingSupported && (
