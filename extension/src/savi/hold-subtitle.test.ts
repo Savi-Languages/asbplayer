@@ -5,6 +5,7 @@ import {
     nextStartAfter,
     subtitlesToDisplay,
 } from './hold-subtitle';
+import { defaultSettings } from '@project/common/settings';
 
 const cue = (start: number, end: number, text = 'x', track = 0) => ({ start, end, text, track });
 
@@ -69,6 +70,14 @@ describe('subtitlesToDisplay', () => {
     });
 
     // ── hold-until-next-cue (the default) ────────────────────────────────
+
+    it('ships the module default as the actual setting default', () => {
+        // Two constants that must agree and live in different packages: the
+        // controller falls back to DEFAULT_HOLD_MS, but what an unconfigured
+        // user actually gets is `defaultSettings`. Changing one and not the
+        // other would leave the module documenting a default nobody has.
+        expect(defaultSettings.saviHoldSubtitleMs).toBe(DEFAULT_HOLD_MS);
+    });
 
     it('defaults to a BOUNDED hold, not hold-until-next-cue', () => {
         // Flipped deliberately: unbounded-by-default parked a finished line

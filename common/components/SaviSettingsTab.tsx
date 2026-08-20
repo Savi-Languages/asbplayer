@@ -277,7 +277,7 @@ const SaviSettingsTab: React.FC<Props> = ({
             />
             <FormHelperText>
                 {
-                    'Off by default. On sites that never say what language is spoken (Netflix), Savi is always guessing, so the button would sit on every episode as a one-tap site-wide off switch. Sites you switch off are listed below either way.'
+                    'On by default. On sites that never say what language is spoken (Netflix), Savi is always guessing, so the button appears on every episode — press ✕ to dismiss it for that site, or turn it off here entirely. Sites you switch off are listed below either way.'
                 }
             </FormHelperText>
 
