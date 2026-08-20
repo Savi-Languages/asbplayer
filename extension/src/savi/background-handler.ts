@@ -371,8 +371,12 @@ export default class SaviCommandHandler implements CommandHandler {
         const { saviCloudUrl } = await this._settings.get(['saviCloudUrl']);
         // Dev builds roam against the local cloud too (resolveCloudBase), so the
         // target language the desktop wrote to localhost actually reaches here.
-        const { targetLanguage, nativeLanguage, openSubtitlesApiKey, mutedSites: sites } =
-            await loadRoamingSettings(resolveCloudBase(saviCloudUrl));
+        const {
+            targetLanguage,
+            nativeLanguage,
+            openSubtitlesApiKey,
+            mutedSites: sites,
+        } = await loadRoamingSettings(resolveCloudBase(saviCloudUrl));
         return { targetLanguage, nativeLanguage, openSubtitlesApiKey, mutedSites: sites };
     }
 
@@ -903,7 +907,12 @@ export default class SaviCommandHandler implements CommandHandler {
                     browser.tabs.sendMessage(session.tabId, command).catch(() => {});
                     return { ok: false, sessionGone: true };
                 }
-                return { ok: result.ok, audio: result.audio, openSegment: result.openSegment };
+                return {
+                    ok: result.ok,
+                    audio: result.audio,
+                    audioRequested: result.audioRequested,
+                    openSegment: result.openSegment,
+                };
             };
 
             try {

@@ -82,6 +82,10 @@ export interface SaviPlaybackStateResponse {
     /** The daemon's current audio state for the session ('recording' | 'idle'
      *  | 'off'), when known. */
     readonly audio?: string;
+    /** Whether this session ASKED to record. `audio: 'off'` with this true
+     *  means the daemon is discarding every segment op while the user believes
+     *  it is recording — the failure that used to be entirely silent. */
+    readonly audioRequested?: boolean;
     /** The daemon no longer knows this session (orphan-sweep auto-finish or a
      *  daemon restart) — bookkeeping was cleared; the capture should restart. */
     readonly sessionGone?: boolean;

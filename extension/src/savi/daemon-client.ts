@@ -53,6 +53,13 @@ export interface CaptureFinishInfo {
     // SV-18: true when the session had no audio (recording off/unavailable) —
     // the subtitle track was stored, no audio episode was created.
     readonly transcriptOnly?: boolean;
+    /** Whether audio was asked for at all. With `transcriptOnly`, `true` means
+     *  the session recorded nothing it was told to record — not a save. */
+    readonly audioRequested?: boolean;
+    /** Set when audio WAS recorded and then lost (segments gone at finish). */
+    readonly audioLost?: string | null;
+    /** Set when the kept audio is absurdly small for what was watched. */
+    readonly condenseWarning?: string | null;
 }
 
 export const normalizedBaseUrl = (baseUrl: string) => baseUrl.trim().replace(/\/+$/, '');
@@ -241,11 +248,20 @@ export const browserHintFromUserAgent = (ua: string): string | undefined => {
 export const postPlaybackState = async (
     config: SaviDaemonConfig,
     { captureId, seq, ops }: { captureId: string; seq: number; ops: unknown[] }
-): Promise<{ ok: boolean; audio?: string; sessionGone?: boolean; openSegment?: string | null }> => {
+): Promise<{
+    ok: boolean;
+    audio?: string;
+    audioRequested?: boolean;
+    sessionGone?: boolean;
+    openSegment?: string | null;
+}> => {
     const body = await request(config, '/v2/capture/playback-state', jsonInit({ captureId, seq, ops }));
     return {
         ok: body.ok === true,
         audio: typeof body.audio === 'string' ? body.audio : undefined,
+        // `audio: 'off'` alone cannot distinguish a subtitles-only session from
+        // one whose ops are being discarded while it believes it is recording.
+        audioRequested: body.audioRequested === true,
         // The daemon finished this session behind our back (orphan sweep /
         // restart) — the caller should drop its bookkeeping and restart.
         sessionGone: body.sessionGone === true,
