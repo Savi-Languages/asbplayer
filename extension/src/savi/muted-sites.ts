@@ -16,37 +16,15 @@
 // Bounded MRU for the same reason as the episode list: an unbounded list
 // written from a content script is a leak waiting to happen.
 
+import { siteSet } from './site-set';
+
 const KEY = 'saviMutedSites';
 const MAX_MUTED = 500;
 
 /** The single key every `file://` page shares — see the header. */
 export const LOCAL_FILE_SITE_KEY = 'file://';
 
-/** In-process mirror so the gate's hot path doesn't hit storage per video. */
-let memo: string[] | undefined;
-
-const read = async (): Promise<string[]> => {
-    if (memo !== undefined) return memo;
-    try {
-        const stored = await browser.storage.local.get(KEY);
-        const list = (stored as Record<string, unknown>)[KEY];
-        memo = Array.isArray(list) ? list.filter((e): e is string => typeof e === 'string') : [];
-    } catch {
-        // Storage unavailable → behave as "nothing muted", which fails open,
-        // matching the gate's posture everywhere else.
-        memo = [];
-    }
-    return memo;
-};
-
-const write = async (list: string[]): Promise<void> => {
-    memo = list;
-    try {
-        await browser.storage.local.set({ [KEY]: list });
-    } catch {
-        // Keep the in-process value: the mute still holds for this session.
-    }
-};
+const sites = siteSet(KEY, MAX_MUTED);
 
 /**
  * The mute key for a page URL, or `undefined` when there is nothing muteable
@@ -77,22 +55,19 @@ export const siteKeyForUrl = (url: string): string | undefined => {
 };
 
 /** The muted set, for handing to `decideLanguageGate`. */
-export const mutedSites = async (): Promise<string[]> => [...(await read())];
+export const mutedSites = (): Promise<string[]> => sites.all();
 
-export const isSiteMuted = async (siteKey: string): Promise<boolean> => (await read()).includes(siteKey);
+export const isSiteMuted = (siteKey: string): Promise<boolean> => sites.has(siteKey);
 
 /** Mute a site. Most-recent last; oldest dropped past MAX_MUTED. */
-export const muteSite = async (siteKey: string): Promise<void> => {
-    const list = (await read()).filter((e) => e !== siteKey);
-    list.push(siteKey);
-    await write(list.slice(-MAX_MUTED));
-};
+export const muteSite = (siteKey: string): Promise<void> => sites.add(siteKey);
 
-export const unmuteSite = async (siteKey: string): Promise<void> => {
-    await write((await read()).filter((e) => e !== siteKey));
-};
+export const unmuteSite = (siteKey: string): Promise<void> => sites.remove(siteKey);
+
+/** Overwrite the local list from the account's copy (cloud → device mirror).
+ *  Wholesale, not merged: the account list already won a last-write-wins race,
+ *  and merging here would resurrect entries another device removed. */
+export const replaceMutedSites = (siteKeys: string[]): Promise<void> => sites.replace(siteKeys);
 
 /** Test seam — drops the in-process mirror so the next read hits storage. */
-export const resetMutedSitesMemo = (): void => {
-    memo = undefined;
-};
+export const resetMutedSitesMemo = (): void => sites.resetMemo();

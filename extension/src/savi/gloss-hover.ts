@@ -214,6 +214,11 @@ export interface GlossHoverSources {
      *  the encounter reporter records it as an active lookup (hover_glossed).
      *  `gloss` is the shown label text (SV-20: persisted on the encounter). */
     readonly onReveal?: (lineText: string, word: string, gloss?: string) => void;
+    /** The revealed label stopped showing. Closes the dwell measurement the
+     *  reporter started at `onReveal` — how long the label was READ is what
+     *  separates a deliberate lookup from a cursor passing through, and Level
+     *  2 will not treat a reveal as a failed recall without it. */
+    readonly onRevealEnd?: (lineText: string, word: string) => void;
 }
 
 export class SaviGlossHover {
@@ -225,6 +230,9 @@ export class SaviGlossHover {
     private _mouseOnSubtitle = false;
     private _deferredPaused = false; // WE held the line at its end; WE resume on mouse-out
     private _hoveredKey = ''; // line + span, so a word is translated/positioned once
+    /** The reveal currently on screen, so its dwell can be closed when the
+     *  cursor moves on. Null whenever no label is showing. */
+    private _revealed: { line: string; word: string } | null = null;
     private _generation = 0; // cancels stale async translations
     /** Whether the label is currently lifted into the top layer (SV-44). */
     private _labelInTopLayer = false;
@@ -446,6 +454,8 @@ export class SaviGlossHover {
         if (key === this._hoveredKey) {
             return; // same word — already handled (label shown, or known to have no gloss)
         }
+        // Moving to another word ends the previous word's reveal.
+        this._endReveal();
         this._hoveredKey = key;
         const generation = ++this._generation;
 
@@ -465,7 +475,9 @@ export class SaviGlossHover {
         if (gloss) {
             this._log(`"${span.seg.text}" → "${gloss}"`);
             this._showLabel(rect, gloss);
-            this._sources.onReveal?.(baseText, span.seg.text.toLowerCase(), gloss);
+            const word = span.seg.text.toLowerCase();
+            this._revealed = { line: baseText, word };
+            this._sources.onReveal?.(baseText, word, gloss);
         } else if (this._label) {
             this._log(`no usable gloss for "${span.seg.text}" (translate failed / timed out / not label-length)`);
             // No usable gloss — hide the placeholder but KEEP the key so we don't
@@ -482,7 +494,16 @@ export class SaviGlossHover {
         el.style.display = 'block';
     }
 
+    /** Close the on-screen reveal's dwell, if there is one. Idempotent. */
+    private _endReveal(): void {
+        if (this._revealed) {
+            this._sources.onRevealEnd?.(this._revealed.line, this._revealed.word);
+            this._revealed = null;
+        }
+    }
+
     private _clearHover(): void {
+        this._endReveal();
         this._hoveredKey = '';
         this._generation++; // cancel any in-flight translation
         if (this._label) {

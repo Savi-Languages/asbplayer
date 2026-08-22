@@ -31,11 +31,33 @@ interface PendingLine {
      *  pending line to the next episode at flush time. */
     readonly episodeId: string;
     readonly lang: string;
-    /** Lowercased word → the label revealed for it while this line displayed
-     *  ('' when the label text wasn't captured). A later reveal of the same
-     *  word (e.g. the AI in-context gloss landing after the dictionary one)
-     *  overwrites — the richest label wins. */
-    readonly hovered: Map<string, string>;
+    /** Lowercased word → what its on-demand reveal did while this line
+     *  displayed. A later reveal of the same word (e.g. the AI in-context
+     *  gloss landing after the dictionary one) overwrites the label. */
+    readonly hovered: Map<string, HoverReveal>;
+}
+
+/** One word's reveal history within a single displayed line.
+ *
+ *  Dwell is what separates a deliberate lookup from a cursor crossing the
+ *  subtitle on its way somewhere else — Level 2 reads a reveal held past a
+ *  threshold as a partial "Again" rather than as reinforcement, so the number
+ *  has to mean something. */
+interface HoverReveal {
+    /** The label as shown ('' when the text wasn't captured). */
+    gloss: string;
+    /** Start of the reveal currently on screen; null when nothing is showing. */
+    openedAtMs: number | null;
+    /** Longest SINGLE continuous reveal so far, in ms.
+     *
+     *  Longest rather than total on purpose: three 400ms passes over a word
+     *  are three flicks, not a 1.2s study, and summing them would hand the
+     *  very gesture the threshold exists to filter a way through it. */
+    longestMs: number;
+    /** The user mined this word (added a card, or opened the study panel).
+     *  That makes the hover COLLECTION, not failed recall, so no dwell is
+     *  claimed for it at all — see `_finalize`. */
+    retracted: boolean;
 }
 
 // Injected so the reporter is testable without extension APIs; the binding
@@ -151,20 +173,75 @@ export class SaviEncounterReporter {
 
     /** The hover-gloss / hover-dictionary feature revealed a label for `word`
      *  on `lineText`. `gloss` is the label text as shown (SV-20; '' when not
-     *  captured). A repeat reveal overwrites — the latest label wins. */
+     *  captured). A repeat reveal overwrites — the latest label wins.
+     *
+     *  This also STARTS the dwell clock. The hover controllers call it only
+     *  once the real label has replaced the `…` placeholder, which is what
+     *  excludes translation latency from the measurement — a slow provider
+     *  can no longer make a glance look like a study. */
     noteHoverReveal(lineText: string, word: string, gloss: string = ''): void {
+        this._eachReveal(lineText, word, (reveal) => {
+            reveal.gloss = gloss.trim();
+            if (reveal.openedAtMs === null) {
+                reveal.openedAtMs = this._now();
+            }
+        });
+    }
+
+    /** The label for `word` stopped showing (cursor left it, popup hidden,
+     *  teardown). Closes the current continuous reveal. */
+    noteHoverRevealEnd(lineText: string, word: string): void {
+        this._eachReveal(lineText, word, (reveal) => this._closeReveal(reveal));
+    }
+
+    /** The user mined `word` from its reveal — added a card, or opened the
+     *  study panel. The gesture was collection, not a failure to recall, so
+     *  the reveal is withdrawn and reports no dwell. */
+    noteHoverRetract(lineText: string, word: string): void {
+        this._eachReveal(lineText, word, (reveal) => {
+            reveal.retracted = true;
+            this._closeReveal(reveal);
+        });
+    }
+
+    private _now(): number {
+        return (this._deps.now ?? Date.now)();
+    }
+
+    private _closeReveal(reveal: HoverReveal): void {
+        if (reveal.openedAtMs !== null) {
+            reveal.longestMs = Math.max(reveal.longestMs, this._now() - reveal.openedAtMs);
+            reveal.openedAtMs = null;
+        }
+    }
+
+    /** Apply `apply` to `word`'s reveal record on every pending line matching
+     *  `lineText`, creating the record on first contact. */
+    private _eachReveal(lineText: string, word: string, apply: (reveal: HoverReveal) => void): void {
         if (!this._armed) {
             return;
         }
         const key = word.toLowerCase();
         for (const line of this._pending) {
             if (line.text === lineText.trim()) {
-                line.hovered.set(key, gloss.trim());
+                let reveal = line.hovered.get(key);
+                if (!reveal) {
+                    reveal = { gloss: '', openedAtMs: null, longestMs: 0, retracted: false };
+                    line.hovered.set(key, reveal);
+                }
+                apply(reveal);
             }
         }
     }
 
     private _finalize(line: PendingLine): void {
+        // A reveal still on screen has no end event of its own, and the most
+        // important reveal there is — the one held through the end-of-line
+        // hover-hold, which pauses playback precisely so the line can be
+        // finished — is exactly that case. Close it here or lose it.
+        for (const reveal of line.hovered.values()) {
+            this._closeReveal(reveal);
+        }
         this._deps
             .send({
                 command: 'savi-watched-line',
@@ -174,7 +251,15 @@ export class SaviEncounterReporter {
                 lineStartMs: line.lineStartMs,
                 occurredAtMs: line.occurredAtMs,
                 glossedWords: this._deps.glossedEntries(line.text, line.track),
-                hoverGlossedWords: [...line.hovered].map(([word, gloss]) => ({ word, gloss })),
+                // A retracted (mined) reveal sends NO dwell rather than a
+                // zero: absent means "no qualifying dwell claimed", which is
+                // the case we want, while 0 would be a measurement we
+                // deliberately declined to make.
+                hoverGlossedWords: [...line.hovered].map(([word, reveal]) =>
+                    reveal.retracted
+                        ? { word, gloss: reveal.gloss }
+                        : { word, gloss: reveal.gloss, dwellMs: reveal.longestMs }
+                ),
             })
             .then(() => this._noteDelivered())
             .catch((e) => this._noteFailure(e));

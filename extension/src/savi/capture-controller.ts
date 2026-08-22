@@ -100,6 +100,85 @@ export const sendWithRetry = async (
     return false;
 };
 
+/** What the finish toast (and, when it matters, the console) should say.
+ *
+ *  Pure and exported so the wording is testable: "episode saved (subtitles
+ *  only)" was announced for BOTH a subtitles-only session and a session that
+ *  had been asked to record and recorded nothing. The second is not a save —
+ *  no episode entered the library — and calling it one is how a whole watched
+ *  episode went missing without anyone noticing. */
+export interface FinishNotice {
+    readonly text: string;
+    /** Loud, in the tab console where the person watching is — the treatment
+     *  `condenseWarning` already gets. */
+    readonly consoleError?: string;
+}
+
+export const finishNotice = (info: {
+    totalLines?: number;
+    keptDurationMs?: number;
+    transcriptOnly?: boolean;
+    audioRequested?: boolean;
+    audioLost?: string | null;
+    condenseWarning?: string | null;
+}): FinishNotice => {
+    const lines = String(info.totalLines ?? 0);
+
+    if (info.transcriptOnly === true) {
+        if (info.audioRequested !== true) {
+            // Audio was deliberately off: subtitles ARE the deliverable.
+            return { text: `Savi: episode saved (subtitles only) — ${lines} lines` };
+        }
+        const why = info.audioLost ?? 'nothing was recorded';
+        return {
+            text: `Savi: NO AUDIO recorded — kept ${lines} subtitle lines, but this episode is not in your library`,
+            consoleError: `savi: capture finished with no audio though recording was on — ${why}`,
+        };
+    }
+
+    const minutes = ((info.keptDurationMs ?? 0) / 60000).toFixed(1);
+    const text = `Savi: episode saved — ${lines} lines, ${minutes} min of dialogue`;
+    return typeof info.condenseWarning === 'string'
+        ? {
+              text: `${text}, but ${info.condenseWarning}`,
+              consoleError: `savi: SUSPICIOUS CAPTURE — ${info.condenseWarning}`,
+          }
+        : { text };
+};
+
+/** What the capture-start toast should say, including WHAT the tap attached
+ *  to. The daemon has always returned `sourceApp`; nothing showed it, so
+ *  "recording" could not be checked without inspecting the working dir. */
+export const captureStartNotice = (audio: { state?: string; reason?: string; sourceApp?: string }): string => {
+    switch (audio.state) {
+        case 'disabled':
+            return 'Savi: capturing episode (subtitles only — audio recording is off)';
+        case 'unavailable':
+            return `Savi: capturing episode WITHOUT audio — ${audio.reason ?? 'audio unavailable'}`;
+        default:
+            return audio.sourceApp
+                ? `Savi: capturing episode (audio from ${audio.sourceApp})`
+                : 'Savi: capturing episode';
+    }
+};
+
+/** The message to show when the daemon is DISCARDING segment ops for a session
+ *  that asked to record, or `undefined` when there is nothing to say.
+ *
+ *  The daemon reports this state to stderr and analytics; neither is where the
+ *  person watching is. `alreadyWarned` keeps it to once per session — ops go
+ *  out continuously, and a toast every few seconds for the rest of an episode
+ *  is worse than silence. */
+export const droppedOpsWarning = (
+    response: Pick<SaviPlaybackStateResponse, 'audio' | 'audioRequested'> | undefined,
+    alreadyWarned: boolean
+): string | undefined => {
+    if (alreadyWarned || response?.audio !== 'off' || response.audioRequested !== true) {
+        return undefined;
+    }
+    return 'Savi: audio is NOT being recorded — this episode will save subtitles only. Check the Savi desktop app.';
+};
+
 export class SaviCaptureController {
     private readonly _host: SaviCaptureHost;
     private readonly _nativeSubtitleHider = new NativeSubtitleHider();
@@ -116,6 +195,8 @@ export class SaviCaptureController {
     private _active = false;
     private _starting = false;
     private _notifiedUnsupportedRate?: number;
+    /** Whether this session has already said its ops are being discarded. */
+    private _warnedDroppedOps = false;
     // episodeIds for which the calmer "never started" guard already showed this
     // session — so casual watching isn't nagged more than once per episode.
     private readonly _guardShownEpisodes = new Set<string>();
@@ -405,6 +486,7 @@ export class SaviCaptureController {
                 const segmenter = new Segmenter();
                 this._segmenter = segmenter;
                 this._active = true;
+                this._warnedDroppedOps = false;
                 this._notifiedUnsupportedRate = undefined;
                 this._attachVideoListeners();
                 this._sendSegmentOps(
@@ -415,16 +497,12 @@ export class SaviCaptureController {
                 // SV-18: the daemon reports whether ITS tap is recording audio.
                 const audioState = response.audio?.state ?? 'legacy';
                 if (audioState === 'recording' || audioState === 'legacy') {
-                    this._host.notify('Savi: capturing episode');
+                    this._host.notify(captureStartNotice(response.audio ?? { state: audioState }));
                     this._recordButton.setState('recording');
                 } else {
                     // disabled / unavailable — the session still captures
                     // subtitles (transcript-only finish + word encounters).
-                    this._host.notify(
-                        audioState === 'disabled'
-                            ? 'Savi: capturing episode (subtitles only — audio recording is off)'
-                            : `Savi: capturing episode WITHOUT audio — ${response.audio?.reason ?? 'audio unavailable'}`
-                    );
+                    this._host.notify(captureStartNotice(response.audio ?? { state: audioState }));
                     this._recordButton.setState('recording');
                     if (audioState === 'unavailable') {
                         this._recordButton.flashHint('No audio — check the savi desktop app');
@@ -648,22 +726,13 @@ export class SaviCaptureController {
 
     private _notifyFinished(result: { ok: boolean; info?: any; errorMessage?: string; failedSegments?: number }) {
         if (result.ok && result.info !== undefined) {
-            const lines = String(result.info.totalLines);
-
-            if (result.info.transcriptOnly === true) {
-                this._host.notify(`Savi: episode saved (subtitles only) — ${lines} lines`);
-            } else {
-                const minutes = (result.info.keptDurationMs / 60000).toFixed(1);
-                this._host.notify(`Savi: episode saved — ${lines} lines, ${minutes} min of dialogue`);
-            }
-
-            // The daemon's sanity check on what a finish actually kept (0.45.5):
-            // a 24-minute watch once condensed to 3.45 seconds — a tap dead for
-            // most of the session — and shipped as "episode saved" with no other
-            // sign. Loud, in the console of the tab where the person watched.
-            if (typeof result.info.condenseWarning === 'string') {
-                console.error(`savi: SUSPICIOUS CAPTURE — ${result.info.condenseWarning}`);
-                this._host.notify(`Savi: episode saved, but ${result.info.condenseWarning}`);
+            // One place decides what a finish is allowed to claim — including
+            // the case this used to call "saved": a session that asked for
+            // audio, recorded none, and put no episode in the library.
+            const notice = finishNotice(result.info);
+            this._host.notify(notice.text);
+            if (notice.consoleError !== undefined) {
+                console.error(notice.consoleError);
             }
 
             if (result.failedSegments !== undefined && result.failedSegments > 0) {
@@ -832,7 +901,15 @@ export class SaviCaptureController {
         // to be sent. Re-applying is safe: the daemon registers segments
         // idempotently by id, and a duplicate end with nothing open is a
         // no-op.
-        void this._deliverOps(ops);
+        void this._deliverOps(ops).then((response) => {
+            const warning = droppedOpsWarning(response, this._warnedDroppedOps);
+            if (warning !== undefined) {
+                this._warnedDroppedOps = true;
+                console.error(warning);
+                this._host.notify(warning);
+                this._recordButton.flashHint('No audio — check the savi desktop app');
+            }
+        });
     }
 
     /** Deliver a batch and hand back the daemon's answer (`undefined` when it

@@ -71,10 +71,107 @@ describe('SaviEncounterReporter (line lifecycle)', () => {
         reporter.noteHoverReveal('some other line', 'nope', 'x'); // wrong line — ignored
         reporter.report(line('Siguiente', 90000));
 
+        // dwellMs 0: these reveals were never ended, so finalize closes them
+        // against the same frozen clock they opened on.
         expect(sent[0].hoverGlossedWords).toEqual([
-            { word: 'hablar', gloss: 'to talk' },
-            { word: 'eso', gloss: '' },
+            { word: 'hablar', gloss: 'to talk', dwellMs: 0 },
+            { word: 'eso', gloss: '', dwellMs: 0 },
         ]);
+    });
+
+    it('measures hover dwell from the moment the label rendered', async () => {
+        // The clock starts at noteHoverReveal, which the hover controllers call
+        // only once the REAL label has replaced the placeholder — so a slow
+        // translation inflates nothing.
+        let clock = 1753189200000;
+        const { d, sent } = deps({ now: () => clock });
+        const reporter = new SaviEncounterReporter(d);
+        await reporter.start();
+
+        reporter.report(line('No quería hablar de eso'));
+        reporter.noteHoverReveal('No quería hablar de eso', 'hablar', 'to talk');
+        clock += 1500;
+        reporter.noteHoverRevealEnd('No quería hablar de eso', 'hablar');
+        reporter.report(line('Siguiente', 90000));
+
+        expect(sent[0].hoverGlossedWords).toEqual([{ word: 'hablar', gloss: 'to talk', dwellMs: 1500 }]);
+    });
+
+    it('keeps the LONGEST continuous reveal, never the sum of flicks', async () => {
+        // Three 400ms passes over a word are three flicks, not a 1.2s study.
+        // Summing them would hand the very gesture the threshold exists to
+        // filter a way through it.
+        let clock = 1753189200000;
+        const { d, sent } = deps({ now: () => clock });
+        const reporter = new SaviEncounterReporter(d);
+        await reporter.start();
+
+        reporter.report(line('No quería hablar de eso'));
+        for (const ms of [400, 900, 400]) {
+            reporter.noteHoverReveal('No quería hablar de eso', 'hablar', 'to talk');
+            clock += ms;
+            reporter.noteHoverRevealEnd('No quería hablar de eso', 'hablar');
+        }
+        reporter.report(line('Siguiente', 90000));
+
+        expect(sent[0].hoverGlossedWords).toEqual([{ word: 'hablar', gloss: 'to talk', dwellMs: 900 }]);
+    });
+
+    it('closes a reveal that is still open when the line finalizes', async () => {
+        // The end-of-line hover-hold pauses playback precisely so the user can
+        // keep reading past the cue. That dwell is the most important dwell
+        // there is, and it has no reveal-end event of its own.
+        let clock = 1753189200000;
+        const { d, sent } = deps({ now: () => clock });
+        const reporter = new SaviEncounterReporter(d);
+        await reporter.start();
+
+        reporter.report(line('No quería hablar de eso'));
+        reporter.noteHoverReveal('No quería hablar de eso', 'hablar', 'to talk');
+        clock += 2000; // still hovering when the next line arrives
+        reporter.report(line('Siguiente', 90000));
+
+        expect(sent[0].hoverGlossedWords).toEqual([{ word: 'hablar', gloss: 'to talk', dwellMs: 2000 }]);
+    });
+
+    it('reports no dwell at all for a reveal the user mined from', async () => {
+        // Mining is collection, not failed recall. Omitting the dwell (rather
+        // than sending 0) is what puts the row on the pre-2026-08 treatment
+        // instead of asserting a measurement we are choosing not to make.
+        let clock = 1753189200000;
+        const { d, sent } = deps({ now: () => clock });
+        const reporter = new SaviEncounterReporter(d);
+        await reporter.start();
+
+        reporter.report(line('No quería hablar de eso'));
+        reporter.noteHoverReveal('No quería hablar de eso', 'hablar', 'to talk');
+        clock += 5000;
+        reporter.noteHoverRetract('No quería hablar de eso', 'hablar');
+        reporter.noteHoverRevealEnd('No quería hablar de eso', 'hablar');
+        reporter.report(line('Siguiente', 90000));
+
+        expect(sent[0].hoverGlossedWords).toEqual([{ word: 'hablar', gloss: 'to talk' }]);
+    });
+
+    it('keeps a reveal retracted when a later reveal of the same word arrives', async () => {
+        // The Japanese path re-reveals: opening the study panel records the
+        // dictionary headline, then overwrites it when the AI in-context gloss
+        // lands. Both arrive AFTER the retraction, and neither may resurrect
+        // the dwell — otherwise mining a word would still lapse its card.
+        let clock = 1753189200000;
+        const { d, sent } = deps({ now: () => clock });
+        const reporter = new SaviEncounterReporter(d);
+        await reporter.start();
+
+        reporter.report(line('No quería hablar de eso'));
+        reporter.noteHoverReveal('No quería hablar de eso', 'hablar', 'to talk');
+        reporter.noteHoverRetract('No quería hablar de eso', 'hablar');
+        clock += 4000;
+        reporter.noteHoverReveal('No quería hablar de eso', 'hablar', 'to speak');
+        clock += 4000;
+        reporter.report(line('Siguiente', 90000));
+
+        expect(sent[0].hoverGlossedWords).toEqual([{ word: 'hablar', gloss: 'to speak' }]);
     });
 
     it('captures the episode id at OPEN time (SPA episode change safety)', async () => {

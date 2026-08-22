@@ -1,12 +1,46 @@
 name: Verify
 
+# Every pull request, whatever it targets.
+#
+# Deliberately NOT `branches: main`. Feature work here stacks — a PR onto
+# another PR's branch is normal (the savi/asbplayer pairing does it), and a
+# filter on `main` silently skips exactly those, at the moment the checks are
+# most wanted: the stacked branch is the one nobody has run locally.
 on:
     push:
         branches: main
     pull_request:
-        branches: main
+
+concurrency:
+    group: verify-${{ github.ref }}
+    cancel-in-progress: true
 
 jobs:
+    # Split out from `build` so a failing assertion reports in seconds rather
+    # than behind a full extension zip, and so the summary names which of the
+    # two broke. Same setup as `build` deliberately — one way to install this
+    # repo, not two.
+    test:
+        runs-on: ubuntu-latest
+
+        strategy:
+            matrix:
+                node-version: [22.x]
+        steps:
+            - uses: actions/checkout@v3
+            - name: Use Node.js ${{ matrix.node-version }}
+              uses: actions/setup-node@v3
+              with:
+                  node-version: ${{ matrix.node-version }}
+                  cache: 'npm'
+            - run: npm install --global yarn
+            - run: yarn set version 3.2.0
+            - run: yarn install
+            - run: yarn workspace @project/extension run compile
+            - run: yarn workspace @project/common run test
+            - run: yarn workspace @project/client run test
+            - run: yarn workspace @project/extension run test
+
     build:
         runs-on: ubuntu-latest
 

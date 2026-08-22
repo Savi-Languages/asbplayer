@@ -109,6 +109,7 @@ import { SaviInteractionClock } from '../savi/interaction-clock';
 import type { LanguageGateVerdict } from '../savi/language-gate';
 import { SaviLanguageHush } from '../savi/language-hush';
 import { muteSite, siteKeyForUrl } from '../savi/muted-sites';
+import { dismissHushFor, isHushDismissed } from '../savi/hush-dismissed';
 import { getCachedRoamingSettings } from '../savi/cloud-settings';
 import { deriveEpisodeId } from '../savi/episode';
 
@@ -208,24 +209,50 @@ export default class Binding {
      *  verdict itself: signing in changes '' → 'fr' without flipping `active`. */
     private _saviLanguageApplied = '';
     /** Offered only while the gate is guessing (`unknown`) — see language-hush.ts. */
-    readonly saviLanguageHush = new SaviLanguageHush(() => {
-        // SV-44: site scope, not episode scope. A page whose URL cannot be
-        // parsed has no site to mute, so the click is a no-op rather than a
-        // silent failure that leaves the button looking broken.
-        const siteKey = siteKeyForUrl(window.location.href);
-        if (siteKey === undefined) {
-            return;
-        }
-        void muteSite(siteKey).then(() => {
-            // Keep the language this verdict is about, so the guard in
-            // applySaviLanguageGate compares like with like.
-            this.applySaviLanguageGate({
-                active: false,
-                reason: 'muted',
-                targetLanguage: this._saviLanguageApplied,
+    /** Whether the gate's latest verdict still WANTS the hush prompt. Read
+     *  after the async dismissal check, so a verdict that flipped while that
+     *  was in flight cannot resurrect a prompt the gate has since retracted. */
+    private _saviHushWanted = false;
+    readonly saviLanguageHush = new SaviLanguageHush(
+        () => {
+            // SV-44: site scope, not episode scope. A page whose URL cannot be
+            // parsed has no site to mute, so the click is a no-op rather than a
+            // silent failure that leaves the button looking broken.
+            const siteKey = siteKeyForUrl(window.location.href);
+            if (siteKey === undefined) {
+                return;
+            }
+            void muteSite(siteKey).then(() => {
+                // Roam the decision. The content script cannot reach the cloud, so
+                // the background pushes the list; a failure there is silent by
+                // design — the mute already holds on this device.
+                void browser.runtime
+                    .sendMessage({
+                        sender: 'savi-video',
+                        message: { command: 'savi-muted-sites-changed' },
+                    })
+                    .catch(() => {});
+                // Keep the language this verdict is about, so the guard in
+                // applySaviLanguageGate compares like with like.
+                this.applySaviLanguageGate({
+                    active: false,
+                    reason: 'muted',
+                    targetLanguage: this._saviLanguageApplied,
+                });
             });
-        });
-    });
+        },
+        // The ✕: the user wants savi HERE, so change nothing about the gate and
+        // simply stop asking on this site. Without it the prompt is a one-way
+        // door — its only answer switches savi off — and it reappears on every
+        // video of a site the user has already decided about.
+        () => {
+            const siteKey = siteKeyForUrl(window.location.href);
+            if (siteKey === undefined) {
+                return;
+            }
+            void dismissHushFor(siteKey);
+        }
+    );
 
     private copyToClipboardOnMine: boolean;
     private clickToMineDefaultAction: PostMineAction;
@@ -301,7 +328,14 @@ export default class Binding {
             // A JA hover popup / tap panel showed a word's meaning — recorded
             // as a hover_glossed encounter carrying the shown label (SV-20).
             // This is what makes the Japanese path feed the reviewer.
-            (lineText, word, gloss) => this.saviEncounterReporter.noteHoverReveal(lineText, word, gloss)
+            (lineText, word, gloss) => this.saviEncounterReporter.noteHoverReveal(lineText, word, gloss),
+            // …and how long it stayed up. A reveal held past the Level-2
+            // threshold is read as a partial "Again" — nobody looks up a word
+            // they can read — so the dwell has to be measured, not assumed.
+            (lineText, word) => this.saviEncounterReporter.noteHoverRevealEnd(lineText, word),
+            // Mining is collection, not failed recall: withdraw the reveal so
+            // adding a card never lapses the card you just added.
+            (lineText, word) => this.saviEncounterReporter.noteHoverRetract(lineText, word)
         );
         // Glossing (SV-12/13): supplies gloss-ruby HTML to the subtitle controller;
         // a resolved gloss asks the controller to re-render the showing lines. The
@@ -330,6 +364,7 @@ export default class Binding {
             // A revealed hover gloss is an active lookup — recorded on the
             // line's watched encounter as hover_glossed context, with the
             // shown label (SV-20).
+            onRevealEnd: (lineText, word) => this.saviEncounterReporter.noteHoverRevealEnd(lineText, word),
             onReveal: (lineText, word, gloss) => {
                 this.saviEncounterReporter.noteHoverReveal(lineText, word, gloss);
                 // …and it's also the strongest evidence that a PAUSED line is
@@ -693,11 +728,25 @@ export default class Binding {
      * Idempotent: a re-sync reaching the same verdict is a no-op, so this can be
      * called from every data sync without restarting anything.
      */
+    /** Offer the hush prompt unless the user already closed it on this site.
+     *  The storage read is memoized in-process, so calling this from every
+     *  data sync costs nothing after the first. */
+    private async _showHushUnlessDismissed(): Promise<void> {
+        const siteKey = siteKeyForUrl(window.location.href);
+        if (siteKey !== undefined && (await isHushDismissed(siteKey))) {
+            return;
+        }
+        if (this._saviHushWanted) {
+            this.saviLanguageHush.show();
+        }
+    }
+
     applySaviLanguageGate(verdict: LanguageGateVerdict) {
         // Offer the manual hush only while we are guessing. Outside `unknown`
         // the control is either noise (we matched) or moot (savi is already off).
-        if (verdict.reason === 'unknown') {
-            this.saviLanguageHush.show();
+        this._saviHushWanted = verdict.reason === 'unknown';
+        if (this._saviHushWanted) {
+            void this._showHushUnlessDismissed();
         } else {
             this.saviLanguageHush.hide();
         }

@@ -92,7 +92,7 @@ const SettingsPage = ({
     const commands = useCommandKeyBinds();
     const saviAccount = useSaviAccount(settings?.saviCloudUrl ?? '');
     const saviRoaming = useSaviRoamingSettings(settings?.saviCloudUrl ?? '', saviAccount.email ?? '');
-    const saviMutedSites = useSaviMutedSites();
+    const saviMutedSites = useSaviMutedSites(settings?.saviCloudUrl ?? '', saviAccount.email ?? '');
     const saviFileUrlAccess = useFileUrlAccess();
 
     const handleOpenExtensionShortcuts = useCallback(() => {

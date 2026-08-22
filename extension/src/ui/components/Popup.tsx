@@ -33,6 +33,7 @@ import { ExtensionGlobalStateProvider } from '@/services/extension-global-state-
 import { uiTabRegistry, useMediaId } from '../hooks/use-media-id';
 import { useSaviAccount } from '../hooks/use-savi-account';
 import { useSaviRoamingSettings } from '../hooks/use-savi-roaming-settings';
+import { useSaviMutedSites } from '../hooks/use-savi-muted-sites';
 import Statistics from '@project/common/components/Statistics';
 import Box from '@mui/material/Box';
 import { createStatisticsPopup } from '@/services/statistics-util';
@@ -122,6 +123,11 @@ const Popup = ({
     const { localFontsAvailable, localFontsPermission, localFontFamilies } = useLocalFontFamilies();
     const saviAccount = useSaviAccount(settings.saviCloudUrl ?? '');
     const saviRoaming = useSaviRoamingSettings(settings.saviCloudUrl ?? '', saviAccount.email ?? '');
+    // The popup is a full settings surface, not a cut-down one — it renders the
+    // same Savi tab the options page does, so it has to supply the blacklist
+    // too or the section silently vanishes for anyone who reaches settings
+    // through the toolbar icon.
+    const saviMutedSites = useSaviMutedSites(settings.saviCloudUrl ?? '', saviAccount.email ?? '');
     const theme = useTheme();
     const { handleAnnotationTutorialSeen, inAnnotationTutorial } = useAnnotationTutorial({ globalStateProvider });
     const [scrollToId, setScrollToId] = useState<string>();
@@ -268,6 +274,8 @@ const Popup = ({
                             onSaviTargetLanguageChange={saviRoaming.setTargetLanguage}
                             saviNativeLanguage={saviRoaming.nativeLanguage}
                             onSaviNativeLanguageChange={saviRoaming.setNativeLanguage}
+                            saviMutedSites={saviMutedSites.sites}
+                            onSaviUnmuteSite={saviMutedSites.unmute}
                         />
                     )}
                     {statisticsOpen && (
