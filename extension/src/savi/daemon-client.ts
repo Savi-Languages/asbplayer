@@ -565,5 +565,16 @@ export const finishCapture = async (config: SaviDaemonConfig, captureId: string)
         segmentsStitched: body.segmentsStitched,
         totalLines: body.totalLines,
         keptDurationMs: body.keptDurationMs,
+        // Everything below decides what the user is TOLD, and was being
+        // dropped here — silently, because omitting an optional property is
+        // not a type error. `finishNotice` reads `transcriptOnly` +
+        // `audioRequested` to tell "episode saved" from "recorded nothing it
+        // was asked to record", and with them missing every finish took the
+        // saved branch. Its own tests passed the whole time: they covered the
+        // function, not this pipe.
+        transcriptOnly: body.transcriptOnly,
+        audioRequested: body.audioRequested,
+        audioLost: body.audioLost,
+        condenseWarning: body.condenseWarning,
     };
 };
