@@ -807,6 +807,24 @@ export interface SaviSettings {
     // でも-conjunction vs で+も, は-topic vs 葉, …). Opt-in; runs on savi's cloud
     // AI (SV-16), so it needs you signed in — no local key.
     readonly saviAiSegmentation: boolean;
+    // Show the in-page "Don't use Savi on this site" button while the language
+    // gate is guessing (SV-41/44). ON by default, but only because the trap it
+    // was briefly turned off for has been dismantled.
+    //
+    // The trap: on sites that never expose a spoken language (Netflix)
+    // "guessing" is the permanent state, so the button sits bottom-right of
+    // every episode as a one-tap site-wide off switch. That cost a real
+    // accidental mute of all of netflix.com — and the undo, which lives in
+    // Settings, showed an EMPTY list, because it read storage once on mount and
+    // because a sync bug was overwriting the list outright.
+    //
+    // Both halves of that are now fixed (a live storage.onChanged refresh; the
+    // list always rendered, with an empty state; the overwrite gone), and the
+    // prompt itself grew a ✕ that declines it per-site instead of only ever
+    // offering to switch savi off. So the button is offered again by default,
+    // and turning it off is a preference rather than damage control. The mute
+    // stays fully supported either way; this only governs the button.
+    readonly saviLanguageHushButton: boolean;
     // Auto-load the streaming player's own subtitle track in the learner's target
     // language (SV-8), and fall back to an OpenSubtitles search when it has none.
     // The target language + OpenSubtitles key are account-roaming (see
