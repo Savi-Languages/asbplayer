@@ -169,6 +169,7 @@ const SaviSettingsTab: React.FC<Props> = ({
         saviHideNativeSubtitles,
         saviRecordingGuard,
         saviAiSegmentation,
+        saviLanguageHushButton,
         saviGlossing,
         saviHoverGloss,
         saviEncounterRecording,
@@ -264,11 +265,40 @@ const SaviSettingsTab: React.FC<Props> = ({
                 />
             )}
 
-            {saviMutedSites !== undefined && saviMutedSites.length > 0 && onSaviUnmuteSite !== undefined && (
+            <SwitchLabelWithHoverEffect
+                control={
+                    <Switch
+                        checked={saviLanguageHushButton}
+                        onChange={(e) => onSettingChanged('saviLanguageHushButton', e.target.checked)}
+                    />
+                }
+                label={'Show a "Don\u2019t use Savi on this site" button when Savi can\u2019t tell the spoken language'}
+                labelPlacement="start"
+            />
+            <FormHelperText>
+                {
+                    'On by default. On sites that never say what language is spoken (Netflix), Savi is always guessing, so the button appears on every episode — press ✕ to dismiss it for that site, or turn it off here entirely. Sites you switch off are listed below either way.'
+                }
+            </FormHelperText>
+
+            {/* Rendered whenever the host supplies the props (i.e. the extension —
+                the web app has no browser.storage and passes neither), INCLUDING
+                when the list is empty. Hiding an empty list made the feature
+                invisible to anyone who had not already muted something, so
+                there was no way to tell "nothing is blacklisted" apart from
+                "the list is broken" — which is exactly the confusion a silent
+                wipe bug produced. It matters more with the button off by
+                default: the section is now the only place the feature is
+                visible at all. */}
+            {saviMutedSites !== undefined && onSaviUnmuteSite !== undefined && (
                 <>
                     <SettingsSection>{'Sites Savi is switched off for'}</SettingsSection>
                     <FormHelperText>
-                        {'You pressed “Don’t use Savi on this site” on these. Remove one to let Savi run there again.'}
+                        {saviMutedSites.length === 0
+                            ? 'No sites yet. Press “Don’t use Savi on this site” on a site to add one — it will be listed here, ' +
+                              'saved to your Savi account, and removable at any time.'
+                            : 'You pressed “Don’t use Savi on this site” on these. Remove one to let Savi run there again. ' +
+                              'The list is saved to your Savi account, so it follows you to your other browsers and devices.'}
                     </FormHelperText>
                     <List dense>
                         {saviMutedSites.map((site) => (
@@ -344,9 +374,11 @@ const SaviSettingsTab: React.FC<Props> = ({
                     onSettingChanged('saviHoldSubtitleMs', Number.isFinite(ms) ? Math.trunc(ms) : -1);
                 }}
                 helperText={
-                    'Auto-timed tracks often end a line before the speaker stops. -1 (default) keeps ' +
-                    'it up until the next line is due; 0 turns this off; a positive number caps it in ' +
-                    'ms. It never overlaps the next line either way.'
+                    'Auto-timed tracks often end a line before the speaker stops, so the last line is ' +
+                    'held briefly. 2000 (default) caps the hold in ms; 0 turns it off; -1 holds until ' +
+                    'the next line is due — best for auto-timed tracks (YouTube ASR), but on a ' +
+                    'human-timed track it parks a finished line over real silence. It never overlaps ' +
+                    'the next line either way.'
                 }
             />
             {roamingSupported && (

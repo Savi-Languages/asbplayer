@@ -82,6 +82,10 @@ export interface SaviPlaybackStateResponse {
     /** The daemon's current audio state for the session ('recording' | 'idle'
      *  | 'off'), when known. */
     readonly audio?: string;
+    /** Whether this session ASKED to record. `audio: 'off'` with this true
+     *  means the daemon is discarding every segment op while the user believes
+     *  it is recording — the failure that used to be entirely silent. */
+    readonly audioRequested?: boolean;
     /** The daemon no longer knows this session (orphan-sweep auto-finish or a
      *  daemon restart) — bookkeeping was cleared; the capture should restart. */
     readonly sessionGone?: boolean;
@@ -266,6 +270,11 @@ export interface SaviEpisodeTranscriptResponse {
 export interface GlossedWordEntry {
     readonly word: string;
     readonly gloss: string;
+    /** HOVER entries only: how long the revealed label was actually on screen
+     *  (longest single continuous reveal, ms). Absent means no qualifying
+     *  dwell is claimed — the user mined the word rather than looked it up.
+     *  Level 2 reads a dwell past its threshold as a partial "Again". */
+    readonly dwellMs?: number;
 }
 
 export interface SaviWatchedLineMessage {
@@ -409,6 +418,21 @@ export interface SaviRoamingSettingsResponse {
     readonly targetLanguage: string;
     readonly nativeLanguage: string;
     readonly openSubtitlesApiKey: string;
+    /** The account's site blacklist as of this refresh. The content script does
+     *  not gate on it — the language gate reads `muted-sites.ts`, which the
+     *  background has already mirrored — but returning it keeps the response a
+     *  complete `SaviRoamingSettings` rather than one with a fabricated field. */
+    readonly mutedSites: readonly string[];
+}
+
+// The site blacklist changed on this device — push it to the account so the
+// decision follows the user rather than the browser profile it was made in.
+// Deliberately carries NO payload: the background re-reads the local list
+// itself, so two rapid mutes cannot race a stale array onto the cloud.
+// Fire-and-forget, like the rest of the in-page writes — a failed push leaves
+// the mute working locally, and the cloud catches up on the next change.
+export interface SaviMutedSitesChangedMessage {
+    readonly command: 'savi-muted-sites-changed';
 }
 
 // ── Glossing (SV-12 / SV-13) ────────────────────────────────────────────

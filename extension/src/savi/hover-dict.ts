@@ -436,12 +436,41 @@ export class SaviHoverDictionary {
      *  user (hover popup / tap panel), with the line, the word surface, and
      *  the displayed gloss — the encounter reporter records it as a
      *  hover_glossed encounter carrying the label (SV-20). This is what makes
-     *  the JA path feed the reviewer at all. */
+     *  the JA path feed the reviewer at all.
+     *  @param _onRevealEnd the meaning stopped showing — closes the dwell the
+     *  reporter started at `_onReveal`. Level 2 needs to know how long a word
+     *  was READ to tell a lookup from a cursor passing through.
+     *  @param _onRetract the user MINED this word (added a card, or opened the
+     *  study panel). That makes the reveal collection rather than failed
+     *  recall, so no dwell is claimed for it and the card is never lapsed. */
     constructor(
         private readonly _videoProvider: () => HTMLMediaElement | null = () => null,
         private readonly _subtitleProvider: () => SerializableSubtitle[] = () => [],
-        private readonly _onReveal?: (lineText: string, word: string, gloss: string) => void
+        private readonly _onReveal?: (lineText: string, word: string, gloss: string) => void,
+        private readonly _onRevealEnd?: (lineText: string, word: string) => void,
+        private readonly _onRetract?: (lineText: string, word: string) => void
     ) {}
+
+    /** The reveal currently on screen, so its dwell can be closed when the
+     *  popup or panel goes away. */
+    private _revealed: { line: string; word: string } | null = null;
+
+    /** Record that `word`'s meaning is on screen, closing any previous one. */
+    private _noteReveal(line: string, word: string, gloss: string): void {
+        if (this._revealed && this._revealed.word !== word) {
+            this._endReveal();
+        }
+        this._revealed = { line, word };
+        this._onReveal?.(line, word, gloss);
+    }
+
+    /** Close the on-screen reveal's dwell, if any. Idempotent. */
+    private _endReveal(): void {
+        if (this._revealed) {
+            this._onRevealEnd?.(this._revealed.line, this._revealed.word);
+            this._revealed = null;
+        }
+    }
 
     start() {
         if (this._bound) return;
@@ -451,6 +480,7 @@ export class SaviHoverDictionary {
     }
 
     stop() {
+        this._endReveal();
         if (!this._bound) return;
         this._bound = false;
         document.removeEventListener('mousemove', this._onMouseMove, true);
@@ -591,7 +621,7 @@ export class SaviHoverDictionary {
         popup.style.display = 'block';
         // The word's meaning is now on screen — a hover_glossed encounter with
         // the shown label (SV-20). Kanji-only results reveal no label ('').
-        this._onReveal?.(text, span.token.text, firstDictGloss(result.entries));
+        this._noteReveal(text, span.token.text, firstDictGloss(result.entries));
         // Anchor to the word so the arrow points at it; fall back to the cursor.
         const anchor = wordRect ?? new DOMRect(x, y, 0, 0);
         positionPopup(popup, this._arrow!, anchor);
@@ -748,6 +778,12 @@ export class SaviHoverDictionary {
         const term = lookupTermFor(span.token);
         const dict = await this._lookupDict(term);
         this._hidePopup(); // the small hover popup gives way to the full panel
+        // Opening the study panel is MINING intent, not a failure to recall —
+        // the panel is where the "+ Add to Anki" button lives. Retract before
+        // the reveals below so neither the dictionary headline nor the AI
+        // in-context gloss can claim a dwell for this word (the retraction is
+        // sticky across later reveals of the same word, by design).
+        this._onRetract?.(text, span.token.text);
         const panel = this._ensureWordPanel();
         panel.show({
             term,
@@ -758,7 +794,7 @@ export class SaviHoverDictionary {
         });
         // A deliberate tap-open study of the word — record the reveal with the
         // dictionary headline (upgraded below if the AI in-context gloss lands).
-        this._onReveal?.(text, span.token.text, firstDictGloss(dict.entries));
+        this._noteReveal(text, span.token.text, firstDictGloss(dict.entries));
         // Pause the video while the study panel is up and KEEP it paused until the
         // user dismisses it — independent of the cursor or the hover-pause setting.
         // (isOverHoverSurface returns true while _panelOpen, so the binding's
@@ -797,7 +833,7 @@ export class SaviHoverDictionary {
                 // sentence — overwrite the dictionary headline on the pending
                 // encounter (the line is still open: the panel pauses playback).
                 if (featured?.gloss) {
-                    this._onReveal?.(text, span.token.text, featured.gloss);
+                    this._noteReveal(text, span.token.text, featured.gloss);
                 }
             })
             .catch(() => panel.setContext(null, null));
@@ -824,6 +860,7 @@ export class SaviHoverDictionary {
      *  hover-pause feature paused it, clearing _panelOpen lets the binding resume on
      *  the next mouse move (or stay paused, per the user's hover-pause mode). */
     private _onPanelClosed() {
+        this._endReveal();
         this._panelOpen = false;
         if (this._pausedForPanel) {
             this._pausedForPanel = false;
@@ -842,6 +879,11 @@ export class SaviHoverDictionary {
         if (button.disabled || button.dataset.saviMined === 'true') {
             return; // mine in flight or already added — don't double-fire
         }
+        // Collection, not failed recall: a mined word must never lapse its own
+        // card. Retracted here rather than on success, because the INTENT is
+        // what distinguishes the gesture — a mine that fails on a daemon error
+        // was still not a lookup.
+        this._onRetract?.(lineText, token.text);
         button.disabled = true;
         button.textContent = 'Adding…';
         try {
@@ -1065,6 +1107,7 @@ export class SaviHoverDictionary {
     }
 
     private _hidePopup() {
+        this._endReveal();
         this._currentTerm = null;
         this._generation++;
         if (this._popup) this._popup.style.display = 'none';

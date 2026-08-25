@@ -105,7 +105,8 @@ import {
 } from './persistent-cache';
 import { captureVisibleTab } from '@/services/capture-visible-tab';
 import { OpenSubtitlesClient } from '@/services/subtitle-sources';
-import { getCachedRoamingSettings, loadRoamingSettings } from './cloud-settings';
+import { getCachedRoamingSettings, loadRoamingSettings, putRoamingSetting } from './cloud-settings';
+import { mutedSites, resetMutedSitesMemo } from './muted-sites';
 import { isStaleCaptureSession } from './capture-staleness';
 
 export default class SaviCommandHandler implements CommandHandler {
@@ -234,6 +235,11 @@ export default class SaviCommandHandler implements CommandHandler {
                 this._roamingSettings()
                     .then(sendResponse)
                     .catch(() => sendResponse(undefined));
+                return true;
+            case 'savi-muted-sites-changed':
+                this._pushMutedSites()
+                    .then(() => sendResponse({ ok: true }))
+                    .catch(() => sendResponse({ ok: false }));
                 return true;
             case 'savi-gloss-line':
                 this._glossLine(command.message as SaviGlossLineMessage)
@@ -365,10 +371,36 @@ export default class SaviCommandHandler implements CommandHandler {
         const { saviCloudUrl } = await this._settings.get(['saviCloudUrl']);
         // Dev builds roam against the local cloud too (resolveCloudBase), so the
         // target language the desktop wrote to localhost actually reaches here.
-        const { targetLanguage, nativeLanguage, openSubtitlesApiKey } = await loadRoamingSettings(
-            resolveCloudBase(saviCloudUrl)
-        );
-        return { targetLanguage, nativeLanguage, openSubtitlesApiKey };
+        const {
+            targetLanguage,
+            nativeLanguage,
+            openSubtitlesApiKey,
+            mutedSites: sites,
+        } = await loadRoamingSettings(resolveCloudBase(saviCloudUrl));
+        return { targetLanguage, nativeLanguage, openSubtitlesApiKey, mutedSites: sites };
+    }
+
+    // Push this device's site blacklist to the account. The content script that
+    // wrote it cannot reach the cloud (CORS / host permission), so it hands the
+    // job here.
+    //
+    // The list is re-read rather than sent in the message, and the memo is
+    // dropped first: the write happened in a DIFFERENT context, so this one's
+    // in-process mirror is stale by construction and would push the list as it
+    // stood before the click.
+    //
+    // Failure is swallowed. Signed out or offline, the mute still holds locally
+    // and the next change pushes the whole list; the cost is the usual
+    // last-write-wins exposure every roaming setting already carries.
+    private async _pushMutedSites(): Promise<void> {
+        const { saviCloudUrl } = await this._settings.get(['saviCloudUrl']);
+        resetMutedSitesMemo();
+        const sites = await mutedSites();
+        try {
+            await putRoamingSetting(resolveCloudBase(saviCloudUrl), 'mutedSites', sites);
+        } catch {
+            // Local list is already authoritative for this device.
+        }
     }
 
     // Glossing (SV-40): decide + label a whole line in one cloud round trip.
@@ -875,7 +907,12 @@ export default class SaviCommandHandler implements CommandHandler {
                     browser.tabs.sendMessage(session.tabId, command).catch(() => {});
                     return { ok: false, sessionGone: true };
                 }
-                return { ok: result.ok, audio: result.audio, openSegment: result.openSegment };
+                return {
+                    ok: result.ok,
+                    audio: result.audio,
+                    audioRequested: result.audioRequested,
+                    openSegment: result.openSegment,
+                };
             };
 
             try {

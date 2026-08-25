@@ -484,6 +484,7 @@ export default class VideoDataSyncController {
                     targetLanguage: response.targetLanguage,
                     nativeLanguage: response.nativeLanguage ?? '',
                     openSubtitlesApiKey: response.openSubtitlesApiKey ?? '',
+                    mutedSites: response.mutedSites ?? [],
                 };
             }
         } catch (e) {

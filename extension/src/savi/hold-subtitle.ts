@@ -7,8 +7,7 @@
 // running past 15s. The line vanishes mid-sentence, and during the gap there is
 // nothing on screen to hover for a dictionary lookup either.
 //
-// So when nothing is showing, keep the previous cue up — but only briefly, and
-// only into genuine silence:
+// So when nothing is showing, keep the previous cue up — but only briefly:
 //
 //   - capped (default 2s), because a stale line hanging over a 15s pause reads
 //     as a bug and, worse, invites mining the wrong line;
@@ -29,13 +28,25 @@ import { SubtitleSlice } from '@project/common/subtitle-collection';
  *  limit of its own. Bounded by the track, not the clock. */
 export const HOLD_UNTIL_NEXT_CUE = -1;
 
-/** The default. A time cap turned out to be the wrong instrument: measured on a
- *  real 75-minute Japanese track, a 2s cap still left 319s of blank screen and
- *  covered only 65% of gaps, because these gaps are mostly NOT silence — they
- *  are speech the track failed to timestamp, packed into the preceding cue. So
- *  the line stays until the next one is due; `nextToShow` guarantees it can
- *  never overlap or outlive that. */
-export const DEFAULT_HOLD_MS = HOLD_UNTIL_NEXT_CUE;
+/** The default: a 2s cap.
+ *
+ *  This was briefly [`HOLD_UNTIL_NEXT_CUE`], on the strength of a real
+ *  measurement — on a 75-minute Japanese AUTO-TIMED track a 2s cap left 319s of
+ *  blank screen and covered only 65% of gaps, because there the gaps are mostly
+ *  not silence at all but speech the track failed to timestamp.
+ *
+ *  That premise is exactly what a human-timed track breaks. On a professionally
+ *  subtitled Netflix track a gap means what it says, and unbounded holding
+ *  parked a finished sentence over 19s of scene silence — the failure the
+ *  header above already warns about, arrived at by way of the default rather
+ *  than the code. One constant cannot serve both track kinds, so the default
+ *  serves the honest-timing case and the auto-timed case opts in by setting
+ *  `saviHoldSubtitleMs` to -1.
+ *
+ *  (A per-track default — auto-timed tracks announce themselves, e.g. YouTube's
+ *  `kind=asr` — would serve both without a setting. Worth doing; it needs track
+ *  provenance plumbed through, so it is not this change.) */
+export const DEFAULT_HOLD_MS = 2000;
 
 /** Hold-until-next still needs SOME bound when nothing follows (past the last
  *  cue, where `nextToShow` is empty), or the final line would sit over the
@@ -49,8 +60,8 @@ export const NO_NEXT_CUE_FALLBACK_MS = 5000;
  * held over — never into the next cue, and never before its own end.
  *
  * `holdMs` semantics:
- *   - `HOLD_UNTIL_NEXT_CUE` (-1, the default): hold until the next cue is due,
- *     falling back to `NO_NEXT_CUE_FALLBACK_MS` when nothing follows.
+ *   - `HOLD_UNTIL_NEXT_CUE` (-1): hold until the next cue is due, falling back
+ *     to `NO_NEXT_CUE_FALLBACK_MS` when nothing follows. For auto-timed tracks.
  *
  * `nextStartMsOverride` is the start of the next cue when the caller can
  * resolve it (preferred — see the note on `slice.nextToShow` below).

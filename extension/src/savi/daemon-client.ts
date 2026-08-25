@@ -53,6 +53,13 @@ export interface CaptureFinishInfo {
     // SV-18: true when the session had no audio (recording off/unavailable) —
     // the subtitle track was stored, no audio episode was created.
     readonly transcriptOnly?: boolean;
+    /** Whether audio was asked for at all. With `transcriptOnly`, `true` means
+     *  the session recorded nothing it was told to record — not a save. */
+    readonly audioRequested?: boolean;
+    /** Set when audio WAS recorded and then lost (segments gone at finish). */
+    readonly audioLost?: string | null;
+    /** Set when the kept audio is absurdly small for what was watched. */
+    readonly condenseWarning?: string | null;
 }
 
 export const normalizedBaseUrl = (baseUrl: string) => baseUrl.trim().replace(/\/+$/, '');
@@ -241,11 +248,20 @@ export const browserHintFromUserAgent = (ua: string): string | undefined => {
 export const postPlaybackState = async (
     config: SaviDaemonConfig,
     { captureId, seq, ops }: { captureId: string; seq: number; ops: unknown[] }
-): Promise<{ ok: boolean; audio?: string; sessionGone?: boolean; openSegment?: string | null }> => {
+): Promise<{
+    ok: boolean;
+    audio?: string;
+    audioRequested?: boolean;
+    sessionGone?: boolean;
+    openSegment?: string | null;
+}> => {
     const body = await request(config, '/v2/capture/playback-state', jsonInit({ captureId, seq, ops }));
     return {
         ok: body.ok === true,
         audio: typeof body.audio === 'string' ? body.audio : undefined,
+        // `audio: 'off'` alone cannot distinguish a subtitles-only session from
+        // one whose ops are being discarded while it believes it is recording.
+        audioRequested: body.audioRequested === true,
         // The daemon finished this session behind our back (orphan sweep /
         // restart) — the caller should drop its bookkeeping and restart.
         sessionGone: body.sessionGone === true,
@@ -300,7 +316,7 @@ export const postWatchedLine = async (
         source?: string;
         occurredAtMs?: number;
         glossedWords?: { word: string; gloss: string }[];
-        hoverGlossedWords?: { word: string; gloss: string }[];
+        hoverGlossedWords?: { word: string; gloss: string; dwellMs?: number }[];
     }
 ): Promise<void> => {
     await request(
@@ -549,5 +565,16 @@ export const finishCapture = async (config: SaviDaemonConfig, captureId: string)
         segmentsStitched: body.segmentsStitched,
         totalLines: body.totalLines,
         keptDurationMs: body.keptDurationMs,
+        // Everything below decides what the user is TOLD, and was being
+        // dropped here — silently, because omitting an optional property is
+        // not a type error. `finishNotice` reads `transcriptOnly` +
+        // `audioRequested` to tell "episode saved" from "recorded nothing it
+        // was asked to record", and with them missing every finish took the
+        // saved branch. Its own tests passed the whole time: they covered the
+        // function, not this pipe.
+        transcriptOnly: body.transcriptOnly,
+        audioRequested: body.audioRequested,
+        audioLost: body.audioLost,
+        condenseWarning: body.condenseWarning,
     };
 };

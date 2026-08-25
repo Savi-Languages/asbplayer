@@ -118,3 +118,61 @@ describe('typed unavailable passthrough', () => {
         expect(result.unavailable).toBe('accountUnverified');
     });
 });
+
+// ── What survives the trip from the daemon to the toast ──────────────────
+//
+// `finishCapture` hand-copies four fields out of the response. Everything the
+// daemon added later — `transcriptOnly`, `audioRequested`, `audioLost`,
+// `condenseWarning` — was dropped here, silently, because dropping optional
+// properties is not a type error. The controller's `finishNotice` reads those
+// exact fields to decide whether an episode was SAVED or recorded nothing, so
+// with them missing every finish took the "episode saved" branch no matter
+// what happened. The unit tests for the wording passed throughout: they tested
+// the function, not the pipe.
+import { finishCapture } from './daemon-client';
+
+describe('finishCapture', () => {
+    const replyWith = (body: Record<string, unknown>) => {
+        global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => body }) as any;
+        return finishCapture({ baseUrl: 'http://127.0.0.1:4030', token: 't' }, 'c');
+    };
+
+    it('carries a normal finish through', async () => {
+        const info = await replyWith({
+            episodeId: 'Show/Ep',
+            segmentsStitched: 12,
+            totalLines: 461,
+            keptDurationMs: 845000,
+        });
+        expect(info.episodeId).toBe('Show/Ep');
+        expect(info.segmentsStitched).toBe(12);
+        expect(info.totalLines).toBe(461);
+        expect(info.keptDurationMs).toBe(845000);
+    });
+
+    it('carries the fields that decide whether it was a save at all', async () => {
+        const info = await replyWith({ transcriptOnly: true, totalLines: 461, audioRequested: true });
+        expect(info.transcriptOnly).toBe(true);
+        expect(info.audioRequested).toBe(true);
+    });
+
+    it('carries the diagnostics the console is supposed to name', async () => {
+        const info = await replyWith({
+            transcriptOnly: true,
+            totalLines: 461,
+            audioRequested: true,
+            audioLost: 'recorded 9 audio segment(s) and kept none',
+        });
+        expect(info.audioLost).toBe('recorded 9 audio segment(s) and kept none');
+    });
+
+    it('carries condenseWarning, which is the 42 KB-episode alarm', async () => {
+        const info = await replyWith({
+            episodeId: 'Show/Ep',
+            totalLines: 461,
+            keptDurationMs: 3450,
+            condenseWarning: 'kept 3.4s of a 24 minute watch',
+        });
+        expect(info.condenseWarning).toBe('kept 3.4s of a 24 minute watch');
+    });
+});

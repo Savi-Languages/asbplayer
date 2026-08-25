@@ -5,6 +5,7 @@ import {
     nextStartAfter,
     subtitlesToDisplay,
 } from './hold-subtitle';
+import { defaultSettings } from '@project/common/settings';
 
 const cue = (start: number, end: number, text = 'x', track = 0) => ({ start, end, text, track });
 
@@ -70,8 +71,41 @@ describe('subtitlesToDisplay', () => {
 
     // ── hold-until-next-cue (the default) ────────────────────────────────
 
-    it('defaults to holding until the next cue', () => {
-        expect(DEFAULT_HOLD_MS).toBe(HOLD_UNTIL_NEXT_CUE);
+    it('ships the module default as the actual setting default', () => {
+        // Two constants that must agree and live in different packages: the
+        // controller falls back to DEFAULT_HOLD_MS, but what an unconfigured
+        // user actually gets is `defaultSettings`. Changing one and not the
+        // other would leave the module documenting a default nobody has.
+        expect(defaultSettings.saviHoldSubtitleMs).toBe(DEFAULT_HOLD_MS);
+    });
+
+    it('defaults to a BOUNDED hold, not hold-until-next-cue', () => {
+        // Flipped deliberately: unbounded-by-default parked a finished line
+        // over 19s of real silence on a human-timed track (see the silence
+        // test above). The sentinel is unchanged and still opt-in-able.
+        expect(DEFAULT_HOLD_MS).toBeGreaterThan(0);
+        expect(DEFAULT_HOLD_MS).not.toBe(HOLD_UNTIL_NEXT_CUE);
+    });
+
+    it('clears the line into genuine silence rather than papering over it', () => {
+        // A professionally-timed Netflix ES track, cues 478/479: the line ends
+        // at 26:27.365 and the next cue — a MUSIC cue, `[suena "Ya no más"]` —
+        // is not due until 26:46.645. That 19.28s gap is real silence, not
+        // speech the track failed to timestamp, and hold-until-next-cue parked
+        // a finished sentence over the whole of it.
+        //
+        // The distinction this feature rests on (gaps are mistimed speech)
+        // holds for auto-timed tracks and not for human-timed ones, and a
+        // single unbounded default cannot serve both. The default is bounded;
+        // HOLD_UNTIL_NEXT_CUE stays available for the auto-timed case.
+        const last = cue(1584445, 1587365, 'es despedirnos de la misma manera.');
+        const next = [cue(1606645, 1609525, '[suena "Ya no más"]')];
+
+        // A brief mistimed tail is still covered...
+        expect(subtitlesToDisplay(slice([], [last], next), 1588000, DEFAULT_HOLD_MS)).toEqual([last]);
+        // ...but the silence is left silent.
+        expect(subtitlesToDisplay(slice([], [last], next), 1592000, DEFAULT_HOLD_MS)).toEqual([]);
+        expect(subtitlesToDisplay(slice([], [last], next), 1606000, DEFAULT_HOLD_MS)).toEqual([]);
     });
 
     it('holds across a gap far longer than any fixed cap would allow', () => {
