@@ -140,3 +140,35 @@ appearance (or clear those fields). To make the **native (English) line
 smaller than the target line**, give it its own size under Settings → Subtitle
 appearance → the second track's tab (per-track styling); savi can't guess which
 track is your native one.
+
+## Target words (0.57)
+
+With the matching Savi cloud and daemon, episode preparation selects a small list
+from public subtitle profiles and your current vocabulary. Resolved episodes can
+show a pre-watch card on the next play gesture. A late response never pauses an
+already playing video. Unresolved/provider failures leave capture running; failed
+preparation can retry after a 30-second cooldown.
+
+The primary subtitle track gets a soft purple target underline. Hover and targets
+share one local tokenizer request/cache: hover uses dictionary compounds, targets
+use the raw analyzer lemmas that also generate heard evidence. No AI call runs on
+the decoration path. Text and ruby labels remain intact.
+
+“I know this” and “Not for this show” persist account-bound feedback offline;
+“Start watching” records acceptance and resumes. Savi Settings controls the card
+(default on) and automatic Anki export (default off). Saved player episode
+corrections are honored through both platform and filesystem-safe capture IDs.
+
+A target enters Savi review only after an acknowledged heard event and 90% audible
+forward playback of its actual primary-track cue. Paused time, seeks and repeated
+fragments cannot manufacture coverage. Mining uses a durable account/language/
+episode/cue-start/lemma identity in browser storage and daemon SQLite. It checks
+fresh known/suppressed state before creating an action. Optional audio and JPEG
+frames stay local and are best effort; protected video may have no screenshot.
+Anki export requires opt-in in both the prepared request and current cloud setting,
+uses the `savi` deck, reconciles lost replies and retries without duplicate actions.
+The built-in reviewer continues to use the captured encounter context.
+
+Validation: 615 extension tests, TypeScript compile, Chrome production build, and
+local browser fixtures at desktop/390px. A real Netflix playback with the matching
+cloud/daemon and AnkiConnect is still an integration check in the user's environment.
