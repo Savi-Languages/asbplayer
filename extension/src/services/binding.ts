@@ -1,3 +1,4 @@
+import { SaviTargetController } from '@/savi/target-controller';
 import {
     AckMessage,
     AnkiUiSavedState,
@@ -189,6 +190,7 @@ export default class Binding {
     private readonly _audioRecorder = new AudioRecorder();
     readonly bulkExportController: BulkExportController;
     readonly saviCaptureController: SaviCaptureController;
+    readonly saviTargetController: SaviTargetController;
     readonly saviHoverDictionary: SaviHoverDictionary;
     readonly saviGlossController: SaviGlossController;
     readonly saviEncounterReporter: SaviEncounterReporter;
@@ -322,6 +324,12 @@ export default class Binding {
             subtitleFileName: () => this.subtitleFileName(),
             notify: (locKey, replacements) => this.subtitleController.notification(locKey, replacements),
         });
+        this.saviTargetController = new SaviTargetController({
+            video, metadata: () => this.saviCaptureController.targetMetadata(),
+            subtitles: () => this.subtitleController.subtitles,
+            pause: () => this.pause(), play: () => { void this.play(); },
+            send: message => browser.runtime.sendMessage({sender:'savi-video',message}),
+        });
         this.saviHoverDictionary = new SaviHoverDictionary(
             () => this.video,
             () => this.subtitleController.subtitles,
@@ -397,6 +405,7 @@ export default class Binding {
                 }
             },
             onDeliveryRecovered: () => this.saviDaemonBanner.hide(),
+            onHeardAcknowledged: message => this.saviTargetController.onHeardAcknowledged(message),
         });
         this.subtitleController.onSaviStartedShowing = (subtitle) => {
             this.saviEncounterReporter.report(subtitle);
@@ -797,6 +806,7 @@ export default class Binding {
             this.saviGlossHover.stop();
             this.saviEncounterReporter.stop();
             this.saviEngagementReporter.stop();
+            this.saviTargetController.stop();
             this.saviHoverDictionary.stop();
             this.saviControlsClearance.stop();
             this.saviCaptureController.unbind();
@@ -804,6 +814,7 @@ export default class Binding {
         }
 
         console.info(`[savi language-gate] savi on for this video (${verdict.reason})`);
+        this.saviTargetController.start(lang);
         this.saviCaptureController.bind();
         this.saviHoverDictionary.start();
         void this.saviGlossController.start();
@@ -1584,6 +1595,7 @@ export default class Binding {
         }
 
         this.saviCaptureController.unbind();
+        this.saviTargetController.stop();
         this.saviHoverDictionary.stop();
         this.saviGlossController.stop();
         this.saviGlossHover.stop();

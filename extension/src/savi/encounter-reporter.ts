@@ -88,6 +88,7 @@ export interface EncounterReporterDeps {
     onDeliveryFailure?: (consecutive: number) => void;
     /** Delivery worked again after at least one failure — clear the banner. */
     onDeliveryRecovered?: () => void;
+    onHeardAcknowledged?: (message: SaviWatchedLineMessage) => void;
     now?: () => number;
 }
 
@@ -242,8 +243,7 @@ export class SaviEncounterReporter {
         for (const reveal of line.hovered.values()) {
             this._closeReveal(reveal);
         }
-        this._deps
-            .send({
+        const message: SaviWatchedLineMessage = {
                 command: 'savi-watched-line',
                 lang: line.lang,
                 text: line.text,
@@ -260,9 +260,12 @@ export class SaviEncounterReporter {
                         ? { word, gloss: reveal.gloss }
                         : { word, gloss: reveal.gloss, dwellMs: reveal.longestMs }
                 ),
-            })
-            .then(() => this._noteDelivered())
-            .catch((e) => this._noteFailure(e));
+            };
+        this._deps.send(message).then(response => {
+            if (!(response as {ok?:boolean})?.ok) throw new Error('Heard line was not acknowledged');
+            this._noteDelivered();
+            this._deps.onHeardAcknowledged?.(message);
+        }).catch(e => this._noteFailure(e));
     }
 
     private _noteDelivered(): void {

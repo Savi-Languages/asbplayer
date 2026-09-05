@@ -1,3 +1,4 @@
+import { subtitleTokens } from "./token-cache";
 // Live-subtitle hover dictionary: hover a word on the video's asbplayer
 // subtitle overlay and see (a) the word boxed under the cursor, Language
 // Reactor-style, and (b) its dictionary entry in a popup.
@@ -403,7 +404,6 @@ function positionPopup(popup: HTMLDivElement, arrow: HTMLDivElement, word: DOMRe
 const firstDictGloss = (entries: SaviDictEntry[]): string => entries[0]?.senses?.[0]?.glosses?.[0] ?? '';
 
 export class SaviHoverDictionary {
-    private readonly _tokenizeCache = new Map<string, SaviToken[]>();
     // AI segmentations only — a rule-based fallback is never cached (see _segment).
     private readonly _segmentCache = new Map<string, SaviToken[]>();
     private readonly _explainCache = new Map<string, string | null>();
@@ -633,17 +633,8 @@ export class SaviHoverDictionary {
         this._positionBridge(anchor);
     }
 
-    private async _tokenize(text: string): Promise<SaviToken[]> {
-        const cached = this._tokenizeCache.get(text);
-        if (cached) return cached;
-        const res = await sendToBackground<SaviTokenizeResponse>({ command: 'savi-tokenize', lang: LANG, text });
-        const tokens = res.tokens ?? [];
-        if (this._tokenizeCache.size >= TOKENIZE_CACHE_MAX) {
-            const oldest = this._tokenizeCache.keys().next().value;
-            if (oldest !== undefined) this._tokenizeCache.delete(oldest);
-        }
-        this._tokenizeCache.set(text, tokens);
-        return tokens;
+    private _tokenize(text: string): Promise<SaviToken[]> {
+        return subtitleTokens.get(LANG, text);
     }
 
     /** AI segmentation for a line (cached). `tokens` is null when the daemon fell
