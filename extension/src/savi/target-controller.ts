@@ -21,6 +21,20 @@ export class SaviTargetController {
     private readonly frames = new Map<number, string>();
     private readonly sampledFrames = new Set<number>();
     private lang = '';
+    private immersionMode = 'watch';
+    setImmersionMode(mode: string): void {
+        if (this.immersionMode === mode) return;
+        this.immersionMode = mode;
+        if (mode !== 'explore') {
+            this.host?.remove();
+            this.host = undefined;
+            this.decorator.stop();
+        } else if (this.prepared)
+            this.decorator.setTargets(
+                this.lang,
+                this.prepared.targets.map((t) => t.lemma)
+            );
+    }
     private generation = 0;
     private attempted = '';
     private retryAt = 0;
@@ -32,7 +46,14 @@ export class SaviTargetController {
     private readonly onPlay = () => {
         this.checkEpisode();
         this.sample();
-        if (!this.prepared || this.cardShown || !this.prepared.cardEnabled || !this.prepared.targets.length) return;
+        if (
+            this.immersionMode !== 'explore' ||
+            !this.prepared ||
+            this.cardShown ||
+            !this.prepared.cardEnabled ||
+            !this.prepared.targets.length
+        )
+            return;
         this.cardShown = true;
         this.deps.pause();
         this.showCard();
@@ -111,10 +132,11 @@ export class SaviTargetController {
                     return;
                 }
                 this.prepared = result;
-                this.decorator.setTargets(
-                    this.lang,
-                    result.targets.map((t) => t.lemma)
-                );
+                if (this.immersionMode === 'explore')
+                    this.decorator.setTargets(
+                        this.lang,
+                        result.targets.map((t) => t.lemma)
+                    );
                 // A slow request never pauses playback after the user's gesture.
             })
             .catch(() => {
@@ -281,10 +303,11 @@ export class SaviTargetController {
                 if (!response?.ok) throw new Error('Could not save. Try again, or close the card to continue.');
                 prepared.targets = prepared.targets.filter((t) => t.lemma !== lemma);
                 row.remove();
-                this.decorator.setTargets(
-                    this.lang,
-                    prepared.targets.map((t) => t.lemma)
-                );
+                if (this.immersionMode === 'explore')
+                    this.decorator.setTargets(
+                        this.lang,
+                        prepared.targets.map((t) => t.lemma)
+                    );
             } catch (e) {
                 if (generation === this.generation) error.textContent = String(e instanceof Error ? e.message : e);
             } finally {

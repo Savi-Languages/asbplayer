@@ -25,7 +25,9 @@ describe('paused subtitle interest', () => {
         Object.defineProperty(video, 'paused', { value: true, configurable: true });
         video.currentTime = 2;
         const send = jest.fn(async (message: any) =>
-            message.command === 'savi-watch-interest-config' ? { enabled: true, account: 'u' } : { ok: true }
+            message.command === 'savi-watch-interest-config'
+                ? { enabled: true, account: 'u', mode: 'explore' }
+                : { ok: true }
         );
         const controller = new SaviWatchInterest({
             video,
@@ -76,4 +78,28 @@ describe('paused subtitle interest', () => {
         expect(send).toHaveBeenCalledTimes(1);
         controller.stop();
     });
+});
+
+test('Listen has a reversible text reveal and teardown restores subtitles', async () => {
+    const video = document.createElement('video');
+    const onModeChange = jest.fn();
+    const c = new SaviWatchInterest({
+        video,
+        subtitles: () => cues,
+        metadata: () => ({ episodeId: 'netflix:1', title: 'Episode' }),
+        onModeChange,
+        send: jest.fn(async () => ({ account: 'u', enabled: true, mode: 'listen' })),
+    });
+    c.start('ja');
+    await flush();
+    expect(onModeChange).toHaveBeenLastCalledWith('listen', true);
+    const shadow = document.querySelector('[data-savi-immersion]')!.shadowRoot!;
+    const button = Array.from(shadow.querySelectorAll('button')).find((b) => b.textContent === 'Reveal text')!;
+    button.click();
+    expect(onModeChange).toHaveBeenLastCalledWith('listen', false);
+    button.click();
+    expect(onModeChange).toHaveBeenLastCalledWith('listen', true);
+    c.stop();
+    expect(onModeChange).toHaveBeenLastCalledWith('watch', false);
+    expect(document.querySelector('[data-savi-immersion]')).toBeNull();
 });
