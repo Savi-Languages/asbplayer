@@ -172,3 +172,9 @@ The built-in reviewer continues to use the captured encounter context.
 Validation: 615 extension tests, TypeScript compile, Chrome production build, and
 local browser fixtures at desktop/390px. A real Netflix playback with the matching
 cloud/daemon and AnkiConnect is still an integration check in the user's environment.
+
+### Immersion modes (0.58)
+
+The small “Savi modes” control opens Watch / Explore / Listen and explicit Bookmark / Replay / Reveal actions. Mode is stored in the signed-in account's `saviImmersionMode` setting and refreshed each minute. Watch is the default: no automatic target card, hover mining, or gloss-hover pause. Explore allows those features subject to existing consent/settings. Listen hides the Savi subtitle layer with a reversible Reveal button; it does not rewrite subtitle settings. General asbplayer playback modes selected explicitly by the user remain separate.
+
+A bookmark is saved locally before upload even when hover mining is disabled. A paused hover must last 1.5 seconds, match an exact current primary cue, and be in Explore with consent. Strong AI selections become candidates; admission budgets are enforced in Savi. Playback alone never grades an item. The local outbox remains account/backend scoped; unavailable AI retries later.

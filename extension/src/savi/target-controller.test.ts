@@ -40,6 +40,7 @@ it('never pauses for late preparation, opens once on the next play gesture and r
         play,
         send,
     });
+    controller.setImmersionMode('explore');
     controller.start('ja');
     video.dispatchEvent(new Event('play'));
     resolve(prep());
@@ -82,6 +83,7 @@ it('drops stale episode responses, and unresolved episodes never get a card', as
         play: jest.fn(),
         send,
     });
+    controller.setImmersionMode('explore');
     controller.start('ja');
     episodeId = 'netflix:2';
     video.dispatchEvent(new Event('timeupdate'));
@@ -107,6 +109,7 @@ it('samples the cue end when its acknowledgement arrives before the next timeupd
         play: jest.fn(),
         send,
     });
+    controller.setImmersionMode('explore');
     controller.start('ja');
     await settle();
     video.dispatchEvent(new Event('play'));
@@ -142,6 +145,7 @@ it('retries a transient preparation failure after a bounded cooldown without pau
         play: jest.fn(),
         send,
     });
+    controller.setImmersionMode('explore');
     controller.start('ja');
     await settle();
     now = 100;
@@ -155,3 +159,5 @@ it('retries a transient preparation failure after a bounded cooldown without pau
     controller.stop();
     clock.mockRestore();
 });
+
+it('Watch mode never auto-pauses for a prepared target card', async()=>{const video=document.createElement('video');const pause=jest.fn();const c=new SaviTargetController({video,metadata:()=>({episodeId:'netflix:1',title:'S1',show:'Show'}),subtitles:()=>[],pause,play:jest.fn(),send:jest.fn(async()=>prep())});c.start('ja');await settle();video.dispatchEvent(new Event('play'));expect(pause).not.toHaveBeenCalled();expect(document.querySelector('[data-savi-target-card]')).toBeNull();c.stop();});

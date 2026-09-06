@@ -1,4 +1,4 @@
-import { watchInterestConfig, queueWatchInterest } from './watch-interest-service';
+import { watchInterestConfig, queueWatchInterest, setImmersionMode } from './watch-interest-service';
 import { prepareTargets, queueTargetFeedback, queueTargetMines, drainTargetMines } from './target-service';
 // Background-side orchestration for savi capture, registered as one
 // extra CommandHandler in asbplayer's background handler list.
@@ -128,6 +128,9 @@ export default class SaviCommandHandler implements CommandHandler {
 
     handle(command: any, sender: Browser.runtime.MessageSender, sendResponse: (response?: any) => void) {
         switch (command.message.command) {
+            case 'savi-set-immersion-mode':
+                this._settings.get(['saviCloudUrl']).then(({saviCloudUrl}) => setImmersionMode(saviCloudUrl,command.message.mode)).then(sendResponse).catch(() => sendResponse({ok:false}));
+                return true;
             case 'savi-watch-interest-config':
                 this._settings.get(['saviCloudUrl']).then(({saviCloudUrl}) => watchInterestConfig(saviCloudUrl)).then(sendResponse).catch(() => sendResponse({enabled:false}));
                 return true;

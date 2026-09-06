@@ -11,26 +11,36 @@ export async function watchInterestConfig(url: string) {
     try {
         const cloud = await targetCloud(url);
         const settings = (await cloud.request('/v2/settings')).settings;
+        const mode = ['watch', 'explore', 'listen'].includes(settings?.saviImmersionMode?.value)
+            ? settings.saviImmersionMode.value
+            : 'watch';
         const enabled = settings?.saviSavePausedHovers?.value === true;
         await cloud.check();
-        await browser.storage.local.set({ [key]: { enabled, at: Date.now() } });
-        return { account: cloud.user, enabled };
+        await browser.storage.local.set({ [key]: { enabled, mode, at: Date.now() } });
+        return { account: cloud.user, enabled, mode };
     } catch {
         // Offline continuation is allowed only after explicit opt-in on this backend/account.
-        const cached = (await browser.storage.local.get(key))[key] as { enabled?: boolean; at: number } | undefined;
+        const cached = (await browser.storage.local.get(key))[key] as
+            | { enabled?: boolean; mode?: string; at: number }
+            | undefined;
         return {
             account: account.userId,
+            mode: cached?.mode ?? 'watch',
             enabled: cached?.enabled === true && Date.now() - (cached?.at ?? 0) < 86400000,
         };
     }
 }
 export async function queueWatchInterest(url: string, account: string, item: any) {
     const config = await watchInterestConfig(url);
-    if (!config.enabled || config.account !== account || (await storedAccount())?.userId !== account)
+    if (
+        (item?.kind === 'hover' && (!config.enabled || config.mode !== 'explore')) ||
+        config.account !== account ||
+        (await storedAccount())?.userId !== account
+    )
         return { ok: false };
     if (
-        item?.kind !== 'hover' ||
-        item.dwellMs < 1500 ||
+        !['hover', 'bookmark'].includes(item?.kind) ||
+        (item.kind === 'hover' && item.dwellMs < 1500) ||
         typeof item.lineText !== 'string' ||
         item.lineText.length > 16000 ||
         !Number.isSafeInteger(item.lineStartMs) ||
@@ -62,7 +72,7 @@ export function drainWatchInterest(url: string): Promise<void> {
             await cloud.check();
             if (row.retryAt && row.retryAt > Date.now() && enabled) continue;
             try {
-                if (enabled) await cloud.request('/v2/watch-review', 'POST', row.item);
+                if (enabled || row.item.kind === 'bookmark') await cloud.request('/v2/watch-review', 'POST', row.item);
                 await browser.storage.local.remove(key);
             } catch {
                 // Retain uncertain or unavailable assessments, with a bounded retry rate.
@@ -85,4 +95,12 @@ export function bindWatchInterestDrain(url: () => Promise<string>) {
     });
     void browser.alarms.create('savi-watch-interest', { periodInMinutes: 1 });
     drain();
+}
+
+export async function setImmersionMode(url: string, mode: string) {
+    if (!['watch', 'explore', 'listen'].includes(mode)) return { ok: false };
+    const cloud = await targetCloud(url);
+    await cloud.check();
+    await cloud.request('/v2/settings/saviImmersionMode', 'PUT', { value: mode, updatedAtMs: Date.now() });
+    return { ok: true, ...(await watchInterestConfig(url)) };
 }
