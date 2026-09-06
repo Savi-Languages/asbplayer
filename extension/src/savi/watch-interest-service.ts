@@ -42,7 +42,8 @@ export async function queueWatchInterest(url: string, account: string, item: any
         return { ok: false };
     const base = resolveCloudBase(url);
     const key = PREFIX + JSON.stringify([base, account, item.lang, item.episodeId, item.lineStartMs]);
-    await browser.storage.local.set({ [key]: { base, account, item } });
+    if (!(await browser.storage.local.get(key))[key])
+        await browser.storage.local.set({ [key]: { base, account, item } });
     void drainWatchInterest(url).catch(() => {});
     return { ok: true };
 }
@@ -59,8 +60,14 @@ export function drainWatchInterest(url: string): Promise<void> {
             const row = raw as any;
             if (!key.startsWith(PREFIX) || row.account !== cloud.user || row.base !== base) continue;
             await cloud.check();
-            if (enabled) await cloud.request('/v2/watch-review', 'POST', row.item);
-            await browser.storage.local.remove(key);
+            if (row.retryAt && row.retryAt > Date.now() && enabled) continue;
+            try {
+                if (enabled) await cloud.request('/v2/watch-review', 'POST', row.item);
+                await browser.storage.local.remove(key);
+            } catch {
+                // Retain uncertain or unavailable assessments, with a bounded retry rate.
+                await browser.storage.local.set({ [key]: { ...row, retryAt: Date.now() + 15 * 60000 } });
+            }
         }
     })().finally(() => {
         draining = undefined;
