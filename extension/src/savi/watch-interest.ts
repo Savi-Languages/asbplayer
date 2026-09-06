@@ -138,6 +138,19 @@ export class SaviWatchInterest {
                         lineText: cue.text,
                         kind: 'hover',
                         dwellMs: 1500,
+                        context: this.deps
+                            .subtitles()
+                            .filter(
+                                (c) =>
+                                    (c.track ?? 0) === 0 &&
+                                    c !== cue &&
+                                    c.start >= cue.start - 20000 &&
+                                    c.start <= cue.end + 20000
+                            )
+                            .sort((a, b) => Math.abs(a.start - cue.start) - Math.abs(b.start - cue.start))
+                            .slice(0, 4)
+                            .sort((a, b) => a.start - b.start)
+                            .map((c) => c.text.slice(0, 1000)),
                     },
                 })
                 .then((result) => {

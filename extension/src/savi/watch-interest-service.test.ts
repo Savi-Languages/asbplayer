@@ -47,6 +47,8 @@ test('queue survives offline and drains only to its account and backend', async 
     request.mockImplementation(async (path: string) =>
         path === '/v2/settings' ? { settings: { saviSavePausedHovers: { value: true } } } : {}
     );
+    expect(pending[keys()[0]].retryAt).toBeGreaterThan(Date.now());
+    pending[keys()[0]].retryAt = Date.now() - 1;
     await drainWatchInterest('local');
     expect(keys()).toHaveLength(0);
 });
