@@ -211,6 +211,12 @@ export default defineUnlistedScript(() => {
                 return response;
             }
 
+            // Bind every async metadata/subtitle response to the player that
+            // produced it. Netflix soft-navigation can otherwise deliver the
+            // previous episode's response after the URL has moved on, which
+            // lets valid subtitles be saved under the next episode's id.
+            response.episodeId = `netflix:${titleId}`;
+
             response.basename = await determineBasenameWithRetries(titleId, 5);
             const urlsByTrackId = timedTextUrls();
             response.subtitles = (np.getTimedTextTrackList() ?? [])

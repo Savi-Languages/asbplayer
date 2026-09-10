@@ -87,6 +87,14 @@ const fetchDataForLanguageOnDemand = (language: string): Promise<VideoData> => {
 
 const globalStateProvider = new ExtensionGlobalStateProvider();
 
+/** Identified page-script data is safe only for the same media page.
+ * Undefined identities preserve compatibility with integrations that cannot
+ * yet provide a stable id; Netflix always provides one. */
+export const videoDataMatchesEpisode = (
+    dataEpisodeId: string | undefined,
+    currentEpisodeId: string | undefined
+): boolean => dataEpisodeId === undefined || dataEpisodeId === currentEpisodeId;
+
 export default class VideoDataSyncController {
     private readonly _context: Binding;
     private readonly _domain: string;
@@ -411,6 +419,17 @@ export default class VideoDataSyncController {
     }
 
     private async _setSyncedData(data: VideoData) {
+        const currentEpisodeId = deriveEpisodeId(window.location.href, document.title);
+
+        if (!videoDataMatchesEpisode(data.episodeId, currentEpisodeId)) {
+            console.info(
+                '[savi subtitle sync] discarding stale response for %s while page is %s',
+                data.episodeId,
+                currentEpisodeId ?? '(not ready)'
+            );
+            return;
+        }
+
         const wasLoading = this._syncedData?.subtitles === undefined;
         this._syncedData = data;
 
@@ -1012,6 +1031,7 @@ export default class VideoDataSyncController {
     private async _syncData(data: VideoDataSubtitleTrack[]) {
         try {
             let subtitles: SerializedSubtitleFile[] = [];
+            const sourceEpisodeId = this._syncedData?.episodeId;
 
             for (let i = 0; i < data.length; i++) {
                 const { extension, url, language, localFile } = data[i];
@@ -1020,11 +1040,22 @@ export default class VideoDataSyncController {
                     language,
                     extension,
                     url,
-                    localFile
+                    localFile,
+                    sourceEpisodeId
                 );
                 if (subtitleFiles !== undefined) {
                     subtitles.push(...subtitleFiles);
                 }
+            }
+
+            if (
+                !videoDataMatchesEpisode(
+                    sourceEpisodeId,
+                    deriveEpisodeId(window.location.href, document.title)
+                )
+            ) {
+                console.info('[savi subtitle sync] page changed while subtitles were downloading; discarding them');
+                return false;
             }
 
             await this._syncSubtitles(
@@ -1084,7 +1115,8 @@ export default class VideoDataSyncController {
         language: string | undefined,
         extension: string,
         url: string | string[],
-        localFile: boolean | undefined
+        localFile: boolean | undefined,
+        sourceEpisodeId?: string
     ): Promise<SerializedSubtitleFile[] | undefined> {
         if (url === '-') {
             return [
@@ -1102,6 +1134,17 @@ export default class VideoDataSyncController {
             }
 
             const data = await fetchDataForLanguageOnDemand(language);
+
+            if (
+                !videoDataMatchesEpisode(data.episodeId, sourceEpisodeId) ||
+                !videoDataMatchesEpisode(
+                    data.episodeId,
+                    deriveEpisodeId(window.location.href, document.title)
+                )
+            ) {
+                console.info('[savi subtitle sync] discarding stale lazy subtitle response');
+                return undefined;
+            }
 
             if (data.error) {
                 await this._reportError(data.error);

@@ -36,7 +36,7 @@ jest.mock('@/services/tutorial', () => ({ isOnTutorialPage: () => false }));
 jest.mock('@/pages/util', () => ({ extractExtension: (_u: string, e: string) => e }));
 jest.mock('@/savi/cloud-settings', () => ({ getCachedRoamingSettings: jest.fn() }));
 
-import VideoDataSyncController from './video-data-sync-controller';
+import VideoDataSyncController, { videoDataMatchesEpisode } from './video-data-sync-controller';
 import { getCachedRoamingSettings } from '@/savi/cloud-settings';
 import { resetMutedEpisodesMemo } from '@/savi/muted-episodes';
 
@@ -48,6 +48,18 @@ const track = (id: string, language: string, label: string) => ({
     label,
     url: `https://sub/${id}.vtt`,
     extension: 'nfimsc',
+});
+
+describe('videoDataMatchesEpisode', () => {
+    it('rejects an identified Netflix response after the page changes', () => {
+        expect(videoDataMatchesEpisode('netflix:111', 'netflix:222')).toBe(false);
+        expect(videoDataMatchesEpisode('netflix:111', undefined)).toBe(false);
+    });
+
+    it('accepts the current episode and unidentified legacy integrations', () => {
+        expect(videoDataMatchesEpisode('netflix:111', 'netflix:111')).toBe(true);
+        expect(videoDataMatchesEpisode(undefined, 'netflix:111')).toBe(true);
+    });
 });
 
 describe('VideoDataSyncController savi auto-load (SV-8)', () => {
