@@ -70,3 +70,17 @@ describe('SaviCommandHandler._warmProjections', () => {
         expect(sendResponse).toHaveBeenCalledWith({});
     });
 });
+
+describe('Savi screenshot tab identity',()=>{
+ afterEach(()=>{delete (globalThis as any).browser;});
+ it('refuses an inactive sender tab',async()=>{
+  const capture=jest.fn();(globalThis as any).browser={tabs:{get:async()=>({active:false,windowId:1}),captureVisibleTab:capture}};
+  const handler=new SaviCommandHandler({} as any);
+  expect(await (handler as any)._captureFrame({tab:{id:5}})).toEqual({});expect(capture).not.toHaveBeenCalled();
+ });
+ it('drops captured pixels if the active tab changed during capture',async()=>{
+  (globalThis as any).browser={tabs:{get:async()=>({active:true,windowId:1}),captureVisibleTab:async()=> 'private-other-tab',query:async()=>[{id:6}]},windows:{get:async()=>({focused:true})}};
+  const handler=new SaviCommandHandler({} as any);
+  expect(await (handler as any)._captureFrame({tab:{id:5}})).toEqual({});
+ });
+});

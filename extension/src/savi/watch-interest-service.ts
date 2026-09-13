@@ -47,7 +47,8 @@ export async function queueWatchInterest(url: string, account: string, item: any
         !Number.isSafeInteger(item.lineEndMs) ||
         item.lineEndMs <= item.lineStartMs ||
         typeof item.episodeId !== 'string' ||
-        typeof item.lang !== 'string'
+        typeof item.lang !== 'string' ||
+        (item.screenshotDataUrl !== undefined && (typeof item.screenshotDataUrl !== 'string' || item.screenshotDataUrl.length > 240000 || !/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(item.screenshotDataUrl)))
     )
         return { ok: false };
     const base = resolveCloudBase(url);

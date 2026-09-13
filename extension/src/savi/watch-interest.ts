@@ -1,3 +1,4 @@
+import { captureWatchScreenshot } from './watch-screenshot';
 import { lineElement } from './hover-dict';
 
 interface Cue {
@@ -211,6 +212,26 @@ export class SaviWatchInterest {
         details.click();
         this.updateMode();
     }
+    private async saveMoment(account: string, item: any) {
+        const generation = this.generation;
+        const time = this.deps.video.currentTime;
+        const current = () => this.bound && generation === this.generation && this.account === account && this.deps.metadata().episodeId === item.episodeId && Math.abs(this.deps.video.currentTime-time)<0.05;
+        let screenshotDataUrl: string | undefined;
+        if (this.deps.video.getBoundingClientRect().width > 0) {
+            let expired = false;
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            try {
+                screenshotDataUrl = await Promise.race([
+                    captureWatchScreenshot(this.deps.video,this.deps.send,()=>!expired&&current()),
+                    new Promise<undefined>(resolve=>{timer=setTimeout(()=>{expired=true;resolve(undefined);},2000);}),
+                ]);
+            } finally { expired=true;clearTimeout(timer); }
+        }
+        // The chosen subtitle remains valid even if the player subsequently moves,
+        // but account changes must never enqueue into another account.
+        if (!this.bound || generation !== this.generation || this.account !== account) return {ok:false};
+        return this.deps.send({command:'savi-save-watch-interest',account,item:{...item,...(screenshotDataUrl?{screenshotDataUrl}:{})}});
+    }
     private async bookmark() {
         const cue = this.deps
             .subtitles()
@@ -226,10 +247,7 @@ export class SaviWatchInterest {
             return;
         }
         try {
-            const r = await this.deps.send({
-                command: 'savi-save-watch-interest',
-                account: this.account,
-                item: {
+            const r = await this.saveMoment(this.account, {
                     lang: this.lang,
                     episodeId: meta.episodeId,
                     show: meta.show ?? '',
@@ -243,7 +261,6 @@ export class SaviWatchInterest {
                         .filter((c) => (c.track ?? 0) === 0 && c !== cue && Math.abs(c.start - cue.start) < 20000)
                         .slice(0, 4)
                         .map((c) => c.text),
-                },
             });
             if (this.status)
                 this.status.textContent = r?.ok
@@ -307,11 +324,7 @@ export class SaviWatchInterest {
                 cue
             )
                 return;
-            void this.deps
-                .send({
-                    command: 'savi-save-watch-interest',
-                    account,
-                    item: {
+            void this.saveMoment(account, {
                         lang: this.lang,
                         episodeId: meta.episodeId,
                         show: meta.show ?? '',
@@ -334,7 +347,6 @@ export class SaviWatchInterest {
                             .slice(0, 4)
                             .sort((a, b) => a.start - b.start)
                             .map((c) => c.text.slice(0, 1000)),
-                    },
                 })
                 .then((result) => {
                     if (result?.ok && this.account === account) this.saved.add(key);
