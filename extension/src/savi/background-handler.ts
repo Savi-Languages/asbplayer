@@ -759,7 +759,13 @@ export default class SaviCommandHandler implements CommandHandler {
             return {};
         }
         try {
-            return { dataUrl: await captureVisibleTab(tabId) };
+            const tab = await browser.tabs.get(tabId);
+            if (!tab.active || !(await browser.windows.get(tab.windowId)).focused) return {};
+            const dataUrl = await captureVisibleTab(tabId);
+            // captureVisibleTab targets the active tab in a window, not the id.
+            // Recheck to avoid returning another tab if the learner switched.
+            const [active] = await browser.tabs.query({windowId:tab.windowId,active:true});
+            return active?.id === tabId ? {dataUrl} : {};
         } catch (e) {
             return {};
         }
