@@ -188,21 +188,33 @@ Read along view to let the adapter observe text already delivered to that page.
 Availability varies by item and Spotify build. The adapter never calls private
 Spotify endpoints or reads Spotify credentials.
 
-- Select a line, then hover/tap its words for dictionary lookup. Save selected
-  line creates a bookmark in the same account's Savi review library. Explore
+- Hover/tap words directly in Spotify’s native transcript or lyrics for dictionary
+  lookup. English appears beneath each line. A compact caption follows the current
+  timed text when the native view is out of sight. Save selected line creates a bookmark in the same account's Savi review library. Explore
   mode plus paused-hover consent enables the existing 1.5-second interest signal,
   knowledge-aware selection and admission limits. AI card details remain manual.
 - Missing text: import SRT/VTT/LRC or paste publisher/user-supplied plain text.
   The panel also offers an explicit import of visible Spotify text. Untimed text
   stays untimed, has no exact replay or heard-word evidence, and saves as text.
-- Record audio requires timed text and a verified local native media clock.
+- Audio recording starts automatically under the existing recording settings and
+  requires timed text plus a verified local native media clock. If the provider
+  response is unavailable, matching native podcast timestamp groups provide the
+  fallback; sentences within a group retain shared timing rather than guessed
+  individual times.
   Pause, seek, rate/volume/media changes close segments; changing item finishes
   the previous capture. A different audible browser tab blocks the process tap.
   Missing or ambiguous clocks, remote playback and crossfade disable capture.
-  Stop and retry after an audio failure; the panel reports the daemon's result.
+  An explicit stop prevents another automatic start for that item. Stop and retry
+  after an audio failure; the panel reports the daemon’s result.
 - Savi cards use canonical song/episode links. Spotify episode links include a
   timestamp only for timed text. Spotify song links open the song; saved local
   line audio uses the existing source-to-recording map.
+
+The collapsed Savi menu opens learning controls; × minimizes it without stopping
+recording. Native text highlights and scrolls with its timed cue/group, pausing
+automatic scrolling when the learner browses back. Hover pause applies only over
+rendered text. The shared dictionary popup leaves room for neighboring rows on
+Spotify and video sites; its blank-space corridor does not intercept word clicks.
 
 Listening is measured from actual local advancement, uses stable UUIDs for
 retries, and does not grade vocabulary. Imported text is scoped to the current
