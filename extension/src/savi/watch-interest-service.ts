@@ -45,14 +45,17 @@ export async function queueWatchInterest(url: string, account: string, item: any
         item.lineText.length > 16000 ||
         !Number.isSafeInteger(item.lineStartMs) ||
         !Number.isSafeInteger(item.lineEndMs) ||
-        item.lineEndMs <= item.lineStartMs ||
+        (item.textTiming === "untimed"
+            ? item.lineStartMs !== 0 || item.lineEndMs !== 0
+            : item.lineStartMs < 0 || item.lineEndMs <= item.lineStartMs || item.lineEndMs-item.lineStartMs > 120000) ||
+        (item.textTiming !== undefined && !["timed", "untimed"].includes(item.textTiming)) ||
         typeof item.episodeId !== 'string' ||
         typeof item.lang !== 'string' ||
         (item.screenshotDataUrl !== undefined && (typeof item.screenshotDataUrl !== 'string' || item.screenshotDataUrl.length > 240000 || !/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(item.screenshotDataUrl)))
     )
         return { ok: false };
     const base = resolveCloudBase(url);
-    const key = PREFIX + JSON.stringify([base, account, item.lang, item.episodeId, item.lineStartMs]);
+    const key = PREFIX + JSON.stringify([base, account, item.lang, item.episodeId, item.lineStartMs, ...(item.textTiming === "untimed" ? [item.lineText.trim()] : [])]);
     if (!(await browser.storage.local.get(key))[key])
         await browser.storage.local.set({ [key]: { base, account, item } });
     void drainWatchInterest(url).catch(() => {});

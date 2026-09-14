@@ -24,7 +24,29 @@ jest.mock('./cloud-client', () => ({
 }));
 
 import SaviCommandHandler from './background-handler';
-import { warmProjections as mockWarmProjections } from './cloud-client';
+import { warmProjections as mockWarmProjections, translate as mockTranslate } from './cloud-client';
+
+describe('English subtitle translation', () => {
+    beforeEach(() => (mockTranslate as jest.Mock).mockReset());
+    const handler = () => new SaviCommandHandler({ get: async () => ({ saviCloudUrl: 'https://cloud.example' }) } as any);
+    it('translates the full sentence into English with neighboring context', async () => {
+        (mockTranslate as jest.Mock).mockResolvedValue({ text: 'It was a one-week trip.', provider: 'deepl' });
+        const result = await (handler() as any)._subtitleTranslate({ command: 'savi-subtitle-translate', text: '1週間の旅行でした。', sourceLang: 'ja', context: 'スペインに行きました。' });
+        expect(mockTranslate).toHaveBeenCalledWith('https://cloud.example', '1週間の旅行でした。', 'en', 'ja', 'スペインに行きました。');
+        expect(result.text).toBe('It was a one-week trip.');
+    });
+    it('rejects oversized input before calling the translation provider', async () => {
+        expect(await (handler() as any)._subtitleTranslate({ text: 'a'.repeat(4001), sourceLang: 'ja' })).toEqual({});
+        expect(mockTranslate).not.toHaveBeenCalled();
+    });
+    it('answers unavailable when the service fails rather than leaving the subtitle pending', async () => {
+        (mockTranslate as jest.Mock).mockRejectedValue(Error('offline'));
+        const reply = jest.fn();
+        handler().handle({ sender: 'savi-video', message: { command: 'savi-subtitle-translate', text: '旅行', sourceLang: 'ja' } }, {} as any, reply);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(reply).toHaveBeenCalledWith({});
+    });
+});
 
 describe('SaviCommandHandler._warmProjections', () => {
     const settings = { get: async () => ({ saviCloudUrl: 'https://cloud.example' }) } as any;
