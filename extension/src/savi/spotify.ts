@@ -18,8 +18,25 @@ export interface SpotifyPlayback {
     playing: boolean;
     local: boolean;
     rate: number;
-    media?: HTMLMediaElement;
+    media?: SpotifyMedia;
 }
+export type SpotifyMedia = Pick<
+    HTMLMediaElement,
+    | 'currentTime'
+    | 'duration'
+    | 'paused'
+    | 'ended'
+    | 'muted'
+    | 'volume'
+    | 'readyState'
+    | 'playbackRate'
+    | 'play'
+    | 'pause'
+    | 'addEventListener'
+    | 'removeEventListener'
+> & {
+    replay?(time: number): Promise<void>;
+};
 export function spotifyIdentity(value: string): SpotifyIdentity | undefined {
     let match = value.match(/^spotify:(track|episode):([A-Za-z0-9]{22})$/);
     if (!match) {
@@ -114,14 +131,14 @@ export function playbackDelta(a: PlaybackPoint | undefined, b: PlaybackPoint): n
         return 0;
     return Math.min(wall, delta / b.rate);
 }
-export function readSpotifyPlayback(doc: Document): SpotifyPlayback {
+export function readSpotifyPlayback(doc: Document, detached: readonly SpotifyMedia[] = []): SpotifyPlayback {
     const bar = doc.querySelector('[data-testid="now-playing-bar"]') ?? doc.querySelector('footer');
     const link = bar?.querySelector<HTMLAnchorElement>(
         '[data-testid="context-item-link"], [data-testid="now-playing-widget"] a[href*="/track/"], [data-testid="now-playing-widget"] a[href*="/episode/"]'
     );
     const identity = link ? spotifyIdentity(link.getAttribute('href') ?? '') : undefined;
     const control = bar?.querySelector<HTMLButtonElement>('[data-testid="control-button-playpause"]');
-    const candidates = Array.from(doc.querySelectorAll<HTMLMediaElement>('audio,video')).filter(
+    const candidates = [...Array.from(doc.querySelectorAll<HTMLMediaElement>('audio,video')), ...detached].filter(
         (m) => Number.isFinite(m.duration) && m.duration > 0 && m.readyState >= 3
     );
     const active = candidates.filter((m) => !m.paused && !m.ended);

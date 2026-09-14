@@ -1,10 +1,12 @@
 import { spotifyPayloadLines } from '@/savi/spotify';
+import { observeSpotifyMedia } from '@/savi/spotify-media';
 /** Passive: inspect responses Spotify itself requested. No credentials leave the page. */
 export default defineContentScript({
     matches: ['https://open.spotify.com/*'],
     runAt: 'document_start',
     world: 'MAIN',
     main() {
+        observeSpotifyMedia(window);
         const cache = new Map<string, unknown>();
         const emit = (value: unknown) => window.postMessage(value, 'https://open.spotify.com');
         window.addEventListener('message', (event) => {

@@ -1,4 +1,5 @@
 import { SpotifyPanel } from '@/savi/spotify-panel';
+import { SpotifyMediaBridge } from '@/savi/spotify-media';
 import { getCachedRoamingSettings } from '@/savi/cloud-settings';
 import { SettingsProvider } from '@project/common/settings';
 import { ExtensionSettingsStorage } from '@/services/extension-settings-storage';
@@ -7,8 +8,11 @@ export default defineContentScript({
     matches: ['https://open.spotify.com/*'],
     runAt: 'document_idle',
     main(ctx) {
+        const media = new SpotifyMediaBridge(window);
+        media.start();
         const settings = new SettingsProvider(new ExtensionSettingsStorage());
         const panel = new SpotifyPanel({
+            media: media.media,
             send: (message) => browser.runtime.sendMessage({ sender: 'savi-video', message }),
             settings: async () => ({
                 lang: (await getCachedRoamingSettings()).targetLanguage,
@@ -24,6 +28,7 @@ export default defineContentScript({
         ctx.onInvalidated(() => {
             browser.runtime.onMessage.removeListener(listener);
             panel.stop();
+            media.stop();
         });
     },
 });
