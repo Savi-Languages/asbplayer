@@ -331,6 +331,7 @@ export default class Binding {
         });
         this.saviWatchInterest = new SaviWatchInterest({
             video,
+            replay: async (startMs) => { this.seek(startMs / 1000); await this.play(); },
             onModeChange: (mode,hideText) => {
                 if(this._saviImmersionMode !== mode) {
                     this._saviImmersionMode=mode;

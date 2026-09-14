@@ -103,3 +103,88 @@ test('Listen has a reversible text reveal and teardown restores subtitles', asyn
     expect(onModeChange).toHaveBeenLastCalledWith('watch', false);
     expect(document.querySelector('[data-savi-immersion]')).toBeNull();
 });
+
+describe('study controls', () => {
+    let controller: SaviWatchInterest;
+    let video: HTMLVideoElement;
+    let send: jest.Mock;
+    let replay: jest.Mock;
+    let onModeChange: jest.Mock;
+    let subtitleList: typeof cues;
+    const button = (label: string) =>
+        Array.from(document.querySelector('[data-savi-immersion]')!.shadowRoot!.querySelectorAll('button')).find(
+            (b) => b.textContent === label
+        )!;
+    beforeEach(async () => {
+        jest.useFakeTimers();
+        video = document.createElement('video');
+        video.currentTime = 5;
+        subtitleList = [...cues, { text: '次の行', start: 7000, end: 9000, track: 0 }];
+        replay = jest.fn(async () => {});
+        onModeChange = jest.fn();
+        send = jest.fn(async (message: any) =>
+            message.command === 'savi-watch-interest-config' ? { mode: 'watch' } : { ok: true }
+        );
+        controller = new SaviWatchInterest({
+            video,
+            subtitles: () => subtitleList,
+            metadata: () => ({ episodeId: 'netflix:1', title: 'Episode' }),
+            send,
+            replay,
+            onModeChange,
+        });
+        controller.start('ja');
+        await flush();
+        button('Savi modes').click();
+    });
+    afterEach(() => {
+        controller.stop();
+        document.body.innerHTML = '';
+        jest.useRealTimers();
+    });
+    test('replays the previous line during gaps and the first line before subtitles begin', async () => {
+        button('Replay previous line').click();
+        await flush();
+        expect(replay).toHaveBeenCalledWith(1000);
+        video.currentTime = 0;
+        video.dispatchEvent(new Event('timeupdate'));
+        button('Play first line').click();
+        await flush();
+        expect(replay).toHaveBeenLastCalledWith(1000);
+    });
+    test('disabled controls give visible reasons and update as playback moves', () => {
+        expect(button('Reveal text').disabled).toBe(true);
+        expect(button('Bookmark').disabled).toBe(true);
+        const shadow = document.querySelector('[data-savi-immersion]')!.shadowRoot!;
+        expect(shadow.textContent).toContain('Sign in');
+        expect(shadow.textContent).toContain('Listen');
+        subtitleList = [];
+        video.dispatchEvent(new Event('timeupdate'));
+        expect(button('Replay line').disabled).toBe(true);
+        expect(shadow.textContent).toContain('Load subtitles');
+    });
+    test('mode changes take effect immediately and cannot be undone by a stale config reply', async () => {
+        let finish: (value: unknown) => void = () => {};
+        send.mockImplementation((message: any) =>
+            message.command === 'savi-watch-interest-config'
+                ? new Promise((resolve) => {
+                      finish = resolve;
+                  })
+                : Promise.resolve({ ok: true })
+        );
+        jest.advanceTimersByTime(60000);
+        button('Listen').click();
+        expect(onModeChange).toHaveBeenLastCalledWith('listen', true);
+        await flush();
+        finish({ mode: 'watch' });
+        await flush();
+        expect(onModeChange).toHaveBeenLastCalledWith('listen', true);
+        expect(button('Reveal text').disabled).toBe(false);
+    });
+    test('failed playback is explained instead of swallowed', async () => {
+        replay.mockRejectedValue(new Error('blocked'));
+        button('Replay previous line').click();
+        await flush();
+        expect(document.querySelector('[data-savi-immersion]')!.shadowRoot!.textContent).toContain('Could not replay');
+    });
+});
