@@ -115,16 +115,17 @@ export class SpotifyReadingSurface {
         };
         this.style.textContent = `
             [data-savi-spotify-line]{cursor:text!important}
+            [data-savi-spotify-line]:not([data-testid="lyrics-line"]){font-size:18px!important;line-height:1.65!important}
             [data-savi-spotify-line][data-savi-current="true"]{color:#b7f7ce!important;background:#1d5036!important;border-radius:6px;box-shadow:0 0 0 5px #1d5036}
-            [data-savi-spotify-captions]{position:fixed;z-index:2147483490;left:50%;transform:translateX(-50%);bottom:108px;width:max-content;max-width:min(760px,calc(100vw - 210px));padding:12px 20px;background:#121a18f5;color:#f5faf7;border:1px solid #ffffff24;border-radius:12px;box-shadow:0 6px 24px #0007;font:500 clamp(18px,2vw,26px)/1.6 system-ui;text-align:center;max-height:28vh;overflow:auto;white-space:pre-wrap}
+            [data-savi-spotify-captions]{position:fixed;z-index:2147483490;left:50%;transform:translateX(-50%);bottom:108px;width:max-content;max-width:min(760px,calc(100vw - 210px));padding:12px 20px;background:#121a18f5;color:#f5faf7;border:1px solid #ffffff24;border-radius:12px;box-shadow:0 6px 24px #0007;font:500 clamp(20px,2.2vw,28px)/1.6 system-ui;text-align:center;max-height:28vh;overflow:auto;white-space:pre-wrap}
             [data-savi-spotify-caption]{cursor:text}
             [data-savi-spotify-line]:has(+[data-savi-spotify-translation]){padding-bottom:0!important;margin-bottom:0!important}
-            [data-savi-spotify-translation]{display:block;font:400 .85em/1.5 system-ui;color:#adbdb5;white-space:pre-wrap;margin:6px 0 12px;cursor:default}
-            [data-savi-spotify-captions] [data-savi-spotify-translation]{font-size:17px;margin:5px 0 0}
+            [data-savi-spotify-translation]{display:block;font:400 16px/1.5 system-ui;color:#adbdb5;white-space:pre-wrap;margin:6px 0 12px;cursor:default}
+            [data-savi-spotify-captions] [data-savi-spotify-translation]{font-size:19px;margin:5px 0 0}
             [data-savi-spotify-translation][hidden]{display:none!important}
             [data-savi-spotify-follow]{position:fixed;bottom:106px;left:50%;transform:translateX(-50%);z-index:2147483500;border:1px solid #ffffff40;border-radius:24px;padding:10px 18px;background:#183d2a;color:#eaffef;font:14px system-ui;cursor:pointer}
             [data-savi-spotify-captions][hidden],[data-savi-spotify-follow][hidden]{display:none!important}
-            @media(max-width:600px){[data-savi-spotify-captions]{max-width:calc(100vw - 32px);bottom:150px;font-size:19px}}
+            @media(max-width:600px){[data-savi-spotify-captions]{max-width:calc(100vw - 32px);bottom:150px;font-size:21px}}
         `;
         document.head.append(this.style);
         document.body.append(this.captions, this.back);
