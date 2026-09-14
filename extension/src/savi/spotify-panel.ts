@@ -7,6 +7,7 @@ import {
     type SpotifyLine,
     type SpotifyPlayback,
     type PlaybackPoint,
+    type SpotifyMedia,
 } from './spotify';
 import { Segmenter, type SegmenterOutput } from './segmenter';
 import { serializeToSrt } from './subtitle-serializer';
@@ -14,6 +15,7 @@ import { finishNotice } from './capture-notice';
 import type { SaviToken, SaviDictEntry } from './daemon-client';
 
 export interface SpotifyPanelDeps {
+    media?(): readonly SpotifyMedia[];
     send(message: any): Promise<any>;
     settings(): Promise<{ lang: string; enabled: boolean; muted: boolean }>;
 }
@@ -76,8 +78,8 @@ export class SpotifyPanel {
         this.cancelDwell();
     };
     private replayUntil?: { id: string; end: number };
-    private previousMedia?: HTMLMediaElement;
-    private verifiedMedia?: HTMLMediaElement;
+    private previousMedia?: SpotifyMedia;
+    private verifiedMedia?: SpotifyMedia;
     private verifiedId = '';
     private stableSince = 0;
     private reassertedAt = 0;
@@ -358,7 +360,7 @@ export class SpotifyPanel {
     }
     private tick() {
         if (this.disposed) return;
-        const next = readSpotifyPlayback(document);
+        const next = readSpotifyPlayback(document, this.deps.media?.());
         const changed = next.identity?.id !== this.state.identity?.id;
         if (changed) {
             this.flush();
@@ -630,10 +632,12 @@ export class SpotifyPanel {
         if (this.selected?.timing !== 'timed' || !this.state.media) return;
         try {
             this.replayUntil = { id: this.state.identity!.id, end: this.selected.end! };
-            this.state.media.currentTime = this.selected.start! / 1000;
-            void this.state.media
-                .play()
-                .catch(() => this.notice('Spotify could not replay. Use its playback controls.'));
+            const media = this.state.media;
+            const start = this.selected.start! / 1000;
+            if (!media.replay) media.currentTime = start;
+            void (media.replay ? media.replay(start) : media.play()).catch(() =>
+                this.notice('Spotify could not replay. Use its playback controls.')
+            );
         } catch {
             this.notice('Seeking is unavailable for this item.');
         }
