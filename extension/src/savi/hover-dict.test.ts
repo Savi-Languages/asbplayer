@@ -223,6 +223,22 @@ describe('hover overlays follow subtitle layout without mouse movement', () => {
         document.body.innerHTML = '';
     });
 
+    it('renders a prepared word during the mouse event, without timers or pending promises', () => {
+        line.className = 'asbplayer-subtitle-text';
+        const caret = document.createRange();
+        caret.setStart(line.firstChild!, 0);
+        Object.defineProperty(document, 'caretRangeFromPoint', { configurable: true, value: () => caret });
+        jest.spyOn(dict, '_tokenize').mockReturnValue([{ text: '裏工作裏工作', lemma: '裏工作' }]);
+        dict._lookupDict.mockReturnValue(result);
+        try {
+            line.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 210, clientY: 410 }));
+            expect(surface('popup')?.style.display).toBe('block');
+            expect(surface('popup')?.textContent).toContain('裏工作');
+        } finally {
+            delete (document as any).caretRangeFromPoint;
+        }
+    });
+
     it('moves the outline, popup and bridge with controls hiding and showing', async () => {
         await show();
         const initial = ['highlight', 'popup', 'bridge'].map((name) => parseFloat(surface(name).style.top));
@@ -278,5 +294,81 @@ describe('hover overlays follow subtitle layout without mouse movement', () => {
         expect(frames.size).toBe(1);
         dict.stop();
         expect(frames.size).toBe(0);
+    });
+});
+
+describe('hover dictionary preparation', () => {
+    let dict: any;
+    let send: jest.Mock;
+    const response = { entries: [], kanji: [{ kanji: '猫', keyword: 'cat', components: [] }] };
+    beforeEach(() => {
+        send = jest.fn().mockResolvedValue(response);
+        (globalThis as any).browser = { runtime: { sendMessage: send } };
+        dict = new SaviHoverDictionary();
+    });
+    afterEach(() => {
+        dict.stop();
+        jest.restoreAllMocks();
+        delete (globalThis as any).browser;
+    });
+    it('shares an outstanding dictionary request and serves its result synchronously', async () => {
+        const first = dict._lookupDict('猫');
+        const second = dict._lookupDict('猫');
+        expect(send).toHaveBeenCalledTimes(1);
+        expect(await first).toEqual(await second);
+        expect(dict._lookupDict('猫')).toEqual(response);
+    });
+    it('retries an empty dictionary response after its short expiry', async () => {
+        jest.spyOn(Date, 'now').mockReturnValue(1000);
+        send.mockResolvedValueOnce({ entries: [], kanji: [] });
+        await dict._lookupDict('猫');
+        (Date.now as jest.Mock).mockReturnValue(7000);
+        expect(await dict._lookupDict('猫')).toEqual(response);
+        expect(send).toHaveBeenCalledTimes(2);
+    });
+    it('prepares only the current and near next primary cues, without showing a popup', async () => {
+        const video = document.createElement('video');
+        video.currentTime = 10;
+        const cues = [
+            { text: '猫', track: 0, start: 9000, end: 11000 },
+            { text: '犬', track: 0, start: 12000, end: 13000 },
+            { text: '鳥', track: 0, start: 14000, end: 15000 },
+            { text: '魚', track: 0, start: 9000, end: 11000 },
+            { text: '英語', track: 1, start: 9000, end: 11000 },
+            { text: '昔', track: 0, start: 0, end: 1000 },
+        ];
+        dict = new SaviHoverDictionary(
+            () => video,
+            () => cues
+        );
+        const tokenize = jest.spyOn(dict, '_tokenize').mockImplementation((text: any) => [{ text }]);
+        // Start the lifecycle manually so the test can await the actual prefetch.
+        dict._bound = true;
+        await dict._prefetch();
+        expect(tokenize.mock.calls.map((args) => args[0])).toEqual(['猫', '魚']);
+        expect(send.mock.calls.map((args) => args[0].message.term)).toEqual(['猫', '魚']);
+        expect(document.querySelector('.savi-dict-popup')).toBeNull();
+        dict.stop();
+        await dict._prefetch();
+        expect(send).toHaveBeenCalledTimes(2);
+    });
+    it('does not start more preparation requests after stopping', async () => {
+        let finish!: (tokens: any[]) => void;
+        const video = document.createElement('video');
+        dict = new SaviHoverDictionary(
+            () => video,
+            () => [{ text: '猫', track: 0, start: 0, end: 1000 }]
+        );
+        jest.spyOn(dict, '_tokenize').mockReturnValue(
+            new Promise((resolve) => {
+                finish = resolve;
+            })
+        );
+        dict._bound = true;
+        const preparing = dict._prefetch();
+        dict.stop();
+        finish([{ text: '猫' }]);
+        await preparing;
+        expect(send).not.toHaveBeenCalled();
     });
 });
