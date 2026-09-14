@@ -84,10 +84,11 @@ export default defineConfig({
         const isDev = mode === 'development';
         const devLabel = isDev ? ' (Dev)' : '';
         const title = `${extName}${devLabel}`;
-        const name = `${title}: Watch, understand, remember`;
+        const name = title;
 
         let manifest: UserManifest = {
             name,
+            short_name: title,
             description: '__MSG_extensionDescription__',
             version,
             action: { default_title: title },
