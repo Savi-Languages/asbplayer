@@ -102,3 +102,12 @@ following, while keeping separate lookup and English translation targets.
 Regression tests cover group transitions, backwards seeks, paragraph translation,
 and minimizing during active recording. Spotify provides group-level timing in
 this format, so all paragraphs within the active group highlight together.
+
+### Shared hover popup spacing
+
+The shared Netflix/Spotify dictionary leaves at least 48 CSS pixels between a
+word and popup, scaling with larger text to keep the neighboring row accessible.
+The gap no longer intercepts pointer events: neighboring words take priority,
+while empty space keeps the current popup reachable. Tall entries scroll within
+the available viewport space. Geometry and interaction regression tests cover
+both popup directions, large fonts, neighboring targets and tall entries.
