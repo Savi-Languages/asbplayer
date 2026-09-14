@@ -63,6 +63,18 @@ const clean = (s: string) =>
         .replace(/<[^>]*>/g, '')
         .trim()
         .slice(0, 4000);
+/** Spotify may insert spaces between Japanese characters in generated text.
+ * Repair only Japanese-script boundaries; keep Latin word spacing and line breaks.
+ * Imported text intentionally bypasses this provider-specific repair. */
+function cleanProviderText(s: string, language?: string): string {
+    const text = clean(s);
+    const lang = language?.toLowerCase().split(/[-_]/)[0];
+    if (lang ? lang !== 'ja' : !/[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(text)) return text;
+    return text.replace(
+        /([\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}ー々〆])[\t \u00a0\u3000]+(?=[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}ー々〆])/gu,
+        '$1'
+    );
+}
 /** Only file-supplied timestamps become cues; no guessed tail duration. */
 export function parseSpotifyText(input: string): SpotifyLine[] {
     const text = input.replace(/\r/g, '').slice(0, 500000);
@@ -183,13 +195,19 @@ export function readSpotifyLines(doc: Document): SpotifyLine[] {
     );
     return Array.from(nodes)
         .slice(0, 5000)
-        .map((n) => ({ text: clean(n.textContent ?? ''), timing: 'untimed' as const }))
+        .map((n) => ({ text: cleanProviderText(n.textContent ?? ''), timing: 'untimed' as const }))
         .filter((l) => l.text);
 }
 /** Decode only supported provider payload fields, never arbitrary page objects. */
 export function spotifyPayloadLines(payload: unknown): SpotifyLine[] {
     const p = payload as any;
     const lyrics = p?.lyrics;
+    const language =
+        typeof lyrics?.language === 'string'
+            ? lyrics.language
+            : typeof p?.language === 'string'
+              ? p.language
+              : undefined;
     const sections = p?.section ?? p?.sections ?? p?.transcript?.sections ?? p?.timedText?.cues;
     const rawRows = Array.isArray(lyrics?.lines)
         ? lyrics.lines
@@ -206,14 +224,15 @@ export function spotifyPayloadLines(payload: unknown): SpotifyLine[] {
     return rows
         .slice(0, 5000)
         .map((row: any, i: number) => {
-            const text = clean(
+            const text = cleanProviderText(
                 typeof row.words === 'string'
                     ? row.words
                     : typeof row.text === 'string'
                       ? row.text
                       : typeof row.text?.sentence?.text === 'string'
                         ? row.text.sentence.text
-                        : ''
+                        : '',
+                language
             );
             const number = (v: unknown) =>
                 v !== undefined && v !== null && v !== '' && Number.isFinite(Number(v)) ? Number(v) : undefined;

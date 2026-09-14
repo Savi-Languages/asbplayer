@@ -7,6 +7,40 @@ import {
     spotifyPayloadLines,
 } from './spotify';
 const id = '1234567890123456789012';
+it('repairs Japanese provider spacing before tokenization without changing cue timing', () => {
+    expect(
+        spotifyPayloadLines({
+            language: 'ja',
+            section: [
+                { startMs: 1000, endMs: 3000, text: { sentence: { text: '今 日 は こ こ ま で で す。' } } },
+                { startMs: 3000, endMs: 4000, text: { sentence: { text: 'パ リ と New York に 行 く。' } } },
+                { startMs: 4000, endMs: 5000, text: { sentence: { text: '東 京' } } },
+            ],
+        })
+    ).toEqual([
+        { text: '今日はここまでです。', timing: 'timed', start: 1000, end: 3000 },
+        { text: 'パリと New York に行く。', timing: 'timed', start: 3000, end: 4000 },
+        { text: '東京', timing: 'timed', start: 4000, end: 5000 },
+    ]);
+});
+it('repairs visible Japanese text while preserving other languages and imported spacing', () => {
+    document.body.innerHTML = '<div data-testid="transcript-line">今 日 は こ こ ま で で す。</div>';
+    expect(readSpotifyLines(document)).toEqual([{ text: '今日はここまでです。', timing: 'untimed' }]);
+    for (const [language, words] of [
+        ['en', 'New York is nice'],
+        ['ko', '오늘 여기까지 입니다'],
+        ['zh', '今 天 好'],
+        ['en', 'A B C'],
+    ]) {
+        expect(spotifyPayloadLines({ lyrics: { language, syncType: 'UNSYNCED', lines: [{ words }] } })[0].text).toBe(
+            words
+        );
+    }
+    expect(parseSpotifyText('今 日 は\nNew York')).toEqual([
+        { text: '今 日 は', timing: 'untimed' },
+        { text: 'New York', timing: 'untimed' },
+    ]);
+});
 it('reads current podcast transcript paragraphs without notices or coarse chapter timestamps', () => {
     document.body.innerHTML = `<div role="tabpanel" id="transcript-panel">
         <div><span data-encore-id="text">Automatic transcript notice</span></div>
