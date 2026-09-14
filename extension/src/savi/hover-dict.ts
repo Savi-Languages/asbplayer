@@ -188,7 +188,7 @@ export function caretRangeFromPoint(x: number, y: number): Range | null {
 
 const POPUP_BG = '#171b22';
 const ARROW_SIZE = 7; // px; the triangle that points from the popup to the word
-const POPUP_GAP = 12; // px of clear space between the word and the popup body
+const POPUP_MIN_GAP = 48; // leave the neighboring text row accessible
 
 const POPUP_STYLE: Partial<CSSStyleDeclaration> = {
     position: 'fixed',
@@ -362,19 +362,28 @@ function renderEntry(
 // Anchor the popup to the WORD (not the cursor), centered above it with a clear
 // gap, and point the arrow at the word's center. Flips below when there's no
 // room above.
-function positionPopup(popup: HTMLDivElement, arrow: HTMLDivElement, word: DOMRect) {
-    const pr = popup.getBoundingClientRect();
+export function positionPopup(popup: HTMLDivElement, arrow: HTMLDivElement, word: DOMRect) {
+    const content = popup.querySelector<HTMLElement>('[data-savi-popup-content]');
+    if (content) content.style.maxHeight = '';
+    let pr = popup.getBoundingClientRect();
     const margin = 8;
     const wordCenterX = word.left + word.width / 2;
 
     let left = wordCenterX - pr.width / 2;
     left = Math.max(margin, Math.min(left, window.innerWidth - pr.width - margin));
 
-    let top = word.top - pr.height - POPUP_GAP - ARROW_SIZE; // prefer above
-    const below = top < margin;
-    if (below) {
-        top = word.bottom + POPUP_GAP + ARROW_SIZE;
+    const gap = Math.max(POPUP_MIN_GAP, Math.ceil(word.height * 1.8));
+    const aboveSpace = Math.max(0, word.top - gap - ARROW_SIZE - margin);
+    const belowSpace = Math.max(0, window.innerHeight - word.bottom - gap - ARROW_SIZE - margin);
+    const below = pr.height > aboveSpace && belowSpace > aboveSpace;
+    const available = below ? belowSpace : aboveSpace;
+    if (content && pr.height > available) {
+        const chrome = pr.height - content.getBoundingClientRect().height;
+        content.style.maxHeight = `${Math.max(0, available - chrome)}px`;
+        content.style.overflowY = 'auto';
+        pr = popup.getBoundingClientRect();
     }
+    const top = below ? word.bottom + gap + ARROW_SIZE : word.top - pr.height - gap - ARROW_SIZE;
 
     popup.style.left = `${left}px`;
     popup.style.top = `${top}px`;
@@ -533,7 +542,13 @@ export class SaviHoverDictionary {
         }
         const el = document.elementFromPoint(x, y);
         if (!(el instanceof Node)) return false;
-        return (!!this._popup && this._popup.contains(el)) || (!!this._bridge && this._bridge.contains(el));
+        return (!!this._popup && this._popup.contains(el)) || this._isOverBridge(x, y);
+    }
+
+    private _isOverBridge(x: number, y: number): boolean {
+        if (!this._bridge || this._bridge.style.display === 'none') return false;
+        const rect = this._bridge.getBoundingClientRect();
+        return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
     }
 
     private _onMouseMove = (event: MouseEvent) => {
@@ -541,12 +556,10 @@ export class SaviHoverDictionary {
         if (!line) {
             const target = event.target;
             const onPopup = !!this._popup && target instanceof Node && this._popup.contains(target);
-            const onBridge = target === this._bridge;
+            const onBridge = this._isOverBridge(event.clientX, event.clientY);
             if (onPopup || onBridge) {
-                // On the popup, or the invisible bridge spanning the gap up to it
-                // — keep things up so the buttons stay reachable. Travelling the
-                // bridge is what stops the OTHER subtitle line (which sits in that
-                // gap for a bottom-line word) from stealing the hover.
+                // Empty space in the gap keeps the popup reachable. Actual text
+                // resolves above and takes priority, allowing direct line-to-line hover.
                 this._cancelHide();
                 return;
             }
@@ -1187,6 +1200,7 @@ export class SaviHoverDictionary {
         });
 
         const content = document.createElement('div');
+        content.dataset.saviPopupContent = '';
         popup.appendChild(content);
 
         // Triangle that points from the popup to the word (border colors set in
@@ -1224,8 +1238,8 @@ export class SaviHoverDictionary {
         el.className = 'savi-dict-bridge';
         Object.assign(el.style, {
             position: 'fixed',
-            zIndex: '2147483646', // just below the popup, above the subtitles
-            pointerEvents: 'auto',
+            zIndex: '2147483646', // geometry only; underlying words remain interactive
+            pointerEvents: 'none',
             background: 'transparent',
             display: 'none',
         });
@@ -1234,11 +1248,8 @@ export class SaviHoverDictionary {
         return el;
     }
 
-    // Cover the gap between the hovered word and its popup with a transparent,
-    // interactive strip. The cursor travels over this on its way to the popup,
-    // and `_onMouseMove` treats the bridge as "on the popup" — so reaching the
-    // buttons never crosses the OTHER subtitle line that sits in that gap for a
-    // bottom-line word. Geometry-driven, so it needs no hover timing.
+    // Geometry-only corridor keeps the popup open across blank space without
+    // intercepting hover or clicks on neighboring subtitle lines.
     private _positionBridge(word: DOMRect) {
         const popup = this._popup;
         const bridge = this._ensureBridge();
