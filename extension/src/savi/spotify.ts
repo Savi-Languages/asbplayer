@@ -162,7 +162,7 @@ export function readSpotifyPlayback(doc: Document): SpotifyPlayback {
 /** Read only text that Spotify actually renders. Highlight is not a timestamp. */
 export function readSpotifyLines(doc: Document): SpotifyLine[] {
     const nodes = doc.querySelectorAll(
-        '[data-testid="lyrics-line"], [data-testid="transcript-segment"], [data-testid="transcript-line"]'
+        '[data-testid="lyrics-line"], [data-testid="transcript-segment"], [data-testid="transcript-line"], #transcript-panel[role="tabpanel"] [data-encore-id="text"][dir="auto"]'
     );
     return Array.from(nodes)
         .slice(0, 5000)

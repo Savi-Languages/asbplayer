@@ -1,5 +1,24 @@
-import { spotifyIdentity, parseSpotifyText, playbackDelta, readSpotifyPlayback, spotifyPayloadLines } from './spotify';
+import {
+    spotifyIdentity,
+    parseSpotifyText,
+    playbackDelta,
+    readSpotifyPlayback,
+    readSpotifyLines,
+    spotifyPayloadLines,
+} from './spotify';
 const id = '1234567890123456789012';
+it('reads current podcast transcript paragraphs without notices or coarse chapter timestamps', () => {
+    document.body.innerHTML = `<div role="tabpanel" id="transcript-panel">
+        <div><span data-encore-id="text">Automatic transcript notice</span></div>
+        <div><button><span data-encore-id="text">0:19</span></button></div>
+        <div><span data-encore-id="text" dir="auto">こんにちは。</span></div>
+        <div><span data-encore-id="text" dir="auto">今日は晴れです。</span></div>
+    </div><div id="description-panel"><span data-encore-id="text" dir="auto">Unrelated description</span></div>`;
+    expect(readSpotifyLines(document)).toEqual([
+        { text: 'こんにちは。', timing: 'untimed' },
+        { text: '今日は晴れです。', timing: 'untimed' },
+    ]);
+});
 it('uses only canonical track/episode identities, never ads or arbitrary hosts', () => {
     expect(spotifyIdentity(`https://open.spotify.com/intl-ja/track/${id}?si=abc`)).toEqual({
         id: `spotify:track:${id}`,
