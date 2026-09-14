@@ -201,9 +201,13 @@ export function readSpotifyLines(doc: Document): SpotifyLine[] {
 /** Native transcript timestamps bound groups, not individual sentences. Keep each
  * group intact; the final group has no known end and must not acquire a guess. */
 export function readSpotifyTranscriptGroups(doc: Document): SpotifyLine[] {
+    return readSpotifyTranscriptEntries(doc).map((entry) => entry.line);
+}
+export function readSpotifyTranscriptEntries(doc: Document): { line: SpotifyLine; elements: Element[] }[] {
     const panel = doc.querySelector('#transcript-panel[role="tabpanel"]');
     if (!panel) return [];
-    const lines: SpotifyLine[] = [];
+    const lines: { line: SpotifyLine; elements: Element[] }[] = [];
+    let elements: Element[] = [];
     let start: number | undefined;
     let text: string[] = [];
     const timestamp = (value: string): number | undefined => {
@@ -229,12 +233,16 @@ export function readSpotifyTranscriptGroups(doc: Document): SpotifyLine[] {
                 joined &&
                 joined.length <= 4000
             )
-                lines.push({ text: joined, timing: 'timed', start, end });
+                lines.push({ line: { text: joined, timing: 'timed', start, end }, elements });
             start = end;
             text = [];
+            elements = [];
         } else if (!node.closest('button')) {
             const value = cleanProviderText(node.textContent ?? '');
-            if (value) text.push(value);
+            if (value) {
+                text.push(value);
+                elements.push(node);
+            }
         }
     }
     return lines;

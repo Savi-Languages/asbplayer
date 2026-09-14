@@ -1,5 +1,5 @@
 import { SpotifyReadingSurface, pointOnSpotifyText } from './spotify-reading';
-import { spotifyIdentity, type SpotifyPlayback, type SpotifyLine } from './spotify';
+import { readSpotifyTranscriptGroups, spotifyIdentity, type SpotifyPlayback, type SpotifyLine } from './spotify';
 
 const id = 'spotify:episode:1234567890123456789012';
 const lines: SpotifyLine[] = [
@@ -320,4 +320,49 @@ it('does not resume a manually paused player or one explicitly controlled during
     document.querySelector('footer')!.dispatchEvent(new Event('pointerdown', { bubbles: true }));
     document.body.dispatchEvent(new MouseEvent('mousemove', { bubbles: true }));
     expect(media.play).not.toHaveBeenCalled();
+});
+
+it('highlights and follows native timestamp groups while keeping each paragraph separate for translation', async () => {
+    surface.stop();
+    const host = native();
+    host.innerHTML = `<button>0:00</button><span data-encore-id="text" dir="auto">今日は旅行です。</span>
+      <span data-encore-id="text" dir="auto">楽しいです。</span><button>0:03</button>
+      <span data-encore-id="text" dir="auto">次の話です。</span><button>0:05</button>`;
+    const paragraphs = Array.from(host.querySelectorAll<HTMLElement>('[dir=auto]'));
+    paragraphs.forEach((el, i) =>
+        jest
+            .spyOn(el, 'getBoundingClientRect')
+            .mockReturnValue({
+                top: 120 + i * 50,
+                bottom: 140 + i * 50,
+                left: 100,
+                right: 600,
+                width: 500,
+                height: 20,
+            } as DOMRect)
+    );
+    host.style.overflowY = 'auto';
+    Object.defineProperties(host, { scrollHeight: { value: 1000 }, clientHeight: { value: 100 } });
+    const groups = readSpotifyTranscriptGroups(document);
+    const translate = jest.fn(async (text: string) => 'English: ' + text);
+    surface = new SpotifyReadingSurface(
+        () => ({ ...snapshot(), lines: groups, account: 'learner' }),
+        () => {},
+        translate
+    );
+    surface.start();
+    const update = surface.update.bind(surface);
+    surface.update = () => update('https://open.spotify.com/episode/1234567890123456789012');
+    surface.update();
+    await settleTranslations();
+    expect(paragraphs.map((el) => el.dataset.saviCurrent)).toEqual(['true', 'true', 'false']);
+    expect(paragraphs[0].nextElementSibling?.textContent).toBe('English: 今日は旅行です。');
+    host.scrollTop = 0;
+    state.positionMs = 3500;
+    surface.update();
+    expect(paragraphs.map((el) => el.dataset.saviCurrent)).toEqual(['false', 'false', 'true']);
+    expect(host.scrollTop).not.toBe(0);
+    state.positionMs = 1000;
+    surface.update();
+    expect(paragraphs.map((el) => el.dataset.saviCurrent)).toEqual(['true', 'true', 'false']);
 });

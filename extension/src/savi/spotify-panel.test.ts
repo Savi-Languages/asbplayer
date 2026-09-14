@@ -320,3 +320,22 @@ it('does not attach the browsed podcast transcript to a different playing episod
     expect(sent.some((m) => m.command === 'savi-start-capture')).toBe(false);
     f.p.stop();
 });
+
+it('minimizes and reopens the menu without stopping an active recording', async () => {
+    const f = await autoFixture();
+    f.play();
+    await f.advance(12);
+    const toggle = f.root.querySelector<HTMLButtonElement>('[aria-label="Savi learning menu"]')!;
+    toggle.click();
+    const close = f.root.querySelector<HTMLButtonElement>('[aria-label="Minimize Savi"]')!;
+    expect(close).not.toBeNull();
+    expect(close.hidden).toBe(false);
+    close.click();
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(close.hidden).toBe(true);
+    expect(sent.some((m) => m.command === 'savi-stop-capture')).toBe(false);
+    toggle.click();
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(close.hidden).toBe(false);
+    f.p.stop();
+});

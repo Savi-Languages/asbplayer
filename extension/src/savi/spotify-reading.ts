@@ -2,6 +2,7 @@ import { PauseOnHoverMode } from '@project/common/settings';
 import { SaviHoverDictionary } from './hover-dict';
 import {
     cleanProviderText,
+    readSpotifyTranscriptEntries,
     spotifyIdentity,
     type SpotifyLine,
     type SpotifyPlayback,
@@ -21,6 +22,7 @@ const nativeSelector =
     '#transcript-panel[role="tabpanel"] [data-encore-id="text"][dir="auto"], [data-testid="transcript-segment"], [data-testid="transcript-line"], [data-testid="lyrics-line"]';
 type Annotation = {
     cue: SpotifyLine;
+    playbackCue?: SpotifyLine;
     native?: boolean;
     node?: Text;
     original?: string;
@@ -266,6 +268,19 @@ export class SpotifyReadingSurface {
             const text = cleanProviderText(el.textContent ?? '', s.lang);
             nativeCounts.set(text, (nativeCounts.get(text) ?? 0) + 1);
         }
+        // Native timestamps apply to groups. Keep paragraph lookup/translation
+        // separate, but highlight and scroll the paragraphs belonging to that group.
+        const timedKey = (line: SpotifyLine) => JSON.stringify([line.start, line.end, line.text]);
+        const timedLines = new Map(
+            s.lines.filter((line) => line.timing === 'timed').map((line) => [timedKey(line), line])
+        );
+        const nativePlayback = new Map<Element, SpotifyLine>();
+        if (spotifyIdentity(pageUrl)?.id === id) {
+            for (const entry of readSpotifyTranscriptEntries(document)) {
+                const line = timedLines.get(timedKey(entry.line));
+                if (line) for (const el of entry.elements) nativePlayback.set(el, line);
+            }
+        }
         let after = 0;
         for (const el of candidates) {
             const text = cleanProviderText(el.textContent ?? '', s.lang);
@@ -286,12 +301,13 @@ export class SpotifyReadingSurface {
                       : { text, timing: 'untimed' as const };
             if (existing && existing.node === el.firstChild && existing.node?.textContent === text) {
                 existing.cue = cue;
+                existing.playbackCue = nativePlayback.get(el);
                 existing.native = index === undefined;
                 if (existing.english?.previousSibling !== el && existing.english) el.after(existing.english);
                 continue;
             }
             if (existing) this.restore(el);
-            const info: Annotation = { cue, native: index === undefined };
+            const info: Annotation = { cue, playbackCue: nativePlayback.get(el), native: index === undefined };
             if (el.childNodes.length === 1 && el.firstChild instanceof Text) {
                 info.node = el.firstChild;
                 info.original = info.node.textContent ?? '';
@@ -336,7 +352,8 @@ export class SpotifyReadingSurface {
         // Keep the text under the pointer stable, even with hover-pause disabled.
         if (!this.held) {
             this.active = cue;
-            for (const [el, info] of this.annotations) el.dataset.saviCurrent = String(info.cue === cue);
+            for (const [el, info] of this.annotations)
+                el.dataset.saviCurrent = String((info.playbackCue ?? info.cue) === cue);
             if (cue && moved && nativeVisible && !this.browsing) this.followNative(cue);
             if (this.caption.textContent !== (cue?.text ?? '')) this.caption.textContent = cue?.text ?? '';
         }
@@ -428,7 +445,7 @@ export class SpotifyReadingSurface {
         }
     }
     private followNative(cue: SpotifyLine) {
-        const el = Array.from(this.annotations).find(([, info]) => info.cue === cue)?.[0];
+        const el = Array.from(this.annotations).find(([, info]) => (info.playbackCue ?? info.cue) === cue)?.[0];
         if (!el) return;
         // Scroll Spotify's internal pane, never the document or browser window.
         for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
