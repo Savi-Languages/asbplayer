@@ -13,11 +13,19 @@ import { Segmenter, type SegmenterOutput } from './segmenter';
 import { serializeToSrt } from './subtitle-serializer';
 import { finishNotice } from './capture-notice';
 import type { SaviSegmentOp } from './messages';
+import { SpotifyReadingSurface } from './spotify-reading';
+import { PauseOnHoverMode } from '@project/common/settings';
 
 export interface SpotifyPanelDeps {
     media?(): readonly SpotifyMedia[];
     send(message: any): Promise<any>;
-    settings(): Promise<{ lang: string; enabled: boolean; muted: boolean; autoCapture?: boolean }>;
+    settings(): Promise<{
+        lang: string;
+        enabled: boolean;
+        muted: boolean;
+        autoCapture?: boolean;
+        pauseOnHoverMode?: PauseOnHoverMode;
+    }>;
 }
 /** One controller owns this document. Reuses Savi's account, outbox and capture API. */
 export class SpotifyPanel {
@@ -97,6 +105,9 @@ export class SpotifyPanel {
     private seen = new Set<string>();
     private exposureCoverage = new Map<string, number>();
     private buttons: HTMLButtonElement[] = [];
+    private menuButton = document.createElement('button');
+    private reading?: SpotifyReadingSurface;
+    private pauseOnHoverMode = PauseOnHoverMode.disabled;
     constructor(private deps: SpotifyPanelDeps) {}
     start() {
         this.host.dataset.saviSpotify = 'true';
@@ -104,11 +115,13 @@ export class SpotifyPanel {
         const style = document.createElement('style');
         style.textContent = `:host{position:fixed;right:12px;bottom:100px;z-index:2147483500;width:min(370px,calc(100vw - 24px));font:14px/1.5 system-ui;color:#eef3f8}*{box-sizing:border-box}h2,p{margin:0 0 10px}h2{font-size:17px}button,select,textarea{font:inherit;color:inherit;background:#253443;border:1px solid #61748a;border-radius:8px;padding:8px;min-height:40px}button{cursor:pointer}button:hover,button:focus-visible{background:#35526b}button:disabled{opacity:.45;cursor:default}button[aria-pressed=true]{border-color:#84e6c1;background:#1c5348}section{background:#111d29;border:1px solid #536677;border-radius:12px;padding:12px;box-shadow:0 8px 35px #0008;max-height:70vh;overflow:auto}.row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}.lines{max-height:190px;overflow:auto;display:grid;gap:6px;margin:8px 0}.lines button{text-align:left;width:100%;white-space:pre-wrap}textarea{width:100%;height:100px;margin-top:8px}small,p{color:#bacbd8}summary{cursor:pointer;padding:8px 0}a{color:#91d4ff}@media(max-width:500px){:host{right:8px;width:calc(100vw - 16px);bottom:88px}section{max-height:65vh}.row{display:grid;grid-template-columns:1fr 1fr}.row>*{width:100%}}`;
         const section = document.createElement('section');
-        const toggle = this.button('Savi · Spotify', () => {
+        const toggle = (this.menuButton = this.button('Savi', () => {
             this.body.hidden = !this.body.hidden;
             toggle.setAttribute('aria-expanded', String(!this.body.hidden));
-        });
-        toggle.setAttribute('aria-expanded', 'true');
+        }));
+        this.body.hidden = true;
+        toggle.setAttribute('aria-expanded', 'false');
+        toggle.setAttribute('aria-label', 'Savi learning menu');
         this.heading.textContent = 'Start a song or podcast';
         this.status.setAttribute('role', 'status');
         const actions = document.createElement('div');
@@ -180,20 +193,39 @@ export class SpotifyPanel {
         link.target = '_blank';
         link.rel = 'noreferrer';
         link.textContent = 'Open your Savi library and review';
+        const transcript = document.createElement('details');
+        const transcriptTitle = document.createElement('summary');
+        transcriptTitle.textContent = 'Browse supplied text';
+        transcript.append(transcriptTitle, this.list);
         this.body.append(
             this.heading,
             this.playbackLabel,
             this.textStatus,
             actions,
             reveal,
-            this.list,
+            transcript,
             importer,
             this.status,
             link
         );
         section.append(toggle, this.body);
+        style.textContent +=
+            ':host{width:auto;max-width:calc(100vw - 24px)}section{padding:6px;background:#161f1c;border-color:#ffffff30;border-radius:22px}section>div{width:min(346px,calc(100vw - 50px));padding:12px;max-height:60vh;overflow:auto}section>button{border:0;border-radius:18px;background:transparent;padding:6px 14px;min-height:32px}section>div[hidden]{display:none}';
         this.root.append(style, section);
         document.body.append(this.host);
+        this.reading = new SpotifyReadingSurface(
+            () => ({
+                playback: this.state,
+                lines: this.lines,
+                lang: this.lang,
+                visible: !this.host.hidden && !this.list.hidden,
+                pauseOnHoverMode: this.pauseOnHoverMode,
+            }),
+            (line) => {
+                if (this.selected !== line) this.select(line);
+            }
+        );
+        this.reading.start();
         window.addEventListener('message', this.onText);
         window.postMessage({ type: 'savi-spotify-text-request' }, 'https://open.spotify.com');
         window.addEventListener('pagehide', this.onPageHide);
@@ -213,6 +245,7 @@ export class SpotifyPanel {
         this.flush();
         void this.finishCapture();
         for (const event of this.mediaEvents) this.previousMedia?.removeEventListener(event, this.mediaChanged);
+        this.reading?.stop();
         this.host.remove();
         window.removeEventListener('message', this.onText);
         window.removeEventListener('pagehide', this.onPageHide);
@@ -256,6 +289,7 @@ export class SpotifyPanel {
             this.enabled = settings.enabled && Boolean(this.account) && Boolean(this.lang) && !settings.muted;
             this.autoCapture =
                 settings.autoCapture === true && Boolean(this.account) && Boolean(this.lang) && !settings.muted;
+            this.pauseOnHoverMode = settings.pauseOnHoverMode ?? PauseOnHoverMode.disabled;
             this.hoverEnabled = config.enabled === true;
             this.mode = config.mode ?? 'watch';
             this.modeSelect.value = this.mode;
@@ -395,6 +429,9 @@ export class SpotifyPanel {
             : 'Sign in to Spotify and play on this browser.';
         if (this.playbackLabel.textContent !== playbackLabel) this.playbackLabel.textContent = playbackLabel;
         this.followPlayback();
+        this.reading?.update();
+        this.menuButton.textContent = this.captureId ? '● Savi · Recording' : 'Savi';
+        this.menuButton.title = this.captureId ? 'Audio is recording. Open to stop and save.' : 'Learning controls';
         if (
             this.replayUntil &&
             next.identity?.id === this.replayUntil.id &&

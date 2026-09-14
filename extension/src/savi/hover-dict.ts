@@ -403,6 +403,12 @@ function positionPopup(popup: HTMLDivElement, arrow: HTMLDivElement, word: DOMRe
  *  kanji-only result still teaches, but there is no label to persist). */
 const firstDictGloss = (entries: SaviDictEntry[]): string => entries[0]?.senses?.[0]?.glosses?.[0] ?? '';
 
+export interface SaviHoverAdapter {
+    resolveLine(target: EventTarget | null): HTMLElement | null;
+    episodeId(): string | undefined;
+    playback(): Pick<HTMLMediaElement, 'paused' | 'pause' | 'play'> | null;
+}
+
 export class SaviHoverDictionary {
     // AI segmentations only — a rule-based fallback is never cached (see _segment).
     private readonly _segmentCache = new Map<string, SaviToken[]>();
@@ -411,6 +417,9 @@ export class SaviHoverDictionary {
     private _wordPanel: SaviWordPanel | null = null;
     private _panelOpen = false; // the tap study panel is up → keep the video paused
     private _pausedForPanel = false; // WE paused the video for the panel, so WE resume
+    private _panelPlayback: Pick<HTMLMediaElement, 'paused' | 'pause' | 'play'> | null = null;
+    private _panelEpisode: string | undefined;
+    private _lifecycle = 0;
     private readonly _dictCache = new Map<string, SaviDictResponse>();
     private _popup: HTMLDivElement | null = null;
     private _popupContent: HTMLDivElement | null = null;
@@ -451,8 +460,25 @@ export class SaviHoverDictionary {
         private readonly _subtitleProvider: () => SerializableSubtitle[] = () => [],
         private readonly _onReveal?: (lineText: string, word: string, gloss: string) => void,
         private readonly _onRevealEnd?: (lineText: string, word: string) => void,
-        private readonly _onRetract?: (lineText: string, word: string) => void
+        private readonly _onRetract?: (lineText: string, word: string) => void,
+        private readonly _adapter?: SaviHoverAdapter
     ) {}
+
+    private _episodeId() {
+        return this._adapter ? this._adapter.episodeId() : deriveEpisodeId(location.href, document.title);
+    }
+    private _playback() {
+        return this._adapter ? this._adapter.playback() : this._videoProvider();
+    }
+    private _resolveLine(target: EventTarget | null) {
+        return this._adapter ? this._adapter.resolveLine(target) : lineElement(target);
+    }
+
+    /** A platform control superseded Savi's pause ownership. */
+    cancelPlaybackResume() {
+        this._pausedForPanel = false;
+        this._panelPlayback = null;
+    }
 
     /** The reveal currently on screen, so its dwell can be closed when the
      *  popup or panel goes away. */
@@ -483,6 +509,7 @@ export class SaviHoverDictionary {
     }
 
     stop() {
+        this._lifecycle++;
         this._endReveal();
         if (!this._bound) return;
         this._bound = false;
@@ -491,6 +518,7 @@ export class SaviHoverDictionary {
         this._clear();
         this._panelOpen = false;
         this._pausedForPanel = false;
+        this._panelPlayback = null;
         this._wordPanel?.destroy();
         this._wordPanel = null;
     }
@@ -509,7 +537,7 @@ export class SaviHoverDictionary {
     }
 
     private _onMouseMove = (event: MouseEvent) => {
-        const line = lineElement(event.target);
+        const line = this._resolveLine(event.target);
         if (!line) {
             const target = event.target;
             const onPopup = !!this._popup && target instanceof Node && this._popup.contains(target);
@@ -648,7 +676,8 @@ export class SaviHoverDictionary {
      *  cached null and keep telling them to sign in, right under an explanation
      *  section that just succeeded. */
     private async _segment(text: string): Promise<{ tokens: SaviToken[] | null; unavailable?: SaviAiUnavailable }> {
-        const cached = this._segmentCache.get(text);
+        const cacheKey = this._adapter ? `${this._episodeId() ?? ''}\u0000${text}` : text;
+        const cached = this._segmentCache.get(cacheKey);
         if (cached !== undefined) {
             return { tokens: cached };
         }
@@ -659,7 +688,7 @@ export class SaviHoverDictionary {
             text,
             prevLines,
             nextLines,
-            episodeId: deriveEpisodeId(location.href, document.title),
+            episodeId: this._episodeId(),
         });
         if (!res.ai || res.tokens.length === 0) {
             return { tokens: null, unavailable: res.unavailable };
@@ -668,7 +697,7 @@ export class SaviHoverDictionary {
             const oldest = this._segmentCache.keys().next().value;
             if (oldest !== undefined) this._segmentCache.delete(oldest);
         }
-        this._segmentCache.set(text, res.tokens);
+        this._segmentCache.set(cacheKey, res.tokens);
         return { tokens: res.tokens };
     }
 
@@ -684,7 +713,7 @@ export class SaviHoverDictionary {
         term: string,
         reading?: string
     ): Promise<{ explanation: string | null; unavailable?: SaviAiUnavailable }> {
-        const cacheKey = `${term}\u0000${text}`;
+        const cacheKey = `${this._adapter ? this._episodeId() ?? '' : ''}\u0000${term}\u0000${text}`;
         const cached = this._explainCache.get(cacheKey);
         if (cached !== undefined) {
             return { explanation: cached };
@@ -698,7 +727,7 @@ export class SaviHoverDictionary {
             text,
             prevLines,
             nextLines,
-            episodeId: deriveEpisodeId(location.href, document.title),
+            episodeId: this._episodeId(),
         });
         const explanation = res.explanation ?? null;
         if (explanation === null) {
@@ -744,7 +773,7 @@ export class SaviHoverDictionary {
 
     /** Tap handler: open the study panel for a Japanese subtitle word. */
     private _onClick = (event: MouseEvent) => {
-        const line = lineElement(event.target);
+        const line = this._resolveLine(event.target);
         if (!line) {
             return; // not on a subtitle — let the click through (video controls, etc.)
         }
@@ -764,13 +793,17 @@ export class SaviHoverDictionary {
      *  on demand. This is the ONLY place the segmentation LLM runs, so a slow or
      *  failed call only ever affects this panel — never the hover popup. */
     private async _openWordDetail(text: string, offset: number) {
+        const lifecycle = this._lifecycle;
+        const episode = this._episodeId();
         const tokens = await this._tokenize(text);
+        if (lifecycle !== this._lifecycle || episode !== this._episodeId()) return;
         const span = tokenSpanAtOffset(tokens, offset);
         if (!span || !JAPANESE.test(span.token.text)) {
             return;
         }
         const term = lookupTermFor(span.token);
         const dict = await this._lookupDict(term);
+        if (lifecycle !== this._lifecycle || episode !== this._episodeId()) return;
         this._hidePopup(); // the small hover popup gives way to the full panel
         // Opening the study panel is MINING intent, not a failure to recall —
         // the panel is where the "+ Add to Anki" button lives. Retract before
@@ -794,10 +827,12 @@ export class SaviHoverDictionary {
         // (isOverHoverSurface returns true while _panelOpen, so the binding's
         // hover-resume can't fire; we resume on close only when WE were the pauser.)
         this._panelOpen = true;
-        const video = this._videoProvider();
+        const video = this._playback();
         if (video && !video.paused) {
             video.pause();
             this._pausedForPanel = true;
+            this._panelPlayback = video;
+            this._panelEpisode = episode;
         }
         // Make sure the daemon has the whole-episode transcript (once per episode) so
         // the AI explanation + segmentation can ground in the episode gist — not just
@@ -806,10 +841,11 @@ export class SaviHoverDictionary {
         // Skipped entirely when the page has no stable id yet — grounding the
         // AI in an episode we cannot name would file the transcript under a
         // throwaway id.
-        const transcriptEpisodeId = deriveEpisodeId(location.href, document.title);
+        const transcriptEpisodeId = this._episodeId();
         if (transcriptEpisodeId !== undefined) {
             await this._maybeSendTranscript(transcriptEpisodeId).catch(() => {});
         }
+        if (lifecycle !== this._lifecycle || episode !== this._episodeId()) return;
         // AI in-context — fired ONLY here, on a deliberate tap. Far fewer calls than
         // per-hover (so the providers stop rate-limiting), and a slow/failed call
         // degrades to a graceful "unavailable" inside the panel.
@@ -858,10 +894,11 @@ export class SaviHoverDictionary {
         this._panelOpen = false;
         if (this._pausedForPanel) {
             this._pausedForPanel = false;
-            const video = this._videoProvider();
-            if (video) {
+            const video = this._playback();
+            if (video && video === this._panelPlayback && this._episodeId() === this._panelEpisode && video.paused) {
                 void video.play().catch(() => {});
             }
+            this._panelPlayback = null;
         }
     }
 
@@ -881,7 +918,7 @@ export class SaviHoverDictionary {
         button.disabled = true;
         button.textContent = 'Adding…';
         try {
-            const episodeId = deriveEpisodeId(location.href, document.title);
+            const episodeId = this._episodeId();
             if (episodeId === undefined) {
                 button.textContent = 'Not ready';
                 return;

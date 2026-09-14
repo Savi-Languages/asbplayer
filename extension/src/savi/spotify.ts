@@ -66,7 +66,7 @@ const clean = (s: string) =>
 /** Spotify may insert spaces between Japanese characters in generated text.
  * Repair only Japanese-script boundaries; keep Latin word spacing and line breaks.
  * Imported text intentionally bypasses this provider-specific repair. */
-function cleanProviderText(s: string, language?: string): string {
+export function cleanProviderText(s: string, language?: string): string {
     const text = clean(s);
     const lang = language?.toLowerCase().split(/[-_]/)[0];
     if (lang ? lang !== 'ja' : !/[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(text)) return text;

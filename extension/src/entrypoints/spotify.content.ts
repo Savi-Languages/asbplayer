@@ -17,6 +17,7 @@ export default defineContentScript({
             settings: async () => ({
                 lang: (await getCachedRoamingSettings()).targetLanguage,
                 enabled: await settings.getSingle('saviEncounterRecording'),
+                pauseOnHoverMode: await settings.getSingle('pauseOnHoverMode'),
                 autoCapture:
                     (await settings.getSingle('saviCaptureEnabled')) &&
                     (await settings.getSingle('saviAudioRecording')),

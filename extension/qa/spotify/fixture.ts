@@ -3,14 +3,32 @@ const events = document.querySelector('#events')!;
 let failed = false,
     audioFailure = false;
 const panel = new SpotifyPanel({
-    settings: async () => ({ lang: 'ja', enabled: true, muted: false }),
+    settings: async () => ({ lang: 'ja', enabled: true, muted: false, pauseOnHoverMode: 1 }),
     send: async (message: any) => {
         events.textContent = JSON.stringify(message, null, 2);
         if (message.command === 'savi-watch-interest-config')
             return { account: 'synthetic', mode: 'explore', enabled: true };
-        if (message.command === 'savi-tokenize') return { tokens: [{ text: message.text, lemma: message.text }] };
+        if (message.command === 'savi-tokenize')
+            return {
+                tokens: Array.from(new Intl.Segmenter('ja', { granularity: 'word' }).segment(message.text), (s) => ({
+                    text: s.segment,
+                    lemma: s.segment,
+                })),
+            };
         if (message.command === 'savi-dict')
-            return { entries: [{ readings: ['てすと'], senses: [{ glosses: ['Synthetic dictionary response'] }] }] };
+            return {
+                entries: [
+                    {
+                        kanji: [message.term],
+                        readings: ['りょこう'],
+                        senses: [{ glosses: ['travel; trip (fixture definition)'] }],
+                    },
+                ],
+                kanji: [],
+            };
+        if (message.command === 'savi-segment-line') return { ai: false, tokens: [], unavailable: 'disabled' };
+        if (message.command === 'savi-explain-word') return { explanation: null, unavailable: 'disabled' };
+        if (message.command === 'savi-kanji') return { kanji: [] };
         if (message.command === 'savi-start-capture')
             return {
                 started: true,
@@ -87,3 +105,46 @@ document.querySelector<HTMLButtonElement>('#offline')!.onclick = () => {
 };
 document.querySelector<HTMLButtonElement>('#missing')!.onclick = () => location.reload();
 panel.start();
+
+// The shared production dictionary uses the runtime seam, isolated here.
+(globalThis as any).browser = { runtime: { sendMessage: ({ message }: any) => (panel as any).deps.send(message) } };
+const transcript = document.createElement('div');
+transcript.id = 'native-lyrics';
+transcript.style.cssText =
+    'max-height:240px;overflow:auto;font-size:26px;line-height:2.4;padding:18px;background:#243229;border-radius:12px';
+for (const text of ['今日は旅行です。', 'パリはきれいです。', '楽しいです。']) {
+    const line = document.createElement('p');
+    line.dataset.testid = 'lyrics-line';
+    line.textContent = text;
+    transcript.append(line);
+}
+document.querySelector('main')!.prepend(transcript);
+const toggleNative = document.createElement('button');
+toggleNative.textContent = 'Toggle native transcript';
+toggleNative.onclick = () => {
+    transcript.hidden = !transcript.hidden;
+};
+transcript.before(toggleNative);
+const root = document.querySelector('[data-savi-spotify]')!.shadowRoot!;
+root.querySelector('textarea')!.value =
+    '00:00:00.000 --> 00:00:20.000\n今日は旅行です。\n\n00:00:20.000 --> 00:00:40.000\nパリはきれいです。\n\n00:00:40.000 --> 00:01:00.000\n楽しいです。';
+Array.from(root.querySelectorAll('button'))
+    .find((b) => b.textContent === 'Use this text')!
+    .click();
+
+const previewHover = document.createElement('button');
+previewHover.textContent = 'Preview word hover';
+previewHover.onclick = () => {
+    const line = transcript.hidden
+        ? document.querySelector('[data-savi-spotify-caption]')!
+        : transcript.querySelector('p')!;
+    const text = line.firstChild!;
+    const range = document.createRange();
+    range.setStart(text, 3);
+    range.setEnd(text, 5);
+    const r = range.getBoundingClientRect();
+    line.dispatchEvent(
+        new MouseEvent('mousemove', { bubbles: true, clientX: r.left + 3, clientY: r.top + r.height / 2 })
+    );
+};
+toggleNative.after(previewHover);
