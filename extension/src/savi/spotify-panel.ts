@@ -13,6 +13,7 @@ import { Segmenter, type SegmenterOutput } from './segmenter';
 import { serializeToSrt } from './subtitle-serializer';
 import { finishNotice } from './capture-notice';
 import type { SaviToken, SaviDictEntry } from './daemon-client';
+import type { SaviSegmentOp } from './messages';
 
 export interface SpotifyPanelDeps {
     media?(): readonly SpotifyMedia[];
@@ -734,9 +735,11 @@ export class SpotifyPanel {
     private enqueueOps(outputs: SegmenterOutput[]) {
         if (outputs.some((o) => o.type === 'rate-unsupported'))
             this.notice('Audio capture supports 0.5×–2×. Choose a supported rate to resume.');
-        const ops = outputs
-            .filter((o) => o.type !== 'rate-unsupported')
-            .map((o) => (o.type === 'segment-start' ? { type: o.type, ...o.segment } : { type: o.type }));
+        const ops: SaviSegmentOp[] = [];
+        for (const output of outputs) {
+            if (output.type === 'segment-start') ops.push({ op: 'segment-start', segment: output.segment });
+            else if (output.type === 'segment-end') ops.push({ op: 'segment-end' });
+        }
         if (!ops.length) return;
         const episodeId = this.captureId;
         this.captureChain = this.captureChain

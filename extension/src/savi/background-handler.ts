@@ -933,7 +933,7 @@ export default class SaviCommandHandler implements CommandHandler {
             if (session.episodeId.startsWith('spotify:')) {
                 const audible = await browser.tabs.query({ audible: true });
                 if (audible.some(tab => tab.id !== tabId)) {
-                    await postPlaybackState(config, {captureId: session.captureId, seq, ops: [{type: 'segment-end'}]});
+                    await postPlaybackState(config, {captureId: session.captureId, seq, ops: [{op: 'segment-end'}]});
                     return {ok: false, audio: 'off'};
                 }
             }
