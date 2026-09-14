@@ -6,10 +6,10 @@ Japanese dictionary and word study panel as Netflix. A current-line caption
 above the player appears when matching native text is not visible. Controls and
 the imported-text browser live in a collapsed Savi menu.
 
-Native episode text must match Now Playing and the browsed episode. Only known
-provider/import lines receive targets. Repeated phrases in partial native text
-are skipped when their occurrence cannot be disambiguated. No timing is invented
-for untimed text or gaps. Plain imported text remains available in the menu.
+Native episode text must match Now Playing and the browsed episode. Paragraphs
+that combine provider cues, or repeated phrases whose timing is ambiguous, can
+be looked up and translated but receive no invented timing. Plain imported text
+remains available in the menu.
 Japanese spacing normalization changes only leaf text nodes and restores their
 original content on teardown if Spotify has not changed it in the meantime.
 
@@ -18,6 +18,15 @@ preference controls playback; only an owned pause may resume, and episode,
 player, seek or explicit playback controls revoke that ownership. Native scroll
 follows the audio until the learner scrolls back; Back to current line restores
 following. Browser/window scroll is never changed.
+
+English appears below each native line and the current caption; imported lines
+also show their English in the menu. Translation uses the existing signed-in
+cloud service, with current/visible lines prioritized and at most two requests
+in flight. Results are scoped to account, episode, source language and sentence
+context. Missing results are shown as pending or unavailable, with a 30-second
+failure backoff. English is outside the Japanese lookup target and never becomes
+capture subtitle text. Native paragraph padding is adjusted only while its
+English sibling is present and is restored when the surface stops.
 
 ## Automated checks
 
@@ -60,3 +69,9 @@ to extension management; the user performs that reload.
 A read-only Claude CLI critique was attempted but produced no response within
 six minutes and was stopped. Automated checks and direct source review remain
 the validation evidence; no independent review is claimed.
+
+The later English-subtitle fixture check verified English below all three native
+lines, the bilingual caption fallback, Japanese source language in requests, and
+the 旅行 dictionary popup with translations present. These rendered checks use
+isolated synthetic translation responses; live cloud translations still require
+the extension reload.

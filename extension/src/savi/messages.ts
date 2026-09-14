@@ -491,6 +491,14 @@ export interface SaviGlossTranslateMessage {
     readonly context?: string;
 }
 
+/** A whole subtitle translated into English, separate from word glosses. */
+export interface SaviSubtitleTranslateMessage {
+    readonly command: 'savi-subtitle-translate';
+    readonly text: string;
+    readonly sourceLang: string;
+    readonly context?: string;
+}
+
 export interface SaviGlossTranslateResponse {
     /** The gloss, or undefined when signed out / every provider failed. */
     readonly text?: string;
