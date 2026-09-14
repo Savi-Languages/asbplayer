@@ -91,3 +91,14 @@ Regression tests cover automatic start without a provider payload and rejection
 of another browsed episode's transcript. Full feature tests and typecheck pass.
 The installed build still requires the user to reload the extension before this
 new fallback can be verified against real audio.
+
+### Menu minimize and grouped highlight
+
+The upper-right × collapses the learning menu and restores focus to the Savi
+button; it does not stop capture or hide the native transcript. Rendered fixture
+QA verified its placement and collapse behavior. Native paragraphs now retain
+an association with their displayed timestamp group for highlighting and scroll
+following, while keeping separate lookup and English translation targets.
+Regression tests cover group transitions, backwards seeks, paragraph translation,
+and minimizing during active recording. Spotify provides group-level timing in
+this format, so all paragraphs within the active group highlight together.

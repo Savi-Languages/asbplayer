@@ -121,7 +121,18 @@ export class SpotifyPanel {
         const toggle = (this.menuButton = this.button('Savi', () => {
             this.body.hidden = !this.body.hidden;
             toggle.setAttribute('aria-expanded', String(!this.body.hidden));
+            minimize.hidden = this.body.hidden;
         }));
+        const minimize = this.button('×', () => {
+            this.body.hidden = true;
+            minimize.hidden = true;
+            toggle.setAttribute('aria-expanded', 'false');
+            toggle.focus();
+        });
+        minimize.setAttribute('aria-label', 'Minimize Savi');
+        minimize.title = 'Minimize';
+        minimize.className = 'minimize';
+        minimize.hidden = true;
         this.body.hidden = true;
         toggle.setAttribute('aria-expanded', 'false');
         toggle.setAttribute('aria-label', 'Savi learning menu');
@@ -211,9 +222,9 @@ export class SpotifyPanel {
             this.status,
             link
         );
-        section.append(toggle, this.body);
+        section.append(toggle, minimize, this.body);
         style.textContent +=
-            ':host{width:auto;max-width:calc(100vw - 24px)}section{padding:6px;background:#161f1c;border-color:#ffffff30;border-radius:22px}section>div{width:min(346px,calc(100vw - 50px));padding:12px;max-height:60vh;overflow:auto}section>button{border:0;border-radius:18px;background:transparent;padding:6px 14px;min-height:32px}section>div[hidden]{display:none}';
+            ':host{width:auto;max-width:calc(100vw - 24px)}section{padding:6px;background:#161f1c;border-color:#ffffff30;border-radius:22px}section>div{width:min(346px,calc(100vw - 50px));padding:12px;max-height:60vh;overflow:auto}section>button{border:0;border-radius:18px;background:transparent;padding:6px 14px;min-height:32px}section>div[hidden],section>button[hidden]{display:none}section>.minimize{float:right;font-size:24px;line-height:1;min-width:36px;min-height:36px;padding:2px 8px}';
         this.root.append(style, section);
         document.body.append(this.host);
         this.reading = new SpotifyReadingSurface(
