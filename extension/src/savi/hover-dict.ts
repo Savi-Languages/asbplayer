@@ -1,4 +1,4 @@
-import { subtitleTokens } from "./token-cache";
+import { subtitleTokens } from './token-cache';
 // Live-subtitle hover dictionary: hover a word on the video's asbplayer
 // subtitle overlay and see (a) the word boxed under the cursor, Language
 // Reactor-style, and (b) its dictionary entry in a popup.
@@ -419,6 +419,16 @@ export class SaviHoverDictionary {
     /** The subtitle line element the highlight box currently sits on. Moves
      *  within it glide; a move to any other line snaps. See _highlightRect. */
     private _highlightLine: HTMLElement | null = null;
+    /** The WORD the visuals are anchored to (line element + char span), so the
+     *  box and popup can follow it when the page moves it. The rect measured at
+     *  hover time goes stale in seconds on Netflix: hovering pauses the video,
+     *  the player chrome fades a beat later, and the bottom-anchored subtitle
+     *  block shifts back down — leaving a fixed-position box ringing empty
+     *  pixels above the word. The word's IDENTITY is stable; its position isn't. */
+    private _anchor: { line: HTMLElement; start: number; end: number; text: string } | null = null;
+    private _trackRaf: number | null = null;
+    /** The last rect applied to the visuals, to skip no-op writes per frame. */
+    private _lastRect: { left: number; top: number; width: number; height: number } | null = null;
     private _bridge: HTMLDivElement | null = null; // transparent gap-cover from word up to popup
     private _toastEl: HTMLDivElement | null = null; // standalone mine-result toast (outlives the popup)
     private _toastTimer: number | null = null;
@@ -589,19 +599,42 @@ export class SaviHoverDictionary {
         const wordRect = range ? range.getBoundingClientRect() : null;
         if (wordRect && (wordRect.width > 0 || wordRect.height > 0)) {
             this._highlightRect(line, wordRect);
+            // Anchor by identity and keep following it: if the page moves the
+            // word (chrome fade, subtitle reflow), the visuals move WITH it.
+            this._anchor = { line, start: span.start, end: span.end, text: line.textContent ?? '' };
+            this._startTracking();
         } else {
-            this._hideHighlight();
+            this._clear();
+            return;
         }
 
         // Look up the dictionary form — fall back to the surface so words without
         // a lemma (しかし, そこ, 東京) get defined instead of skipped.
         const term = lookupTermFor(span.token);
         if (term === this._currentTerm) {
-            return; // already showing this word's definition
+            // The same word can occur elsewhere in the cue. Its definition is
+            // cached on screen, but its popup still needs the new position.
+            positionPopup(this._popup!, this._arrow!, wordRect);
+            this._positionBridge(wordRect);
+            return;
         }
         const result = await this._lookupDict(term);
         if (generation !== this._generation) {
             return;
+        }
+        // Layout can change while the dictionary request is in flight.
+        const currentRect = this._anchorRect();
+        if (!currentRect) {
+            this._clear();
+            return;
+        }
+        if (
+            currentRect.left !== wordRect.left ||
+            currentRect.top !== wordRect.top ||
+            currentRect.width !== wordRect.width ||
+            currentRect.height !== wordRect.height
+        ) {
+            this._placeHighlight(line, currentRect, true);
         }
         // Show the popup when there's anything useful — a definition OR just a
         // kanji breakdown (so even an unknown compound still teaches its kanji).
@@ -625,8 +658,7 @@ export class SaviHoverDictionary {
         // The word's meaning is now on screen — a hover_glossed encounter with
         // the shown label (SV-20). Kanji-only results reveal no label ('').
         this._noteReveal(text, span.token.text, firstDictGloss(result.entries));
-        // Anchor to the word so the arrow points at it; fall back to the cursor.
-        const anchor = wordRect ?? new DOMRect(x, y, 0, 0);
+        const anchor = currentRect;
         positionPopup(popup, this._arrow!, anchor);
         // Lay the invisible bridge over the gap so the path to the popup never
         // crosses (and triggers) the other subtitle line.
@@ -1072,14 +1104,6 @@ export class SaviHoverDictionary {
     }
 
     private _highlightRect(line: HTMLElement, rect: DOMRect) {
-        // Japanese cues carry letter-spacing, which the word's rect includes as
-        // trailing space on the right — drop it so the box ends at the last
-        // glyph instead of reaching into the next word. Small horizontal room,
-        // a touch more vertical.
-        const trailing = parseFloat(getComputedStyle(line).letterSpacing) || 0;
-        const padX = 1;
-        const padY = 3;
-        const el = this._ensureHighlight();
         // The box GLIDES between words (60ms transition on left/top/width/height)
         // so it reads as one cursor sliding along a line. That's right within a
         // line and wrong across lines: hopping from a word on the Japanese line
@@ -1089,23 +1113,9 @@ export class SaviHoverDictionary {
         // was last left on some far-away word and reappears here. Glide only
         // when staying on the same line element; otherwise snap, and re-enable
         // the transition on the next frame so the NEXT within-line move glides.
+        const el = this._ensureHighlight();
         const sameLine = this._highlightLine === line && el.style.display !== 'none';
-        if (!sameLine) {
-            el.style.transition = 'none';
-        }
-        this._highlightLine = line;
-        el.style.left = `${rect.left - padX}px`;
-        el.style.top = `${rect.top - padY}px`;
-        el.style.width = `${Math.max(0, rect.width - trailing + padX * 2)}px`;
-        el.style.height = `${rect.height + padY * 2}px`;
-        el.style.display = 'block';
-        if (!sameLine) {
-            // Force the style flush at the snapped position before restoring
-            // the transition, or the browser coalesces both writes and glides
-            // anyway.
-            void el.offsetWidth;
-            el.style.transition = HIGHLIGHT_STYLE.transition ?? '';
-        }
+        this._placeHighlight(line, rect, !sameLine);
         // The subtitle container forces cursor:text; signal the word is
         // clickable with a pointer while it's boxed.
         if (this._cursorLine !== line) {
@@ -1115,7 +1125,98 @@ export class SaviHoverDictionary {
         }
     }
 
+    /** Write the box's geometry for `rect`. `snap` suppresses the glide for
+     *  this placement (cross-line hops, and the anchor tracker following a
+     *  layout shift — gliding there reads as the box chasing the subtitle). */
+    private _placeHighlight(line: HTMLElement, rect: DOMRect, snap: boolean) {
+        // Japanese cues carry letter-spacing, which the word's rect includes as
+        // trailing space on the right — drop it so the box ends at the last
+        // glyph instead of reaching into the next word. Small horizontal room,
+        // a touch more vertical.
+        const trailing = parseFloat(getComputedStyle(line).letterSpacing) || 0;
+        const padX = 1;
+        const padY = 3;
+        const el = this._ensureHighlight();
+        if (snap) {
+            el.style.transition = 'none';
+        }
+        this._highlightLine = line;
+        el.style.left = `${rect.left - padX}px`;
+        el.style.top = `${rect.top - padY}px`;
+        el.style.width = `${Math.max(0, rect.width - trailing + padX * 2)}px`;
+        el.style.height = `${rect.height + padY * 2}px`;
+        el.style.display = 'block';
+        if (snap) {
+            // Force the style flush at the snapped position before restoring
+            // the transition, or the browser coalesces both writes and glides
+            // anyway.
+            void el.offsetWidth;
+            el.style.transition = HIGHLIGHT_STYLE.transition ?? '';
+        }
+        this._lastRect = { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+    }
+
+    // ── Anchor tracking ─────────────────────────────────────────────────────
+    // While the highlight is visible, re-measure the anchored word every frame
+    // and move the visuals when the PAGE moved the word. The classic trigger:
+    // hover pauses the video, Netflix's control chrome fades out a couple of
+    // seconds later, and the bottom-anchored subtitle block drops back down —
+    // with a one-shot rect, the box and popup stayed floating where the word
+    // USED to be. Measure only while visible; write styles only on change.
+
+    private _startTracking() {
+        if (this._trackRaf === null) {
+            this._trackRaf = requestAnimationFrame(this._trackTick);
+        }
+    }
+
+    private _stopTracking() {
+        if (this._trackRaf !== null) {
+            cancelAnimationFrame(this._trackRaf);
+            this._trackRaf = null;
+        }
+        this._anchor = null;
+        this._lastRect = null;
+    }
+
+    private _anchorRect(): DOMRect | null {
+        const anchor = this._anchor;
+        if (!anchor || !anchor.line.isConnected || anchor.line.textContent !== anchor.text) {
+            return null;
+        }
+        const range = rangeForCharSpan(anchor.line, anchor.start, anchor.end);
+        const rect = range?.getBoundingClientRect();
+        return rect && (rect.width > 0 || rect.height > 0) ? rect : null;
+    }
+
+    private _trackTick = () => {
+        this._trackRaf = null;
+        if (!this._anchor) return;
+        const rect = this._anchorRect();
+        if (!rect) {
+            // A replaced, removed or hidden cue no longer anchors this lookup.
+            this._clear();
+            return;
+        }
+        const last = this._lastRect;
+        const moved =
+            !last ||
+            last.left !== rect.left ||
+            last.top !== rect.top ||
+            last.width !== rect.width ||
+            last.height !== rect.height;
+        if (moved) {
+            this._placeHighlight(this._anchor.line, rect, true);
+            if (this._popup && this._popup.style.display !== 'none') {
+                positionPopup(this._popup, this._arrow!, rect);
+                this._positionBridge(rect);
+            }
+        }
+        this._startTracking();
+    };
+
     private _clear() {
+        clearTimeout(this._hoverTimer);
         this._cancelHide();
         this._hidePopup();
         this._hideHighlight();
@@ -1130,6 +1231,7 @@ export class SaviHoverDictionary {
     }
 
     private _hideHighlight() {
+        this._stopTracking();
         if (this._highlight) this._highlight.style.display = 'none';
         this._highlightLine = null;
         if (this._cursorLine) {

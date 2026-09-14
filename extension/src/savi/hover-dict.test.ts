@@ -161,3 +161,122 @@ describe('SaviHoverDictionary._segment — the reason travels, the fallback is n
         expect(sent).toHaveLength(2);
     });
 });
+
+describe('hover overlays follow subtitle layout without mouse movement', () => {
+    let dict: any;
+    let line: HTMLElement;
+    let rect: DOMRect;
+    let frames: Map<number, FrameRequestCallback>;
+    let frameId: number;
+    const makeRect = (x: number, y: number, width: number, height: number) =>
+        ({ x, y, left: x, top: y, right: x + width, bottom: y + height, width, height }) as DOMRect;
+    const result = { entries: [], kanji: [{ kanji: '裏', keyword: 'back' }] };
+    const frame = () => {
+        const callbacks = [...frames.values()];
+        frames.clear();
+        callbacks.forEach((callback) => callback(0));
+    };
+    const show = (offset = 0) =>
+        dict._applyTokens(
+            line,
+            line.textContent,
+            offset,
+            210,
+            410,
+            [
+                { text: '裏工作', lemma: '裏工作' },
+                { text: '裏工作', lemma: '裏工作' },
+            ],
+            dict._generation
+        );
+    const surface = (name: string) => document.querySelector(`.savi-dict-${name}`) as HTMLElement;
+
+    beforeEach(() => {
+        document.body.innerHTML = '<span>裏工作裏工作</span>';
+        line = document.querySelector('span')!;
+        rect = makeRect(200, 400, 120, 40);
+        frames = new Map();
+        frameId = 0;
+        jest.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+            frames.set(++frameId, cb);
+            return frameId;
+        });
+        jest.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
+            frames.delete(id);
+        });
+        // jsdom has no layout; keep real DOM ranges and supply measured geometry.
+        Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+            configurable: true,
+            value: () => rect,
+        });
+        jest.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+            return makeRect(parseFloat(this.style.left) || 0, parseFloat(this.style.top) || 0, 300, 180);
+        });
+        dict = new SaviHoverDictionary();
+        dict.start();
+        jest.spyOn(dict, '_lookupDict').mockResolvedValue(result);
+    });
+    afterEach(() => {
+        dict.stop();
+        jest.restoreAllMocks();
+        delete (Range.prototype as any).getBoundingClientRect;
+        document.body.innerHTML = '';
+    });
+
+    it('moves the outline, popup and bridge with controls hiding and showing', async () => {
+        await show();
+        const initial = ['highlight', 'popup', 'bridge'].map((name) => parseFloat(surface(name).style.top));
+        rect = makeRect(200, 500, 120, 40);
+        frame();
+        ['highlight', 'popup', 'bridge'].forEach((name, i) =>
+            expect(parseFloat(surface(name).style.top)).toBe(initial[i] + 100)
+        );
+        rect = makeRect(200, 400, 120, 40);
+        frame();
+        ['highlight', 'popup', 'bridge'].forEach((name, i) =>
+            expect(parseFloat(surface(name).style.top)).toBe(initial[i])
+        );
+        expect(dict._lookupDict).toHaveBeenCalledTimes(1);
+    });
+
+    it('measures again when a delayed dictionary response arrives', async () => {
+        let resolve!: (value: typeof result) => void;
+        dict._lookupDict.mockReturnValue(
+            new Promise((r) => {
+                resolve = r;
+            })
+        );
+        const pending = show();
+        rect = makeRect(200, 500, 120, 40);
+        frame();
+        resolve(result);
+        await pending;
+        expect(parseFloat(surface('popup').style.top)).toBe(500 - 180 - 12 - 7);
+    });
+
+    it('reanchors the same dictionary term at a different position', async () => {
+        await show();
+        rect = makeRect(350, 400, 120, 40);
+        await show(3);
+        frame();
+        expect(parseFloat(surface('popup').style.left)).toBe(350 + 60 - 150);
+        expect(dict._lookupDict).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['removed', 'replaced', 'hidden'])('clears overlays when the cue is %s', async (change) => {
+        await show();
+        if (change === 'removed') line.remove();
+        if (change === 'replaced') line.textContent = '別の字幕です';
+        if (change === 'hidden') rect = makeRect(0, 0, 0, 0);
+        frame();
+        ['highlight', 'popup', 'bridge'].forEach((name) => expect(surface(name).style.display).toBe('none'));
+        expect(frames.size).toBe(0);
+    });
+
+    it('cancels tracking on stop', async () => {
+        await show();
+        expect(frames.size).toBe(1);
+        dict.stop();
+        expect(frames.size).toBe(0);
+    });
+});
