@@ -70,6 +70,47 @@ async function autoFixture(
     };
     return { p, root, media, advance, play, importLines };
 }
+it('follows timed audio, scrolls the transcript on cue changes, and updates after seeks without saving interest', async () => {
+    const f = await autoFixture({ autoCapture: false });
+    f.root.querySelector('textarea')!.value =
+        '00:00:00.000 --> 00:00:03.000\n最初\n\n00:00:03.000 --> 00:00:05.000\n次\n\n00:00:07.000 --> 00:00:09.000\n最後';
+    Array.from(f.root.querySelectorAll('button'))
+        .find((b) => b.textContent === 'Use this text')!
+        .click();
+    const list = f.root.querySelector<HTMLElement>('.lines')!;
+    const lines = Array.from(list.querySelectorAll('button'));
+    jest.spyOn(list, 'getBoundingClientRect').mockReturnValue({ top: 100 } as DOMRect);
+    Object.defineProperties(list, { clientHeight: { value: 200 }, scrollHeight: { value: 1000 } });
+    lines.forEach((b) => jest.spyOn(b, 'getBoundingClientRect').mockReturnValue({ top: 300, height: 40 } as DOMRect));
+    const current = () => lines.find((b) => b.getAttribute('aria-pressed') === 'true')?.textContent;
+    f.play();
+    await f.advance(1);
+    expect(current()).toBe('最初');
+    expect(list.scrollTop).toBe(120);
+    await f.advance(1);
+    expect(list.scrollTop).toBe(120);
+    await f.advance(6);
+    expect(current()).toBe('次');
+    f.media.currentTime = 7;
+    await f.advance(1);
+    expect(current()).toBe('最後');
+    f.media.currentTime = 5;
+    await f.advance(1);
+    expect(current()).toBeUndefined();
+    Object.defineProperty(f.media, 'paused', { value: true, writable: true });
+    jest.advanceTimersByTime(250);
+    lines[0].click();
+    jest.advanceTimersByTime(2000);
+    await settle();
+    expect(current()).toBe('最初');
+    f.media.currentTime = 3;
+    document.querySelector('[data-testid="playback-position"]')!.textContent = '0:03';
+    jest.advanceTimersByTime(250);
+    await settle();
+    expect(current()).toBe('次');
+    expect(sent.some((m) => m.command === 'savi-save-watch-interest')).toBe(false);
+    f.p.stop();
+});
 it('automatically records verified playback once, pauses segments, and respects Stop until the next item', async () => {
     const f = await autoFixture();
     await f.advance();
