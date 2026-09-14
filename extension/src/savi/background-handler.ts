@@ -20,6 +20,7 @@ import {
     SaviGlossLineMessage,
     SaviGlossLineResponse,
     SaviGlossTranslateMessage,
+    SaviSubtitleTranslateMessage,
     SaviGlossTranslateResponse,
     SaviWarmProjectionsMessage,
     SaviWarmProjectionsResponse,
@@ -163,7 +164,7 @@ export default class SaviCommandHandler implements CommandHandler {
                     });
                 return true;
             case 'savi-stop-capture':
-                this._stopCapture().then(sendResponse);
+                this._stopCapture(command.message.episodeId, sender).then(sendResponse);
                 return true;
             case 'savi-playback-state':
                 this._playbackState(command.message as SaviPlaybackStateMessage, sender)
@@ -272,6 +273,11 @@ export default class SaviCommandHandler implements CommandHandler {
                 return true;
             case 'savi-gloss-translate':
                 this._glossTranslate(command.message as SaviGlossTranslateMessage)
+                    .then(sendResponse)
+                    .catch(() => sendResponse({} as SaviGlossTranslateResponse));
+                return true;
+            case 'savi-subtitle-translate':
+                this._subtitleTranslate(command.message as SaviSubtitleTranslateMessage)
                     .then(sendResponse)
                     .catch(() => sendResponse({} as SaviGlossTranslateResponse));
                 return true;
@@ -451,10 +457,20 @@ export default class SaviCommandHandler implements CommandHandler {
         }
     }
 
-    // Glossing (SV-12): translate ONE word into the user's known language, with
-    // the whole line as DeepL context. Straight to the cloud with the account
-    // JWT (added in cloud-client) — CORS blocks this from the content script.
-    // Empty response = signed out / all providers failed → the label is skipped.
+    // Whole subtitle translation shares the authenticated cloud provider chain.
+    // Failures are converted to an unavailable response by the command dispatcher.
+    private async _subtitleTranslate(message: SaviSubtitleTranslateMessage): Promise<SaviGlossTranslateResponse> {
+        if (
+            typeof message.text !== 'string' || !message.text.trim() || message.text.length > 4000 ||
+            typeof message.sourceLang !== 'string' || !/^[a-z]{2,3}(-[a-zA-Z0-9]{2,8})*$/.test(message.sourceLang) ||
+            (message.context !== undefined && (typeof message.context !== 'string' || message.context.length > 8000))
+        ) return {};
+        const { saviCloudUrl } = await this._settings.get(['saviCloudUrl']);
+        const result = await cloudTranslate(saviCloudUrl, message.text, 'en', message.sourceLang, message.context);
+        return { text: result.text, provider: result.provider };
+    }
+
+    // Word glosses use the user's known language and sentence context.
     private async _glossTranslate(message: SaviGlossTranslateMessage): Promise<SaviGlossTranslateResponse> {
         try {
             const { saviCloudUrl } = await this._settings.get(['saviCloudUrl']);
@@ -806,6 +822,11 @@ export default class SaviCommandHandler implements CommandHandler {
             }
         }
 
+        if (message.episodeId.startsWith('spotify:')) {
+            const audible = await browser.tabs.query({ audible: true });
+            if (audible.some(tab => tab.id !== tabId)) return { started: false, errorCode: 'other', errorMessage: 'Pause other audible browser tabs before recording Spotify.' };
+        }
+
         const { saviAudioRecording } = await this._settings.get(['saviAudioRecording']);
         let captureId: string;
         let audio: SaviCaptureAudio;
@@ -852,13 +873,16 @@ export default class SaviCommandHandler implements CommandHandler {
         return { started: true, captureId, audio };
     }
 
-    private async _stopCapture(): Promise<SaviStopCaptureResponse> {
+    private async _stopCapture(expectedEpisodeId?: string, sender?: Browser.runtime.MessageSender): Promise<SaviStopCaptureResponse> {
         const session = await getCaptureSession();
 
         if (session === undefined) {
             return { stopped: false, errorMessage: 'no savi capture is running' };
         }
 
+        if (expectedEpisodeId && (session.episodeId !== expectedEpisodeId || session.tabId !== sender?.tab?.id)) {
+            return { stopped: false, errorMessage: 'Another tab owns this capture.' };
+        }
         const config = await this._daemonConfig();
         await clearCaptureSession();
 
@@ -911,7 +935,7 @@ export default class SaviCommandHandler implements CommandHandler {
         const run = this._playbackChain.then(async (): Promise<SaviPlaybackStateResponse> => {
             const allocated = await nextPlaybackSeq();
 
-            if (allocated === undefined || (tabId !== undefined && allocated.session.tabId !== tabId)) {
+            if (allocated === undefined || (tabId !== undefined && allocated.session.tabId !== tabId) || (message.episodeId !== undefined && allocated.session.episodeId !== message.episodeId)) {
                 return { ok: false };
             }
 
@@ -922,6 +946,13 @@ export default class SaviCommandHandler implements CommandHandler {
             }
 
             const { session, seq } = allocated;
+            if (session.episodeId.startsWith('spotify:')) {
+                const audible = await browser.tabs.query({ audible: true });
+                if (audible.some(tab => tab.id !== tabId)) {
+                    await postPlaybackState(config, {captureId: session.captureId, seq, ops: [{op: 'segment-end'}]});
+                    return {ok: false, audio: 'off'};
+                }
+            }
             const post = () => postPlaybackState(config, { captureId: session.captureId, seq, ops: message.ops });
 
             const handle = async (result: Awaited<ReturnType<typeof post>>): Promise<SaviPlaybackStateResponse> => {

@@ -7,6 +7,57 @@ const tok = (text: string, lemma?: string): SaviToken => ({ text, lemma });
 // 容疑(0-1) 者(2) は(3) 黙秘(4-5) を(6) — concatenates to 容疑者は黙秘を
 const tokens = [tok('容疑', '容疑'), tok('者'), tok('は'), tok('黙秘', '黙秘'), tok('を')];
 
+describe('Spotify hover adapter isolation', () => {
+    it('uses Now Playing identity, including unavailable, without falling back to the browsed page', () => {
+        let id: string | undefined = 'spotify:episode:1234567890123456789012';
+        const dict = new SaviHoverDictionary(undefined, undefined, undefined, undefined, undefined, {
+            resolveLine: () => null,
+            episodeId: () => id,
+            playback: () => null,
+        });
+        expect((dict as any)._episodeId()).toBe(id);
+        id = undefined;
+        expect((dict as any)._episodeId()).toBeUndefined();
+        const netflixLine = document.createElement('span');
+        netflixLine.className = 'asbplayer-subtitle-text';
+        expect((dict as any)._resolveLine(netflixLine)).toBeNull();
+    });
+    it('does not resume a replacement player when a study panel closes', () => {
+        const original = { paused: true, play: jest.fn().mockResolvedValue(undefined), pause: jest.fn() };
+        const replacement = { ...original, play: jest.fn().mockResolvedValue(undefined) };
+        const dict: any = new SaviHoverDictionary(undefined, undefined, undefined, undefined, undefined, {
+            resolveLine: () => null,
+            episodeId: () => 'new-item',
+            playback: () => replacement,
+        });
+        dict._pausedForPanel = true;
+        dict._panelPlayback = original;
+        dict._panelEpisode = 'old-item';
+        dict._onPanelClosed();
+        expect(replacement.play).not.toHaveBeenCalled();
+        expect(original.play).not.toHaveBeenCalled();
+    });
+    it('discards a delayed word tap after the episode changes', async () => {
+        let id = 'old-item';
+        let resolve!: (tokens: SaviToken[]) => void;
+        const dict: any = new SaviHoverDictionary(undefined, undefined, undefined, undefined, undefined, {
+            resolveLine: () => null,
+            episodeId: () => id,
+            playback: () => null,
+        });
+        dict._tokenize = () =>
+            new Promise((r) => {
+                resolve = r;
+            });
+        dict._lookupDict = jest.fn();
+        const pending = dict._openWordDetail('旅行', 0);
+        id = 'new-item';
+        resolve([tok('旅行')]);
+        await pending;
+        expect(dict._lookupDict).not.toHaveBeenCalled();
+    });
+});
+
 describe('tokenAtOffset', () => {
     it('finds the token whose range contains the offset', () => {
         expect(tokenAtOffset(tokens, 0)?.text).toBe('容疑');
