@@ -198,6 +198,47 @@ export function readSpotifyLines(doc: Document): SpotifyLine[] {
         .map((n) => ({ text: cleanProviderText(n.textContent ?? ''), timing: 'untimed' as const }))
         .filter((l) => l.text);
 }
+/** Native transcript timestamps bound groups, not individual sentences. Keep each
+ * group intact; the final group has no known end and must not acquire a guess. */
+export function readSpotifyTranscriptGroups(doc: Document): SpotifyLine[] {
+    const panel = doc.querySelector('#transcript-panel[role="tabpanel"]');
+    if (!panel) return [];
+    const lines: SpotifyLine[] = [];
+    let start: number | undefined;
+    let text: string[] = [];
+    const timestamp = (value: string): number | undefined => {
+        if (!/^(?:\d+:)?\d{1,2}:[0-5]\d$/.test(value)) return undefined;
+        const parts = value.split(':').map(Number);
+        if (parts.length === 3 && parts[1] >= 60) return undefined;
+        return parts.reduce((total, part) => total * 60 + part, 0) * 1000;
+    };
+    // Only the actual source paragraphs; never notices, speaker labels or our English siblings.
+    for (const node of Array.from(panel.querySelectorAll('button, [data-encore-id="text"][dir="auto"]')).slice(
+        0,
+        10000
+    )) {
+        if (node.closest('[data-savi-spotify-translation]')) continue;
+        if (node.matches('button')) {
+            const end = timestamp(node.textContent?.trim() ?? '');
+            const joined = text.join('\n');
+            if (
+                start !== undefined &&
+                end !== undefined &&
+                end > start &&
+                end - start <= 120000 &&
+                joined &&
+                joined.length <= 4000
+            )
+                lines.push({ text: joined, timing: 'timed', start, end });
+            start = end;
+            text = [];
+        } else if (!node.closest('button')) {
+            const value = cleanProviderText(node.textContent ?? '');
+            if (value) text.push(value);
+        }
+    }
+    return lines;
+}
 /** Decode only supported provider payload fields, never arbitrary page objects. */
 export function spotifyPayloadLines(payload: unknown): SpotifyLine[] {
     const p = payload as any;

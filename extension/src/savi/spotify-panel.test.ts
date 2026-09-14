@@ -1,3 +1,4 @@
+/** @jest-environment-options {"url":"https://open.spotify.com/"} */
 import { SpotifyPanel } from './spotify-panel';
 const id = '1234567890123456789012';
 let sent: any[] = [];
@@ -25,7 +26,7 @@ const settle = async () => {
     await Promise.resolve();
 };
 async function autoFixture(
-    options: { autoCapture?: boolean; muted?: boolean; untimed?: boolean; fail?: boolean } = {}
+    options: { autoCapture?: boolean; muted?: boolean; untimed?: boolean; fail?: boolean; native?: boolean } = {}
 ) {
     const p = new SpotifyPanel({
         send: async (message) => {
@@ -53,7 +54,7 @@ async function autoFixture(
             .find((b) => b.textContent === 'Use this text')!
             .click();
     };
-    importLines();
+    if (!options.native) importLines();
     const media = document.querySelector('audio')!;
     const advance = async (steps = 8) => {
         for (let i = 0; i < steps; i++) {
@@ -212,6 +213,7 @@ it('uses the daemon segment operation wire contract when recording starts and pa
 beforeEach(() => {
     jest.useFakeTimers();
     sent = [];
+    window.history.replaceState({}, '', '/');
     fixture();
     jest.spyOn(document, 'hasFocus').mockReturnValue(true);
 });
@@ -280,4 +282,41 @@ it('requires 1.5s paused continuous interest and rejects resume before the thres
     await settle();
     expect(sent.filter((m) => m.command === 'savi-save-watch-interest')).toHaveLength(1);
     p.stop();
+});
+
+it('automatically captures the playing episode from native timestamp groups without an API payload', async () => {
+    const f = await autoFixture({ native: true });
+    const link = document.querySelector('a')!;
+    link.href = `/episode/${id}`;
+    window.history.replaceState({}, '', `/episode/${id}`);
+    const transcript = document.createElement('div');
+    transcript.id = 'transcript-panel';
+    transcript.setAttribute('role', 'tabpanel');
+    transcript.innerHTML = `<button>0:00</button><span data-encore-id="text" dir="auto">こんにちは。</span>
+      <span data-savi-spotify-translation lang="en">Hello.</span><button>0:10</button>
+      <span data-encore-id="text" dir="auto">最後。</span>`;
+    document.body.append(transcript);
+    f.play();
+    await f.advance(12);
+    const starts = sent.filter((m) => m.command === 'savi-start-capture');
+    expect(starts).toHaveLength(1);
+    expect(starts[0]).toMatchObject({ episodeId: `spotify:episode:${id}`, manuallyRequested: false });
+    expect(starts[0].subtitles).toContain('00:00:00,000 --> 00:00:10,000');
+    expect(starts[0].subtitles).toContain('こんにちは。');
+    expect(starts[0].subtitles).not.toContain('Hello');
+    f.p.stop();
+});
+it('does not attach the browsed podcast transcript to a different playing episode', async () => {
+    window.history.replaceState({}, '', '/episode/abcdefghijklmnopqrstuv');
+    document.querySelector('a')!.href = `/episode/${id}`;
+    document.body.insertAdjacentHTML(
+        'beforeend',
+        `<div id="transcript-panel" role="tabpanel">
+      <button>0:00</button><span data-encore-id="text" dir="auto">こんにちは。</span><button>0:10</button></div>`
+    );
+    const f = await autoFixture({ native: true });
+    f.play();
+    await f.advance(12);
+    expect(sent.some((m) => m.command === 'savi-start-capture')).toBe(false);
+    f.p.stop();
 });

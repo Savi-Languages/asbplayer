@@ -73,5 +73,21 @@ the validation evidence; no independent review is claimed.
 The later English-subtitle fixture check verified English below all three native
 lines, the bilingual caption fallback, Japanese source language in requests, and
 the 旅行 dictionary popup with translations present. These rendered checks use
-isolated synthetic translation responses; live cloud translations still require
-the extension reload.
+isolated synthetic translation responses. Live cloud English translations were
+subsequently verified on the COTEN RADIO episode after the user reloaded.
+
+### Native transcript capture fallback
+
+On COTEN RADIO, the reading surface found 895 paragraphs and 369 timestamp
+buttons, while the capture controller had no provider payload and the daemon
+reported no active capture. The controller now adopts native transcript groups
+when the browsed episode matches Now Playing and neither imported text nor a
+provider payload takes priority. Each captured group spans its displayed timestamp
+to the next displayed timestamp; sentences within a group are kept together.
+English siblings and speaker labels are excluded. Invalid, reversed, over-two-minute
+intervals and the final group without a known end are not assigned timing.
+
+Regression tests cover automatic start without a provider payload and rejection
+of another browsed episode's transcript. Full feature tests and typecheck pass.
+The installed build still requires the user to reload the extension before this
+new fallback can be verified against real audio.
