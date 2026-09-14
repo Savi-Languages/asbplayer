@@ -41,6 +41,7 @@ export class SpotifyPanel {
     private confirmedLanguages = new Map<string, string>();
     private imported = new Map<string, SpotifyLine[]>();
     private selected?: SpotifyLine;
+    private followedPosition?: number;
     private lang = '';
     private account = '';
     private enabled = false;
@@ -331,6 +332,7 @@ export class SpotifyPanel {
         this.cancelDwell();
         this.lines = next;
         this.selected = undefined;
+        this.followedPosition = undefined;
         this.renderLines();
     }
     private renderLines() {
@@ -340,7 +342,7 @@ export class SpotifyPanel {
             const b = this.button(line.text, () => void this.select(line));
             b.setAttribute('aria-label', `Select line: ${line.text}`);
             b.onmouseenter = () => {
-                void this.select(line);
+                if (!this.state.playing) this.select(line);
             };
             b.onmouseleave = this.cancelDwell;
             this.buttons.push(b);
@@ -392,6 +394,7 @@ export class SpotifyPanel {
             ? `${next.playing ? 'Playing' : 'Paused'}${next.positionMs !== undefined ? ` · ${Math.floor(next.positionMs / 1000)}s` : ''} · ${next.rate}×${next.local ? '' : ' · local playback clock unavailable'}`
             : 'Sign in to Spotify and play on this browser.';
         if (this.playbackLabel.textContent !== playbackLabel) this.playbackLabel.textContent = playbackLabel;
+        this.followPlayback();
         if (
             this.replayUntil &&
             next.identity?.id === this.replayUntil.id &&
@@ -516,7 +519,35 @@ export class SpotifyPanel {
             .catch(() => this.deps.send(message))
             .catch(() => this.notice('Listening time could not sync. Check Savi desktop.'));
     }
+    private followPlayback() {
+        const position = this.state.positionMs;
+        if (!this.state.playing && position === this.followedPosition) return;
+        this.followedPosition = position;
+        if (!this.lines.some((line) => line.timing === 'timed')) return;
+        const line =
+            position === undefined
+                ? undefined
+                : this.lines.find((line) => line.timing === 'timed' && line.start! <= position && position < line.end!);
+        if (this.selected === line) return;
+        // Following playback is navigation, not deliberate interest in a line.
+        this.cancelDwell();
+        this.selected = line;
+        this.buttons.forEach((button, i) => button.setAttribute('aria-pressed', String(this.lines[i] === line)));
+        const button = line && this.buttons[this.lines.indexOf(line)];
+        if (!button || this.list.hidden || this.list.clientHeight === 0) return;
+        const row = button.getBoundingClientRect();
+        const viewport = this.list.getBoundingClientRect();
+        // Scroll only our transcript box, never Spotify's page or the panel.
+        this.list.scrollTop = Math.max(
+            0,
+            Math.min(
+                this.list.scrollHeight - this.list.clientHeight,
+                this.list.scrollTop + row.top - viewport.top - (this.list.clientHeight - row.height) / 2
+            )
+        );
+    }
     private select(line: SpotifyLine) {
+        this.followedPosition = this.state.positionMs;
         if (this.selected === line) {
             this.arm(line);
             return;
