@@ -403,7 +403,7 @@ function positionPopup(popup: HTMLDivElement, arrow: HTMLDivElement, word: DOMRe
 const firstDictGloss = (entries: SaviDictEntry[]): string => entries[0]?.senses?.[0]?.glosses?.[0] ?? '';
 
 export interface SaviHoverAdapter {
-    resolveLine(target: EventTarget | null): HTMLElement | null;
+    resolveLine(target: EventTarget | null, x: number, y: number): HTMLElement | null;
     episodeId(): string | undefined;
     playback(): Pick<HTMLMediaElement, 'paused' | 'pause' | 'play'> | null;
 }
@@ -482,8 +482,8 @@ export class SaviHoverDictionary {
     private _playback() {
         return this._adapter ? this._adapter.playback() : this._videoProvider();
     }
-    private _resolveLine(target: EventTarget | null) {
-        return this._adapter ? this._adapter.resolveLine(target) : lineElement(target);
+    private _resolveLine(target: EventTarget | null, x: number, y: number) {
+        return this._adapter ? this._adapter.resolveLine(target, x, y) : lineElement(target);
     }
 
     /** A platform control superseded Savi's pause ownership. */
@@ -553,7 +553,7 @@ export class SaviHoverDictionary {
     }
 
     private _onMouseMove = (event: MouseEvent) => {
-        const line = this._resolveLine(event.target);
+        const line = this._resolveLine(event.target, event.clientX, event.clientY);
         if (!line) {
             const target = event.target;
             const onPopup = !!this._popup && target instanceof Node && this._popup.contains(target);
@@ -844,7 +844,7 @@ export class SaviHoverDictionary {
 
     /** Tap handler: open the study panel for a Japanese subtitle word. */
     private _onClick = (event: MouseEvent) => {
-        const line = this._resolveLine(event.target);
+        const line = this._resolveLine(event.target, event.clientX, event.clientY);
         if (!line) {
             return; // not on a subtitle — let the click through (video controls, etc.)
         }
