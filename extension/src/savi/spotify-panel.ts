@@ -12,7 +12,6 @@ import {
 import { Segmenter, type SegmenterOutput } from './segmenter';
 import { serializeToSrt } from './subtitle-serializer';
 import { finishNotice } from './capture-notice';
-import type { SaviToken, SaviDictEntry } from './daemon-client';
 import type { SaviSegmentOp } from './messages';
 
 export interface SpotifyPanelDeps {
@@ -30,8 +29,6 @@ export class SpotifyPanel {
     private playbackLabel = document.createElement('p');
     private textStatus = document.createElement('p');
     private list = document.createElement('div');
-    private detail = document.createElement('div');
-    private selectedText = document.createElement('div');
     private captureButton = document.createElement('button');
     private replayButton = document.createElement('button');
     private bookmarkButton = document.createElement('button');
@@ -104,7 +101,7 @@ export class SpotifyPanel {
         this.host.dataset.saviSpotify = 'true';
         this.host.setAttribute('aria-label', 'Savi Spotify learning');
         const style = document.createElement('style');
-        style.textContent = `:host{position:fixed;right:12px;bottom:100px;z-index:2147483500;width:min(370px,calc(100vw - 24px));font:14px/1.5 system-ui;color:#eef3f8}*{box-sizing:border-box}h2,p{margin:0 0 10px}h2{font-size:17px}button,select,textarea{font:inherit;color:inherit;background:#253443;border:1px solid #61748a;border-radius:8px;padding:8px;min-height:40px}button{cursor:pointer}button:hover,button:focus-visible{background:#35526b}button:disabled{opacity:.45;cursor:default}button[aria-pressed=true]{border-color:#84e6c1;background:#1c5348}section{background:#111d29;border:1px solid #536677;border-radius:12px;padding:12px;box-shadow:0 8px 35px #0008;max-height:70vh;overflow:auto}.row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}.lines{max-height:190px;overflow:auto;display:grid;gap:6px;margin:8px 0}.lines button{text-align:left;width:100%;white-space:pre-wrap}.words{white-space:pre-wrap;margin:8px 0}.words button{border:0;padding:3px;min-height:32px}textarea{width:100%;height:100px;margin-top:8px}small,p{color:#bacbd8}summary{cursor:pointer;padding:8px 0}a{color:#91d4ff}.details{border-top:1px solid #536677;padding-top:8px;overflow-wrap:anywhere}@media(max-width:500px){:host{right:8px;width:calc(100vw - 16px);bottom:88px}section{max-height:65vh}.row{display:grid;grid-template-columns:1fr 1fr}.row>*{width:100%}}`;
+        style.textContent = `:host{position:fixed;right:12px;bottom:100px;z-index:2147483500;width:min(370px,calc(100vw - 24px));font:14px/1.5 system-ui;color:#eef3f8}*{box-sizing:border-box}h2,p{margin:0 0 10px}h2{font-size:17px}button,select,textarea{font:inherit;color:inherit;background:#253443;border:1px solid #61748a;border-radius:8px;padding:8px;min-height:40px}button{cursor:pointer}button:hover,button:focus-visible{background:#35526b}button:disabled{opacity:.45;cursor:default}button[aria-pressed=true]{border-color:#84e6c1;background:#1c5348}section{background:#111d29;border:1px solid #536677;border-radius:12px;padding:12px;box-shadow:0 8px 35px #0008;max-height:70vh;overflow:auto}.row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}.lines{max-height:190px;overflow:auto;display:grid;gap:6px;margin:8px 0}.lines button{text-align:left;width:100%;white-space:pre-wrap}textarea{width:100%;height:100px;margin-top:8px}small,p{color:#bacbd8}summary{cursor:pointer;padding:8px 0}a{color:#91d4ff}@media(max-width:500px){:host{right:8px;width:calc(100vw - 16px);bottom:88px}section{max-height:65vh}.row{display:grid;grid-template-columns:1fr 1fr}.row>*{width:100%}}`;
         const section = document.createElement('section');
         const toggle = this.button('Savi · Spotify', () => {
             this.body.hidden = !this.body.hidden;
@@ -129,15 +126,8 @@ export class SpotifyPanel {
         actions.append(this.modeSelect, this.bookmarkButton, this.replayButton, this.captureButton);
         const reveal = this.button('Reveal / hide text', () => {
             this.list.hidden = !this.list.hidden;
-            this.selectedText.hidden = this.list.hidden;
         });
         this.list.className = 'lines';
-        this.selectedText.className = 'words';
-        this.selectedText.onmouseenter = () => {
-            if (this.selected) this.arm(this.selected);
-        };
-        this.selectedText.onmouseleave = this.cancelDwell;
-        this.detail.className = 'details';
         const importer = document.createElement('details');
         const summary = document.createElement('summary');
         summary.textContent = 'Add lyrics or a transcript';
@@ -196,8 +186,6 @@ export class SpotifyPanel {
             actions,
             reveal,
             this.list,
-            this.selectedText,
-            this.detail,
             importer,
             this.status,
             link
@@ -272,7 +260,6 @@ export class SpotifyPanel {
             this.modeSelect.value = this.mode;
             this.host.hidden = settings.muted;
             this.list.hidden = this.mode === 'listen';
-            this.selectedText.hidden = this.list.hidden;
             if (!this.account) this.notice('Sign in to the same Savi account in extension settings.');
             else if (!this.lang) this.notice('Choose your learning language in Savi settings.');
         } catch {
@@ -289,7 +276,6 @@ export class SpotifyPanel {
             this.mode = mode;
             this.cancelDwell();
             this.list.hidden = mode === 'listen';
-            this.selectedText.hidden = this.list.hidden;
         } catch {
             this.modeSelect.value = this.mode;
             this.notice('Could not save mode. Try again.');
@@ -345,8 +331,6 @@ export class SpotifyPanel {
         this.cancelDwell();
         this.lines = next;
         this.selected = undefined;
-        this.selectedText.replaceChildren();
-        this.detail.replaceChildren();
         this.renderLines();
     }
     private renderLines() {
@@ -382,8 +366,6 @@ export class SpotifyPanel {
             this.state = next;
             this.lines = [];
             this.selected = undefined;
-            this.selectedText.replaceChildren();
-            this.detail.replaceChildren();
             this.input.value = '';
             this.refreshLines();
             this.renderLines();
@@ -534,57 +516,15 @@ export class SpotifyPanel {
             .catch(() => this.deps.send(message))
             .catch(() => this.notice('Listening time could not sync. Check Savi desktop.'));
     }
-    private async select(line: SpotifyLine) {
+    private select(line: SpotifyLine) {
         if (this.selected === line) {
             this.arm(line);
             return;
         }
         this.cancelDwell();
         this.selected = line;
-        const gen = this.generation;
         this.buttons.forEach((b, i) => b.setAttribute('aria-pressed', String(this.lines[i] === line)));
-        this.selectedText.textContent = line.text;
-        this.detail.textContent = 'Select or hover a word for its dictionary entry.';
         this.arm(line);
-        try {
-            const r = await this.deps.send({ command: 'savi-tokenize', lang: this.lang, text: line.text });
-            if (gen !== this.generation || this.selected !== line) return;
-            const tokens = r?.tokens as SaviToken[];
-            if (!tokens?.length || tokens.map((t) => t.text).join('') !== line.text) {
-                this.detail.textContent =
-                    'Dictionary tokenizer unavailable for this line. The text can still be saved.';
-                return;
-            }
-            this.selectedText.replaceChildren();
-            for (const token of tokens) {
-                if (!/[\p{L}\p{N}]/u.test(token.text)) {
-                    this.selectedText.append(document.createTextNode(token.text));
-                    continue;
-                }
-                const b = this.button(token.text, () => void this.lookup(token));
-                b.onmouseenter = () => void this.lookup(token);
-                this.selectedText.append(b);
-            }
-        } catch {
-            this.detail.textContent = 'Dictionary unavailable. Check Savi desktop.';
-        }
-    }
-    private async lookup(token: SaviToken) {
-        const gen = this.generation,
-            selected = this.selected;
-        try {
-            const r = await this.deps.send({ command: 'savi-dict', term: token.lemma ?? token.text });
-            if (gen !== this.generation || this.selected !== selected) return;
-            const entries = (r?.entries ?? []) as SaviDictEntry[];
-            this.detail.textContent = entries.length
-                ? entries
-                      .slice(0, 3)
-                      .map((e) => `${e.readings.join(' / ')} · ${e.senses.flatMap((s) => s.glosses).join('; ')}`)
-                      .join('\n')
-                : 'No dictionary entry available.';
-        } catch {
-            this.detail.textContent = 'Dictionary unavailable. Try again.';
-        }
     }
     private arm(line: SpotifyLine) {
         this.cancelDwell();

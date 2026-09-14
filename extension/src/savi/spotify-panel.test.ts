@@ -179,22 +179,6 @@ afterEach(() => {
     jest.restoreAllMocks();
     document.body.replaceChildren();
 });
-it('renders spacing and punctuation as text instead of empty dictionary buttons', async () => {
-    const p = new SpotifyPanel({
-        send: async (message) =>
-            message.command === 'savi-tokenize'
-                ? { tokens: [{ text: 'hello' }, { text: ' ' }, { text: 'world' }, { text: '。' }] }
-                : send(message),
-        settings: async () => ({ lang: 'ja', enabled: true, muted: false }),
-    });
-    p.start();
-    await settle();
-    await (p as any).select({ text: 'hello world。', timing: 'untimed' });
-    const words = document.querySelector('[data-savi-spotify]')!.shadowRoot!.querySelector('.words')!;
-    expect(words.textContent).toBe('hello world。');
-    expect(Array.from(words.querySelectorAll('button')).map((b) => b.textContent)).toEqual(['hello', 'world']);
-    p.stop();
-});
 it('saves untimed imported text without invented timings and clears it on a track change', async () => {
     const p = new SpotifyPanel({ send, settings: async () => ({ lang: 'ja', enabled: true, muted: false }) });
     p.start();
