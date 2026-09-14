@@ -24,6 +24,18 @@ const settle = async () => {
     await Promise.resolve();
     await Promise.resolve();
 };
+it('uses the daemon segment operation wire contract when recording starts and pauses', async () => {
+    const p = new SpotifyPanel({ send, settings: async () => ({ lang: 'ja', enabled: true, muted: false }) });
+    const segment = { segmentId: 's0', mediaTimeMs: 12500, rate: 1 };
+    (p as any).captureId = `spotify:episode:${id}`;
+    (p as any).enqueueOps([{ type: 'segment-start', segment }, { type: 'segment-end' }]);
+    await (p as any).captureChain;
+    expect(sent.find((m) => m.command === 'savi-playback-state')).toEqual({
+        command: 'savi-playback-state',
+        episodeId: `spotify:episode:${id}`,
+        ops: [{ op: 'segment-start', segment }, { op: 'segment-end' }],
+    });
+});
 beforeEach(() => {
     jest.useFakeTimers();
     sent = [];
