@@ -19,6 +19,23 @@ const nativeSelector =
     '#transcript-panel[role="tabpanel"] [data-encore-id="text"][dir="auto"], [data-testid="transcript-segment"], [data-testid="transcript-line"], [data-testid="lyrics-line"]';
 type Annotation = { cue: SpotifyLine; node?: Text; original?: string; normalized?: string };
 
+/** Element bounds include Spotify's full-width rows and padding. Range fragments
+ * follow the rendered text across wraps; separate runs exclude whitespace. */
+export function pointOnSpotifyText(element: HTMLElement, x: number, y: number): boolean {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    const range = document.createRange();
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        for (const match of (node.textContent ?? '').matchAll(/\S+/gu)) {
+            range.setStart(node, match.index!);
+            range.setEnd(node, match.index! + match[0].length);
+            for (const rect of Array.from(range.getClientRects())) {
+                if (x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom) return true;
+            }
+        }
+    }
+    return false;
+}
+
 /** Adds dictionary targets to Spotify-owned text. The caption is a fallback,
  * not a second transcript. Never creates timings or uses the browsed item as
  * the recording/study identity. */
@@ -54,7 +71,7 @@ export class SpotifyReadingSurface {
             undefined,
             undefined,
             {
-                resolveLine: (target) => this.resolveLine(target),
+                resolveLine: (target, x, y) => this.resolveLine(target, x, y),
                 episodeId: () => this.snapshot().playback.identity?.id,
                 // The shared panel handles its own pause/resume; SpotifyMedia
                 // validates the Now Playing identity again in the MAIN world.
@@ -111,7 +128,7 @@ export class SpotifyReadingSurface {
         document.removeEventListener('touchmove', this.onBrowse, true);
         window.removeEventListener('blur', this.onBlur);
     }
-    private resolveLine(target: EventTarget | null): HTMLElement | null {
+    private resolveLine(target: EventTarget | null, x: number, y: number): HTMLElement | null {
         if (!this.snapshot().visible || this.snapshot().lang.split('-')[0] !== 'ja') return null;
         const el =
             target instanceof Element
@@ -119,7 +136,7 @@ export class SpotifyReadingSurface {
                 : null;
         if (!el || (el !== this.caption && !this.annotations.has(el)) || (el === this.caption && this.captions.hidden))
             return null;
-        return el;
+        return pointOnSpotifyText(el, x, y) ? el : null;
     }
     private restore(el?: HTMLElement) {
         for (const [node, info] of this.annotations) {
@@ -247,7 +264,11 @@ export class SpotifyReadingSurface {
             this.annotations.set(el, info);
         }
         const overPopup = !!this.pointer && this.dictionary.isOverHoverSurface(this.pointer.x, this.pointer.y);
-        if (!this.pointed?.isConnected || (this.pointed === this.caption && this.captions.hidden))
+        if (
+            !this.pointed?.isConnected ||
+            (this.pointed === this.caption && this.captions.hidden) ||
+            (this.pointer && !pointOnSpotifyText(this.pointed, this.pointer.x, this.pointer.y))
+        )
             this.pointed = undefined;
         this.held = !!this.pointed || overPopup;
         if (!this.held) this.release();
@@ -298,7 +319,7 @@ export class SpotifyReadingSurface {
     }
     private onMove = (event: MouseEvent) => {
         this.pointer = { x: event.clientX, y: event.clientY };
-        this.pointed = this.resolveLine(event.target) ?? undefined;
+        this.pointed = this.resolveLine(event.target, event.clientX, event.clientY) ?? undefined;
         this.held = !!this.pointed || this.dictionary.isOverHoverSurface(event.clientX, event.clientY);
         if (this.pointed) {
             const cue = this.pointed === this.caption ? this.active : this.annotations.get(this.pointed)?.cue;

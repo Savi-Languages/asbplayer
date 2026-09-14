@@ -1,4 +1,4 @@
-import { SpotifyReadingSurface } from './spotify-reading';
+import { SpotifyReadingSurface, pointOnSpotifyText } from './spotify-reading';
 import { spotifyIdentity, type SpotifyPlayback, type SpotifyLine } from './spotify';
 
 const id = 'spotify:episode:1234567890123456789012';
@@ -11,7 +11,9 @@ let state: SpotifyPlayback;
 let visible = true;
 let pauseOnHoverMode = 0;
 const snapshot = () => ({ playback: state, lines, lang: 'ja', visible, pauseOnHoverMode });
+const originalRects = Range.prototype.getClientRects;
 beforeEach(() => {
+    Range.prototype.getClientRects = jest.fn(() => [{ left: 0, right: 100, top: 0, bottom: 20 }] as any);
     visible = true;
     pauseOnHoverMode = 0;
     document.elementFromPoint = jest.fn().mockReturnValue(document.body);
@@ -28,7 +30,10 @@ beforeEach(() => {
     surface = new SpotifyReadingSurface(snapshot, () => {});
     surface.start();
 });
-afterEach(() => surface.stop());
+afterEach(() => {
+    surface.stop();
+    Range.prototype.getClientRects = originalRects;
+});
 function native() {
     const host = document.createElement('div');
     host.id = 'transcript-panel';
@@ -47,6 +52,58 @@ function native() {
         } as DOMRect);
     return host;
 }
+it('excludes spaces between text runs, including nested inline text', () => {
+    const line = document.createElement('span');
+    line.innerHTML = '今日は <b>旅行</b>　';
+    Range.prototype.getClientRects = jest.fn(function (this: Range) {
+        const text = this.toString();
+        return (
+            text === '今日は'
+                ? [{ left: 10, right: 40, top: 10, bottom: 30 }]
+                : text === '旅行'
+                  ? [{ left: 60, right: 90, top: 10, bottom: 30 }]
+                  : []
+        ) as any;
+    });
+    expect(pointOnSpotifyText(line, 20, 20)).toBe(true);
+    expect(pointOnSpotifyText(line, 70, 20)).toBe(true);
+    expect(pointOnSpotifyText(line, 50, 20)).toBe(false);
+    expect(pointOnSpotifyText(line, 70, 40)).toBe(false);
+});
+it('pauses only over drawn text, not the rest of a wide transcript row or its line spacing', () => {
+    const host = native();
+    const media = {
+        paused: false,
+        pause: jest.fn(() => {
+            media.paused = true;
+        }),
+        play: jest.fn().mockResolvedValue(undefined),
+    };
+    state.local = true;
+    state.media = media as any;
+    pauseOnHoverMode = 1;
+    Range.prototype.getClientRects = jest.fn(
+        () =>
+            [
+                { left: 100, right: 230, top: 100, bottom: 120 },
+                { left: 100, right: 180, top: 140, bottom: 160 },
+            ] as any
+    );
+    surface.update('https://open.spotify.com/episode/1234567890123456789012');
+    const line = host.firstElementChild!;
+    const move = (clientX: number, clientY: number) =>
+        line.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX, clientY }));
+    move(550, 110); // the blank right-hand region still targets the span
+    move(110, 130); // space between wrapped text fragments
+    expect(media.pause).not.toHaveBeenCalled();
+    move(120, 110);
+    expect(media.pause).toHaveBeenCalledTimes(1);
+    move(550, 110);
+    expect(media.play).toHaveBeenCalledTimes(1);
+    const adapter = (surface as any).dictionary;
+    expect(adapter._resolveLine(line, 550, 110)).toBeNull();
+    expect(adapter._resolveLine(line, 120, 150)).toBe(line);
+});
 it('shows only the current timed caption, advances with audio and clears gaps', () => {
     surface.update();
     expect(document.querySelector('[data-savi-spotify-caption]')?.textContent).toBe(lines[0].text);
