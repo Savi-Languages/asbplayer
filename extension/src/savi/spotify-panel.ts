@@ -113,7 +113,7 @@ export class SpotifyPanel {
         this.host.dataset.saviSpotify = 'true';
         this.host.setAttribute('aria-label', 'Savi Spotify learning');
         const style = document.createElement('style');
-        style.textContent = `:host{position:fixed;right:12px;bottom:100px;z-index:2147483500;width:min(370px,calc(100vw - 24px));font:14px/1.5 system-ui;color:#eef3f8}*{box-sizing:border-box}h2,p{margin:0 0 10px}h2{font-size:17px}button,select,textarea{font:inherit;color:inherit;background:#253443;border:1px solid #61748a;border-radius:8px;padding:8px;min-height:40px}button{cursor:pointer}button:hover,button:focus-visible{background:#35526b}button:disabled{opacity:.45;cursor:default}button[aria-pressed=true]{border-color:#84e6c1;background:#1c5348}section{background:#111d29;border:1px solid #536677;border-radius:12px;padding:12px;box-shadow:0 8px 35px #0008;max-height:70vh;overflow:auto}.row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}.lines{max-height:190px;overflow:auto;display:grid;gap:6px;margin:8px 0}.lines button{text-align:left;width:100%;white-space:pre-wrap}textarea{width:100%;height:100px;margin-top:8px}small,p{color:#bacbd8}summary{cursor:pointer;padding:8px 0}a{color:#91d4ff}@media(max-width:500px){:host{right:8px;width:calc(100vw - 16px);bottom:88px}section{max-height:65vh}.row{display:grid;grid-template-columns:1fr 1fr}.row>*{width:100%}}`;
+        style.textContent = `:host{position:fixed;right:12px;bottom:100px;z-index:2147483500;width:min(370px,calc(100vw - 24px));font:14px/1.5 system-ui;color:#eef3f8}*{box-sizing:border-box}h2,p{margin:0 0 10px}h2{font-size:17px}button,select,textarea{font:inherit;color:inherit;background:#253443;border:1px solid #61748a;border-radius:8px;padding:8px;min-height:40px}button{cursor:pointer}button:hover,button:focus-visible{background:#35526b}button:disabled{opacity:.45;cursor:default}button[aria-pressed=true]{border-color:#84e6c1;background:#1c5348}section{background:#111d29;border:1px solid #536677;border-radius:12px;padding:12px;box-shadow:0 8px 35px #0008;max-height:70vh;overflow:auto}.row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}.lines{max-height:190px;overflow:auto;display:grid;gap:6px;margin:8px 0}.lines button{font-size:16px;text-align:left;width:100%;white-space:pre-wrap}textarea{width:100%;height:100px;margin-top:8px}small,p{color:#bacbd8}summary{cursor:pointer;padding:8px 0}a{color:#91d4ff}@media(max-width:500px){:host{right:8px;width:calc(100vw - 16px);bottom:88px}section{max-height:65vh}.row{display:grid;grid-template-columns:1fr 1fr}.row>*{width:100%}}`;
         const section = document.createElement('section');
         const toggle = (this.menuButton = this.button('Savi', () => {
             this.body.hidden = !this.body.hidden;
@@ -454,7 +454,7 @@ export class SpotifyPanel {
             if (!english) {
                 english = document.createElement('span');
                 english.lang = 'en';
-                english.style.cssText = 'display:block;font-size:12px;color:#bacbd8;margin-top:4px';
+                english.style.cssText = 'display:block;font-size:14px;color:#bacbd8;margin-top:4px';
                 button.append(english);
             }
             if (english.textContent !== text) english.textContent = text;
