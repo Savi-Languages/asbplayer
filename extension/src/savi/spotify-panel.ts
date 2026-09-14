@@ -1,6 +1,7 @@
 import {
     readSpotifyPlayback,
     readSpotifyLines,
+    readSpotifyTranscriptGroups,
     parseSpotifyText,
     playbackDelta,
     spotifyIdentity,
@@ -44,6 +45,8 @@ export class SpotifyPanel {
     private input = document.createElement('textarea');
     private state: SpotifyPlayback = { title: '', show: '', playing: false, local: false, rate: 1 };
     private lines: SpotifyLine[] = [];
+    private nativeLines: SpotifyLine[] = [];
+    private nativeReadAt = -Infinity;
     private provider = new Map<string, SpotifyLine[]>();
     private providerLanguages = new Map<string, string>();
     private confirmedLanguages = new Map<string, string>();
@@ -375,7 +378,7 @@ export class SpotifyPanel {
     }
     private refreshLines() {
         const id = this.state.identity?.id;
-        const next = id ? (this.imported.get(id) ?? this.provider.get(id) ?? []) : [];
+        const next = id ? (this.imported.get(id) ?? this.provider.get(id) ?? this.nativeLines) : [];
         if (JSON.stringify(next) === JSON.stringify(this.lines)) return;
         this.cancelDwell();
         this.lines = next;
@@ -415,6 +418,8 @@ export class SpotifyPanel {
             this.exposureCoverage.clear();
             this.state = next;
             this.lines = [];
+            this.nativeLines = [];
+            this.nativeReadAt = -Infinity;
             this.selected = undefined;
             this.input.value = '';
             this.refreshLines();
@@ -442,6 +447,20 @@ export class SpotifyPanel {
             ? `${next.playing ? 'Playing' : 'Paused'}${next.positionMs !== undefined ? ` · ${Math.floor(next.positionMs / 1000)}s` : ''} · ${next.rate}×${next.local ? '' : ' · local playback clock unavailable'}`
             : 'Sign in to Spotify and play on this browser.';
         if (this.playbackLabel.textContent !== playbackLabel) this.playbackLabel.textContent = playbackLabel;
+        if (
+            next.identity?.kind === 'episode' &&
+            !this.imported.has(next.identity.id) &&
+            !this.provider.has(next.identity.id) &&
+            spotifyIdentity(location.href)?.id === next.identity.id &&
+            performance.now() - this.nativeReadAt >= 1000
+        ) {
+            this.nativeReadAt = performance.now();
+            const groups = readSpotifyTranscriptGroups(document);
+            if (groups.length) {
+                this.nativeLines = groups;
+                this.refreshLines();
+            }
+        }
         this.followPlayback();
         this.reading?.update();
         this.buttons.forEach((button, index) => {

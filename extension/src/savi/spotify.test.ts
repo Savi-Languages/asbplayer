@@ -4,6 +4,7 @@ import {
     playbackDelta,
     readSpotifyPlayback,
     readSpotifyLines,
+    readSpotifyTranscriptGroups,
     spotifyPayloadLines,
 } from './spotify';
 const id = '1234567890123456789012';
@@ -159,4 +160,24 @@ it('normalizes provider transcript sentence wrappers without inventing a last-li
             },
         })[0]
     ).toMatchObject({ start: 1000, end: 3000, timing: 'timed' });
+});
+
+it('reads native timestamp groups as whole intervals without inventing sentence timing', () => {
+    document.body.innerHTML = `<div id="transcript-panel" role="tabpanel">
+      <div><button><span>0:14</span></button><span>話者1</span></div>
+      <div><span data-encore-id="text" dir="auto">こんにちは。</span><span data-savi-spotify-translation lang="en">Hello.</span></div>
+      <div><span data-encore-id="text" dir="auto">今日は晴れです。</span></div>
+      <div><button>0:19</button></div>
+      <div><span data-encore-id="text" dir="auto">最後。</span></div>
+    </div>`;
+    expect(readSpotifyTranscriptGroups(document)).toEqual([
+        { text: 'こんにちは。\n今日は晴れです。', timing: 'timed', start: 14000, end: 19000 },
+    ]);
+});
+it.each(['0:14', '0:13', 'invalid', '5:99', '3:15'])('rejects uncertain native interval end %s', (end) => {
+    document.body.innerHTML = `<div id="transcript-panel" role="tabpanel">
+      <button>0:14</button><span data-encore-id="text" dir="auto">こんにちは。</span>
+      <button>${end}</button><span data-encore-id="text" dir="auto">最後。</span>
+    </div>`;
+    expect(readSpotifyTranscriptGroups(document)).toEqual([]);
 });
