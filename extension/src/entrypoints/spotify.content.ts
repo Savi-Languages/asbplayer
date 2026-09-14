@@ -17,6 +17,9 @@ export default defineContentScript({
             settings: async () => ({
                 lang: (await getCachedRoamingSettings()).targetLanguage,
                 enabled: await settings.getSingle('saviEncounterRecording'),
+                autoCapture:
+                    (await settings.getSingle('saviCaptureEnabled')) &&
+                    (await settings.getSingle('saviAudioRecording')),
                 muted: (await mutedSites()).includes(location.hostname),
             }),
         });

@@ -24,6 +24,138 @@ const settle = async () => {
     await Promise.resolve();
     await Promise.resolve();
 };
+async function autoFixture(
+    options: { autoCapture?: boolean; muted?: boolean; untimed?: boolean; fail?: boolean } = {}
+) {
+    const p = new SpotifyPanel({
+        send: async (message) => {
+            const result = await send(message);
+            if (message.command === 'savi-start-capture')
+                return { started: !options.fail, audio: { state: 'recording' } };
+            if (message.command === 'savi-stop-capture') return { stopped: true };
+            return result;
+        },
+        settings: async () => ({
+            lang: 'ja',
+            enabled: false,
+            muted: options.muted ?? false,
+            autoCapture: options.autoCapture ?? true,
+        }),
+    });
+    p.start();
+    await settle();
+    const root = document.querySelector('[data-savi-spotify]')!.shadowRoot!;
+    const importLines = () => {
+        root.querySelector('textarea')!.value = options.untimed
+            ? 'こんにちは'
+            : '00:00:00.000 --> 00:01:00.000\nこんにちは';
+        Array.from(root.querySelectorAll('button'))
+            .find((b) => b.textContent === 'Use this text')!
+            .click();
+    };
+    importLines();
+    const media = document.querySelector('audio')!;
+    const advance = async (steps = 8) => {
+        for (let i = 0; i < steps; i++) {
+            media.currentTime += 0.25 * media.playbackRate;
+            document.querySelector('[data-testid="playback-position"]')!.textContent =
+                `0:${Math.floor(media.currentTime).toString().padStart(2, '0')}`;
+            jest.advanceTimersByTime(250);
+            await settle();
+        }
+    };
+    const play = () => {
+        Object.defineProperty(media, 'paused', { value: false, writable: true });
+        document.querySelector('[data-testid="control-button-playpause"]')!.setAttribute('aria-label', 'Pause');
+    };
+    return { p, root, media, advance, play, importLines };
+}
+it('automatically records verified playback once, pauses segments, and respects Stop until the next item', async () => {
+    const f = await autoFixture();
+    await f.advance();
+    expect(sent.some((m) => m.command === 'savi-start-capture')).toBe(false);
+    f.play();
+    await f.advance(12);
+    expect(sent.filter((m) => m.command === 'savi-start-capture')).toEqual([
+        expect.objectContaining({ manuallyRequested: false }),
+    ]);
+    Object.defineProperty(f.media, 'paused', { value: true, writable: true });
+    jest.advanceTimersByTime(250);
+    await settle();
+    expect(sent.filter((m) => m.command === 'savi-playback-state').at(-1)?.ops).toContainEqual({ op: 'segment-end' });
+    f.play();
+    await f.advance(12);
+    expect(sent.filter((m) => m.command === 'savi-start-capture')).toHaveLength(1);
+    Array.from(f.root.querySelectorAll('button'))
+        .find((b) => b.textContent === 'Stop and save audio')!
+        .click();
+    await f.advance(12);
+    expect(sent.filter((m) => m.command === 'savi-start-capture')).toHaveLength(1);
+    document.querySelector('a')!.href = '/episode/abcdefghijklmnopqrstuv';
+    await f.advance(1);
+    f.importLines();
+    await f.advance(12);
+    expect(sent.filter((m) => m.command === 'savi-start-capture')).toHaveLength(2);
+    f.p.stop();
+});
+it.each([{ autoCapture: false }, { muted: true }, { untimed: true }])(
+    'does not auto-record when blocked by %j',
+    async (options) => {
+        const f = await autoFixture(options);
+        f.play();
+        await f.advance(12);
+        expect(sent.some((m) => m.command === 'savi-start-capture')).toBe(false);
+        f.p.stop();
+    }
+);
+it('backs off failed automatic starts instead of requesting capture every tick', async () => {
+    const f = await autoFixture({ fail: true });
+    f.play();
+    await f.advance(40);
+    expect(sent.filter((m) => m.command === 'savi-start-capture')).toHaveLength(1);
+    await f.advance(100);
+    expect(sent.filter((m) => m.command === 'savi-start-capture')).toHaveLength(2);
+    f.p.stop();
+});
+it('does not open an audio segment if playback pauses while capture startup is pending', async () => {
+    const f = await autoFixture();
+    let resolveStart!: (value: any) => void;
+    const originalSend = (f.p as any).deps.send;
+    (f.p as any).deps.send = (message: any) => {
+        if (message.command === 'savi-start-capture') {
+            sent.push(message);
+            return new Promise((resolve) => {
+                resolveStart = resolve;
+            });
+        }
+        return originalSend(message);
+    };
+    f.play();
+    await f.advance(12);
+    expect(sent.filter((m) => m.command === 'savi-start-capture')).toHaveLength(1);
+    Object.defineProperty(f.media, 'paused', { value: true, writable: true });
+    jest.advanceTimersByTime(250);
+    await settle();
+    resolveStart({ started: true, audio: { state: 'recording' } });
+    await settle();
+    await (f.p as any).captureChain;
+    expect(sent.filter((m) => m.command === 'savi-playback-state').flatMap((m) => m.ops)).not.toContainEqual(
+        expect.objectContaining({ op: 'segment-start' })
+    );
+    f.p.stop();
+});
+it('saves automatically when the media ends', async () => {
+    const f = await autoFixture();
+    f.play();
+    await f.advance(12);
+    Object.defineProperty(f.media, 'ended', { value: true });
+    Object.defineProperty(f.media, 'paused', { value: true, writable: true });
+    jest.advanceTimersByTime(250);
+    await settle();
+    await settle();
+    expect(sent.filter((m) => m.command === 'savi-stop-capture')).toHaveLength(1);
+    f.p.stop();
+});
 it('uses the daemon segment operation wire contract when recording starts and pauses', async () => {
     const p = new SpotifyPanel({ send, settings: async () => ({ lang: 'ja', enabled: true, muted: false }) });
     const segment = { segmentId: 's0', mediaTimeMs: 12500, rate: 1 };

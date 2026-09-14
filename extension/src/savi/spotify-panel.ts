@@ -18,7 +18,7 @@ import type { SaviSegmentOp } from './messages';
 export interface SpotifyPanelDeps {
     media?(): readonly SpotifyMedia[];
     send(message: any): Promise<any>;
-    settings(): Promise<{ lang: string; enabled: boolean; muted: boolean }>;
+    settings(): Promise<{ lang: string; enabled: boolean; muted: boolean; autoCapture?: boolean }>;
 }
 /** One controller owns this document. Reuses Savi's account, outbox and capture API. */
 export class SpotifyPanel {
@@ -91,6 +91,10 @@ export class SpotifyPanel {
     private captureId = '';
     private segmenter?: Segmenter;
     private captureBusy = false;
+    private captureFinishing = false;
+    private autoCapture = false;
+    private autoRetryAt = 0;
+    private deliberatelyStopped = new Set<string>();
     private captureChain = Promise.resolve();
     private seen = new Set<string>();
     private exposureCoverage = new Map<string, number>();
@@ -261,6 +265,8 @@ export class SpotifyPanel {
             this.account = config.account ?? '';
             this.lang = settings.lang;
             this.enabled = settings.enabled && Boolean(this.account) && Boolean(this.lang) && !settings.muted;
+            this.autoCapture =
+                settings.autoCapture === true && Boolean(this.account) && Boolean(this.lang) && !settings.muted;
             this.hoverEnabled = config.enabled === true;
             this.mode = config.mode ?? 'watch';
             this.modeSelect.value = this.mode;
@@ -271,6 +277,7 @@ export class SpotifyPanel {
             else if (!this.lang) this.notice('Choose your learning language in Savi settings.');
         } catch {
             this.enabled = false;
+            this.autoCapture = false;
             this.notice('Savi connection unavailable. Text remains readable; retry shortly.');
         }
     }
@@ -367,6 +374,7 @@ export class SpotifyPanel {
             this.flush();
             this.cancelDwell();
             void this.finishCapture();
+            this.autoRetryAt = 0;
             this.generation++;
             this.previous = undefined;
             this.replayUntil = undefined;
@@ -439,6 +447,24 @@ export class SpotifyPanel {
         }
         if (!delta) this.exposureCoverage.clear();
         this.updateCapture(point);
+        if (next.media?.ended && this.captureId) void this.finishCapture();
+        if (
+            this.autoCapture &&
+            delta > 0 &&
+            next.playing &&
+            next.local &&
+            next.rate >= 0.5 &&
+            next.rate <= 2 &&
+            this.verifiedMedia === next.media &&
+            this.verifiedId === next.identity?.id &&
+            !this.captureId &&
+            !this.captureBusy &&
+            !this.captureFinishing &&
+            !this.deliberatelyStopped.has(next.identity!.id) &&
+            performance.now() >= this.autoRetryAt &&
+            this.lines.some((l) => l.timing === 'timed')
+        )
+            void this.startCapture(false);
         this.previous = point;
         if (!next.playing && this.captureId) this.enqueueOps(this.segmenter?.pause() ?? []);
         if (next.playing || changed) this.cancelDwell();
@@ -446,6 +472,7 @@ export class SpotifyPanel {
         this.replayButton.disabled = !this.selected || this.selected.timing !== 'timed' || !next.local;
         this.captureButton.disabled =
             this.captureBusy ||
+            this.captureFinishing ||
             (!this.captureId &&
                 (!next.local ||
                     this.verifiedMedia !== next.media ||
@@ -648,10 +675,19 @@ export class SpotifyPanel {
         }
     }
     private async toggleCapture() {
+        if (this.captureBusy || this.captureFinishing) return;
         if (this.captureId) {
+            this.deliberatelyStopped.add(this.captureId);
+            if (this.deliberatelyStopped.size > 100)
+                this.deliberatelyStopped.delete(this.deliberatelyStopped.values().next().value!);
             await this.finishCapture();
             return;
         }
+        if (this.state.identity) this.deliberatelyStopped.delete(this.state.identity.id);
+        await this.startCapture(true);
+    }
+    private async startCapture(manuallyRequested: boolean) {
+        if (this.disposed || this.captureId || this.captureBusy || this.captureFinishing) return;
         const state = this.state;
         if (
             !state.identity ||
@@ -669,6 +705,7 @@ export class SpotifyPanel {
             return;
         }
         this.captureBusy = true;
+        this.autoRetryAt = performance.now() + 30000;
         try {
             const r = await this.deps.send({
                 command: 'savi-start-capture',
@@ -679,12 +716,13 @@ export class SpotifyPanel {
                 subtitles: serializeToSrt(lines),
                 subtitleFormat: 'srt',
                 src: state.identity.url,
-                manuallyRequested: true,
+                manuallyRequested,
             });
             if (!r?.started) {
                 this.notice(r?.errorMessage ?? 'Audio could not start. Try again.');
                 return;
             }
+            this.autoRetryAt = 0;
             this.captureId = state.identity.id;
             if (r.audio?.state !== 'recording') {
                 this.notice(
@@ -694,12 +732,27 @@ export class SpotifyPanel {
                 this.notice(
                     `Recording audio from ${r.audio.sourceApp ?? 'this browser'}. Other audible tabs may be included.`
                 );
-            if (this.state.identity?.id !== state.identity.id) {
+            if (
+                this.disposed ||
+                this.state.identity?.id !== state.identity.id ||
+                (!manuallyRequested && !this.autoCapture)
+            ) {
                 await this.finishCapture();
                 return;
             }
             this.segmenter = new Segmenter();
-            this.enqueueOps(this.segmenter.begin(this.state.positionMs ?? 0, this.state.rate, true));
+            this.enqueueOps(
+                this.segmenter.begin(
+                    this.state.positionMs ?? 0,
+                    this.state.rate,
+                    !(
+                        this.state.playing &&
+                        this.state.local &&
+                        this.verifiedMedia === this.state.media &&
+                        this.verifiedId === this.captureId
+                    )
+                )
+            );
             this.captureButton.textContent = 'Stop and save audio';
         } catch {
             this.notice('Audio capture could not start. Check Savi and retry.');
@@ -755,6 +808,7 @@ export class SpotifyPanel {
     }
     private async finishCapture() {
         if (!this.captureId) return;
+        this.captureFinishing = true;
         const episodeId = this.captureId;
         this.enqueueOps(this.segmenter?.pause() ?? []);
         this.segmenter = undefined;
@@ -770,6 +824,8 @@ export class SpotifyPanel {
             );
         } catch {
             this.notice('Audio finish was not confirmed. Check Savi before restarting.');
+        } finally {
+            this.captureFinishing = false;
         }
     }
     captureEnded(message: any) {
