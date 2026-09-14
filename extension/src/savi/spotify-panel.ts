@@ -530,6 +530,10 @@ export class SpotifyPanel {
             }
             this.selectedText.replaceChildren();
             for (const token of tokens) {
+                if (!/[\p{L}\p{N}]/u.test(token.text)) {
+                    this.selectedText.append(document.createTextNode(token.text));
+                    continue;
+                }
                 const b = this.button(token.text, () => void this.lookup(token));
                 b.onmouseenter = () => void this.lookup(token);
                 this.selectedText.append(b);
