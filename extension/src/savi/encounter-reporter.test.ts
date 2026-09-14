@@ -9,6 +9,7 @@ const deps = (overrides: Partial<EncounterReporterDeps> = {}) => {
         glossedEntries: () => [],
         send: async (message) => {
             sent.push(message);
+            return {ok:true};
         },
         now: () => 1753189200000,
         ...overrides,
@@ -296,7 +297,7 @@ describe('SaviEncounterReporter (delivery failure)', () => {
         let fail = true;
         const events: string[] = [];
         const { d } = deps({
-            send: async () => (fail ? Promise.reject(new Error('ECONNREFUSED')) : undefined),
+            send: async () => (fail ? Promise.reject(new Error('ECONNREFUSED')) : {ok:true}),
         });
         const reporter = new SaviEncounterReporter({
             ...d,
@@ -315,4 +316,10 @@ describe('SaviEncounterReporter (delivery failure)', () => {
 
         expect(events).toEqual(['fail', 'ok']);
     });
+});
+
+it('invokes mining only after an explicit successful heard acknowledgement',async()=>{
+    const acknowledged=jest.fn();const {d}=deps({send:async()=>({ok:false}),onHeardAcknowledged:acknowledged});
+    const reporter=new SaviEncounterReporter(d);await reporter.start();reporter.report(line('casa'));reporter.flush();await new Promise(r=>setTimeout(r,0));expect(acknowledged).not.toHaveBeenCalled();
+    d.send=async()=>({ok:true});reporter.report(line('casa'));reporter.flush();await new Promise(r=>setTimeout(r,0));expect(acknowledged).toHaveBeenCalledTimes(1);
 });

@@ -392,6 +392,9 @@ export const tokenize = async (config: SaviDaemonConfig, lang: string, text: str
     return body.tokens ?? [];
 };
 
+/** Same local request, retaining the analyzer tokens used by heard evidence. */
+export const tokenizeWithAnalysis = async (config: SaviDaemonConfig, lang: string, text: string): Promise<{tokens:SaviToken[];rawTokens?:SaviToken[]}> => request(config, '/v2/tokenize', jsonInit({lang,text}));
+
 /** The daemon's word on why AI had nothing — it saw the credentials, so its
  *  account reasons are authoritative over anything guessed client-side.
  *  Absent on responses from a pre-split daemon. */
@@ -578,3 +581,8 @@ export const finishCapture = async (config: SaviDaemonConfig, captureId: string)
         condenseWarning: body.condenseWarning,
     };
 };
+
+/** Own-review collection; Anki export is independently opted in and retryable. */
+export async function mineHeardTarget(config: SaviDaemonConfig, body: import('./target-types').HeardTargetMine): Promise<{ok:boolean;ankiPending?:boolean}> {
+    return request(config, '/v2/targets/mine', jsonInit(body));
+}

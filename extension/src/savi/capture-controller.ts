@@ -530,6 +530,8 @@ export class SaviCaptureController {
     // start. All DOM reading lives here (content-script context); the
     // parsing/derivation is delegated to the pure helpers in episode.ts so
     // it stays unit-tested. Fully defensive — never throws.
+    targetMetadata() { return this._pageMetadata(); }
+
     private _pageMetadata(): { episodeId: string | undefined; show?: string; title: string } {
         const url = this._safeLocationHref();
         const documentTitle = this._safeDocumentTitle();

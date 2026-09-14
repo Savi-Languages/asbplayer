@@ -1,3 +1,5 @@
+import { SaviWatchInterest } from '../savi/watch-interest';
+import { SaviTargetController } from '@/savi/target-controller';
 import {
     AckMessage,
     AnkiUiSavedState,
@@ -189,6 +191,8 @@ export default class Binding {
     private readonly _audioRecorder = new AudioRecorder();
     readonly bulkExportController: BulkExportController;
     readonly saviCaptureController: SaviCaptureController;
+    readonly saviWatchInterest: SaviWatchInterest;
+    readonly saviTargetController: SaviTargetController;
     readonly saviHoverDictionary: SaviHoverDictionary;
     readonly saviGlossController: SaviGlossController;
     readonly saviEncounterReporter: SaviEncounterReporter;
@@ -267,6 +271,7 @@ export default class Binding {
     private fastForwardPlaybackMinimumGapMs = 600;
     private fastForwardModePlaybackRate = 2.7;
     private imageDelay = 0;
+    private _saviImmersionMode = 'watch';
     private pauseOnHoverMode: PauseOnHoverMode = PauseOnHoverMode.disabled;
     hoveredToken: HoveredToken;
     recordMedia: boolean;
@@ -321,6 +326,27 @@ export default class Binding {
             videoSrc: () => this._registeredVideoSrc,
             subtitleFileName: () => this.subtitleFileName(),
             notify: (locKey, replacements) => this.subtitleController.notification(locKey, replacements),
+        });
+        this.saviWatchInterest = new SaviWatchInterest({
+            video,
+            onModeChange: (mode,hideText) => {
+                if(this._saviImmersionMode !== mode) {
+                    this._saviImmersionMode=mode;
+                    this.syncImmersionGloss();
+                }
+                this.saviTargetController?.setImmersionMode(mode);
+                this.subtitleController.immersionHideSubtitles=hideText;
+                this.subtitleController.refreshCurrentSubtitle=true;
+            },
+            metadata: () => this.saviCaptureController.targetMetadata(),
+            subtitles: () => this.subtitleController.subtitles,
+            send: message => browser.runtime.sendMessage({sender:'savi-video',message}),
+        });
+        this.saviTargetController = new SaviTargetController({
+            video, metadata: () => this.saviCaptureController.targetMetadata(),
+            subtitles: () => this.subtitleController.subtitles,
+            pause: () => this.pause(), play: () => { void this.play(); },
+            send: message => browser.runtime.sendMessage({sender:'savi-video',message}),
         });
         this.saviHoverDictionary = new SaviHoverDictionary(
             () => this.video,
@@ -397,6 +423,7 @@ export default class Binding {
                 }
             },
             onDeliveryRecovered: () => this.saviDaemonBanner.hide(),
+            onHeardAcknowledged: message => this.saviTargetController.onHeardAcknowledged(message),
         });
         this.subtitleController.onSaviStartedShowing = (subtitle) => {
             this.saviEncounterReporter.report(subtitle);
@@ -797,6 +824,8 @@ export default class Binding {
             this.saviGlossHover.stop();
             this.saviEncounterReporter.stop();
             this.saviEngagementReporter.stop();
+            this.saviWatchInterest.stop();
+            this.saviTargetController.stop();
             this.saviHoverDictionary.stop();
             this.saviControlsClearance.stop();
             this.saviCaptureController.unbind();
@@ -804,13 +833,22 @@ export default class Binding {
         }
 
         console.info(`[savi language-gate] savi on for this video (${verdict.reason})`);
+        this.saviTargetController.start(lang);
+        this.saviWatchInterest.start(lang);
         this.saviCaptureController.bind();
         this.saviHoverDictionary.start();
-        void this.saviGlossController.start();
-        void this.saviGlossHover.start();
+        this.syncImmersionGloss();
         void this.saviEncounterReporter.start();
         void this.saviEngagementReporter.start();
         this.saviControlsClearance.start();
+    }
+
+    private syncImmersionGloss() {
+        if(this._saviImmersionMode === 'explore' && this._saviLanguageActive) {
+            void Promise.all([this.saviGlossController.start(),this.saviGlossHover.start()]).then(()=>{
+                if(this._saviImmersionMode !== 'explore' || !this._saviLanguageActive){this.saviGlossController.stop();this.saviGlossHover.stop();}
+            });
+        } else {this.saviGlossController.stop();this.saviGlossHover.stop();}
     }
 
     _bind() {
@@ -825,8 +863,7 @@ export default class Binding {
         this.bulkExportController.bind();
         this.saviCaptureController.bind();
         this.saviHoverDictionary.start();
-        void this.saviGlossController.start();
-        void this.saviGlossHover.start();
+        this.syncImmersionGloss();
         void this.saviEncounterReporter.start();
         this.saviInteractionClock.bind();
         void this.saviEngagementReporter.start();
@@ -970,6 +1007,7 @@ export default class Binding {
             // pause-on-hover to avoid pausing the moment the cursor lands on a word.
             if (
                 overText &&
+                (!this._saviLanguageActive || this._saviImmersionMode === 'explore') &&
                 this.pauseOnHoverMode !== PauseOnHoverMode.disabled &&
                 !this.saviGlossHover.isActive() &&
                 !this.video.paused
@@ -1490,8 +1528,7 @@ export default class Binding {
         // others.
         void this.saviEncounterReporter.start();
         void this.saviEngagementReporter.start();
-        void this.saviGlossController.start();
-        void this.saviGlossHover.start();
+        this.syncImmersionGloss();
 
         if (convertNetflixRubyChanged || subtitleHtmlChanged) {
             this.subtitleController.cacheHtml();
@@ -1584,6 +1621,8 @@ export default class Binding {
         }
 
         this.saviCaptureController.unbind();
+        this.saviWatchInterest.stop();
+        this.saviTargetController.stop();
         this.saviHoverDictionary.stop();
         this.saviGlossController.stop();
         this.saviGlossHover.stop();
