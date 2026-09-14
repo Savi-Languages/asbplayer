@@ -52,7 +52,6 @@ export const SUBTITLE_CONTAINER = '.asbplayer-subtitles, .asbplayer-fullscreen-s
 const LANG = 'ja';
 // Hiragana, katakana, CJK (+ Ext. A), compatibility ideographs, halfwidth kana.
 const JAPANESE = /[぀-ヿ㐀-䶿一-鿿豈-﫿ｦ-ﾟ]/;
-const HOVER_DEBOUNCE_MS = 0; // fire as good as immediately; tokenize/dict are cached
 const SHOT_MAX_WIDTH = 960; // cap the mined card's screenshot width (height scales)
 // Grace period before hiding once the cursor leaves the subtitle line, so the
 // visible gap between the word and the popup can be crossed to click a button.
@@ -411,7 +410,11 @@ export class SaviHoverDictionary {
     private _wordPanel: SaviWordPanel | null = null;
     private _panelOpen = false; // the tap study panel is up → keep the video paused
     private _pausedForPanel = false; // WE paused the video for the panel, so WE resume
-    private readonly _dictCache = new Map<string, SaviDictResponse>();
+    private readonly _dictCache = new Map<string, { result: SaviDictResponse; expiresAt: number }>();
+    private readonly _dictFlights = new Map<string, Promise<SaviDictResponse>>();
+    private _prefetchTimer: ReturnType<typeof setInterval> | undefined;
+    private _prefetching = false;
+    private _prefetchRetryAt = 0;
     private _popup: HTMLDivElement | null = null;
     private _popupContent: HTMLDivElement | null = null;
     private _arrow: HTMLDivElement | null = null;
@@ -434,7 +437,6 @@ export class SaviHoverDictionary {
     private _toastTimer: number | null = null;
     private _cursorLine: HTMLElement | null = null; // line we set cursor:pointer on
     private _currentTerm: string | null = null;
-    private _hoverTimer: ReturnType<typeof setTimeout> | undefined;
     private _hideTimer: ReturnType<typeof setTimeout> | undefined; // delayed hide, cancellable
     private _generation = 0; // bumps to cancel stale async work
     private _bound = false;
@@ -490,12 +492,16 @@ export class SaviHoverDictionary {
         this._bound = true;
         document.addEventListener('mousemove', this._onMouseMove, true);
         document.addEventListener('click', this._onClick, true);
+        this._prefetchTimer = setInterval(() => void this._prefetch(), 500);
+        void this._prefetch();
     }
 
     stop() {
         this._endReveal();
         if (!this._bound) return;
         this._bound = false;
+        clearInterval(this._prefetchTimer);
+        this._prefetchTimer = undefined;
         document.removeEventListener('mousemove', this._onMouseMove, true);
         document.removeEventListener('click', this._onClick, true);
         this._clear();
@@ -540,8 +546,7 @@ export class SaviHoverDictionary {
         // Back on a subtitle line — cancel any pending hide.
         this._cancelHide();
         const { clientX, clientY } = event;
-        clearTimeout(this._hoverTimer);
-        this._hoverTimer = setTimeout(() => void this._handleHover(line, clientX, clientY), HOVER_DEBOUNCE_MS);
+        void this._handleHover(line, clientX, clientY);
     };
 
     private _scheduleHide() {
@@ -567,14 +572,16 @@ export class SaviHoverDictionary {
             this._clear();
             return;
         }
-        // Hover is purely rule-based — instant, and never touches the LLM. The AI
-        // in-context read lives in the tap panel (_openWordDetail), so a slow or
-        // flaky provider can't delay or break the hover popup.
-        const tokens = await this._tokenize(text);
-        if (generation !== this._generation) {
-            return; // a newer hover (or a clear) superseded this one
+        // Prepared words render in this event. Cold lookups use the local
+        // tokenizer/dictionary; the hover path never calls an LLM.
+        try {
+            const available = this._tokenize(text);
+            const tokens = Array.isArray(available) ? available : await available;
+            if (generation !== this._generation) return;
+            await this._applyTokens(line, text, offset, x, y, tokens, generation);
+        } catch {
+            if (generation === this._generation) this._clear();
         }
-        await this._applyTokens(line, text, offset, x, y, tokens, generation);
     }
 
     /** Box the token at `offset` and show its rule-based dictionary popup. */
@@ -618,7 +625,8 @@ export class SaviHoverDictionary {
             this._positionBridge(wordRect);
             return;
         }
-        const result = await this._lookupDict(term);
+        const available = this._lookupDict(term);
+        const result = available instanceof Promise ? await available : available;
         if (generation !== this._generation) {
             return;
         }
@@ -665,8 +673,39 @@ export class SaviHoverDictionary {
         this._positionBridge(anchor);
     }
 
-    private _tokenize(text: string): Promise<SaviToken[]> {
-        return subtitleTokens.get(LANG, text);
+    private _tokenize(text: string): SaviToken[] | Promise<SaviToken[]> {
+        return subtitleTokens.peek(LANG, text) ?? subtitleTokens.get(LANG, text);
+    }
+
+    /** Warm at most two primary cues within five seconds of the playhead.
+     *  Sequential requests bound background load; hover shares their cache and
+     *  in-flight requests. Preparation never displays or records a reveal. */
+    private async _prefetch() {
+        if (!this._bound || this._prefetching || Date.now() < this._prefetchRetryAt) return;
+        const video = this._videoProvider();
+        if (!video || !Number.isFinite(video.currentTime)) return;
+        const now = video.currentTime * 1000;
+        const cues = this._subtitleProvider()
+            .filter((cue) => cue.track === 0 && cue.end >= now && cue.start <= now + 5000 && JAPANESE.test(cue.text))
+            .sort((a, b) => a.start - b.start)
+            .slice(0, 2);
+        this._prefetching = true;
+        try {
+            for (const cue of cues) {
+                if (!this._bound) return;
+                const tokens = await this._tokenize(cue.text.replace(/\s+$/, ''));
+                const terms = new Set(tokens.filter((token) => JAPANESE.test(token.text)).map(lookupTermFor));
+                for (const term of terms) {
+                    if (!this._bound) return;
+                    await this._lookupDict(term);
+                }
+            }
+        } catch {
+            // Offline/unavailable: hover can retry, background work backs off.
+            this._prefetchRetryAt = Date.now() + 5000;
+        } finally {
+            this._prefetching = false;
+        }
     }
 
     /** AI segmentation for a line (cached). `tokens` is null when the daemon fell
@@ -1090,17 +1129,27 @@ export class SaviHoverDictionary {
         return el;
     }
 
-    private async _lookupDict(term: string): Promise<SaviDictResponse> {
+    private _lookupDict(term: string): SaviDictResponse | Promise<SaviDictResponse> {
         const cached = this._dictCache.get(term);
-        if (cached) return cached; // re-hovers / common words are instant
-        const res = await sendToBackground<SaviDictResponse>({ command: 'savi-dict', lang: LANG, term });
-        const result: SaviDictResponse = { entries: res.entries ?? [], kanji: res.kanji ?? [] };
-        if (this._dictCache.size >= DICT_CACHE_MAX) {
-            const oldest = this._dictCache.keys().next().value;
-            if (oldest !== undefined) this._dictCache.delete(oldest);
-        }
-        this._dictCache.set(term, result);
-        return result;
+        if (cached && cached.expiresAt > Date.now()) return cached.result;
+        const flight = this._dictFlights.get(term);
+        if (flight) return flight;
+        const pending = sendToBackground<SaviDictResponse>({ command: 'savi-dict', lang: LANG, term })
+            .then((res) => {
+                const result: SaviDictResponse = { entries: res.entries ?? [], kanji: res.kanji ?? [] };
+                if (this._dictCache.size >= DICT_CACHE_MAX) {
+                    const oldest = this._dictCache.keys().next().value;
+                    if (oldest !== undefined) this._dictCache.delete(oldest);
+                }
+                // The background also returns an empty result when offline.
+                // Retry misses shortly instead of caching an outage indefinitely.
+                const expiresAt = result.entries.length || result.kanji.length ? Infinity : Date.now() + 5000;
+                this._dictCache.set(term, { result, expiresAt });
+                return result;
+            })
+            .finally(() => this._dictFlights.delete(term));
+        this._dictFlights.set(term, pending);
+        return pending;
     }
 
     private _highlightRect(line: HTMLElement, rect: DOMRect) {
@@ -1216,7 +1265,6 @@ export class SaviHoverDictionary {
     };
 
     private _clear() {
-        clearTimeout(this._hoverTimer);
         this._cancelHide();
         this._hidePopup();
         this._hideHighlight();
@@ -1247,7 +1295,6 @@ export class SaviHoverDictionary {
         Object.assign(popup.style, POPUP_STYLE);
         // Keep it alive while the cursor is on the popup itself.
         popup.addEventListener('mouseenter', () => {
-            clearTimeout(this._hoverTimer);
             this._cancelHide();
         });
 
