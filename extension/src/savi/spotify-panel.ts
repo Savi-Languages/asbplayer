@@ -220,9 +220,23 @@ export class SpotifyPanel {
                 lang: this.lang,
                 visible: !this.host.hidden && !this.list.hidden,
                 pauseOnHoverMode: this.pauseOnHoverMode,
+                account: this.account,
+                sourceLang:
+                    this.confirmedLanguages.get(this.state.identity?.id ?? '') ||
+                    this.providerLanguages.get(this.state.identity?.id ?? '') ||
+                    this.lang,
             }),
             (line) => {
                 if (this.selected !== line) this.select(line);
+            },
+            async (text, sourceLang, context) => {
+                const response = await this.deps.send({
+                    command: 'savi-subtitle-translate',
+                    text,
+                    sourceLang,
+                    context,
+                });
+                return response?.text;
             }
         );
         this.reading.start();
@@ -430,6 +444,21 @@ export class SpotifyPanel {
         if (this.playbackLabel.textContent !== playbackLabel) this.playbackLabel.textContent = playbackLabel;
         this.followPlayback();
         this.reading?.update();
+        this.buttons.forEach((button, index) => {
+            const text = this.reading?.translationFor(this.lines[index]);
+            let english = button.querySelector<HTMLElement>('[lang="en"]');
+            if (!text) {
+                english?.remove();
+                return;
+            }
+            if (!english) {
+                english = document.createElement('span');
+                english.lang = 'en';
+                english.style.cssText = 'display:block;font-size:12px;color:#bacbd8;margin-top:4px';
+                button.append(english);
+            }
+            if (english.textContent !== text) english.textContent = text;
+        });
         this.menuButton.textContent = this.captureId ? '● Savi · Recording' : 'Savi';
         this.menuButton.title = this.captureId ? 'Audio is recording. Open to stop and save.' : 'Learning controls';
         if (

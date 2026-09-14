@@ -12,6 +12,9 @@ let visible = true;
 let pauseOnHoverMode = 0;
 const snapshot = () => ({ playback: state, lines, lang: 'ja', visible, pauseOnHoverMode });
 const originalRects = Range.prototype.getClientRects;
+const settleTranslations = async () => {
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+};
 beforeEach(() => {
     Range.prototype.getClientRects = jest.fn(() => [{ left: 0, right: 100, top: 0, bottom: 20 }] as any);
     visible = true;
@@ -52,6 +55,97 @@ function native() {
         } as DOMRect);
     return host;
 }
+it('places English below each native line without changing Japanese lookup text and reuses translations', async () => {
+    surface.stop();
+    const translate = jest.fn(async (text: string) =>
+        text === lines[0].text ? 'Today is a travel day.' : 'It is fun.'
+    );
+    surface = new SpotifyReadingSurface(
+        () => ({ ...snapshot(), account: 'learner' }),
+        () => {},
+        translate
+    );
+    surface.start();
+    const host = native();
+    const update = surface.update.bind(surface);
+    surface.update = () => update('https://open.spotify.com/episode/1234567890123456789012');
+    surface.update();
+    await settleTranslations();
+    const japanese = host.querySelector('[data-savi-spotify-line]')!;
+    expect(japanese.textContent).toBe(lines[0].text);
+    expect(japanese.nextElementSibling?.textContent).toBe('Today is a travel day.');
+    expect(host.querySelectorAll('[data-savi-spotify-translation]')).toHaveLength(2);
+    surface.update();
+    await settleTranslations();
+    expect(translate).toHaveBeenCalledTimes(2);
+    host.hidden = true;
+    surface.update();
+    expect(document.querySelector('[data-savi-spotify-captions] [lang=en]')?.textContent).toBe(
+        'Today is a travel day.'
+    );
+    surface.stop();
+    expect(host.querySelector('[data-savi-spotify-translation]')).toBeNull();
+});
+it('discards an English result from a previous episode and limits translation concurrency', async () => {
+    surface.stop();
+    const pending: Array<(text: string) => void> = [];
+    const translate = jest.fn(() => new Promise<string>((resolve) => pending.push(resolve)));
+    let snap = { ...snapshot(), account: 'learner' };
+    surface = new SpotifyReadingSurface(
+        () => snap,
+        () => {},
+        translate
+    );
+    surface.start();
+    surface.update();
+    expect(translate).toHaveBeenCalledTimes(2);
+    snap = { ...snap, playback: { ...state, identity: spotifyIdentity('spotify:episode:abcdefghijklmnopqrstuv') } };
+    surface.update();
+    expect(translate).toHaveBeenCalledTimes(2);
+    pending[0]('Old episode translation');
+    pending[1]('Another old translation');
+    await settleTranslations();
+    expect(document.querySelector('[data-savi-spotify-captions]')?.textContent).not.toContain('Old episode');
+    expect(translate).toHaveBeenCalledTimes(4);
+    pending[2]('New episode translation');
+    pending[3]('New second line');
+    await settleTranslations();
+    expect(document.querySelector('[data-savi-spotify-captions]')?.textContent).toContain('New episode translation');
+});
+it('translates a native paragraph that combines timed cues without inventing timing', async () => {
+    surface.stop();
+    const translate = jest.fn(async () => 'Today is a travel day. It is fun.');
+    surface = new SpotifyReadingSurface(
+        () => ({ ...snapshot(), account: 'learner' }),
+        () => {},
+        translate
+    );
+    surface.start();
+    const host = native();
+    host.innerHTML = '<span data-encore-id="text" dir="auto">今日は旅行です。楽しいです。</span>';
+    const update = surface.update.bind(surface);
+    surface.update = () => update('https://open.spotify.com/episode/1234567890123456789012');
+    surface.update();
+    await settleTranslations();
+    expect(host.querySelector('[lang=en]')?.textContent).toBe('Today is a travel day. It is fun.');
+    expect(host.firstElementChild!.getAttribute('data-savi-current')).toBe('false');
+    expect(translate).toHaveBeenCalledWith('今日は旅行です。楽しいです。', 'ja', '今日は旅行です。楽しいです。');
+});
+it('shows a translation failure honestly and does not retry on every playback tick', async () => {
+    surface.stop();
+    const translate = jest.fn(async () => undefined);
+    surface = new SpotifyReadingSurface(
+        () => ({ ...snapshot(), account: 'learner' }),
+        () => {},
+        translate
+    );
+    surface.start();
+    surface.update();
+    await settleTranslations();
+    expect(document.querySelector('[data-savi-spotify-captions] [lang=en]')?.textContent).toMatch(/unavailable/i);
+    for (let i = 0; i < 8; i++) surface.update();
+    expect(translate).toHaveBeenCalledTimes(2);
+});
 it('excludes spaces between text runs, including nested inline text', () => {
     const line = document.createElement('span');
     line.innerHTML = '今日は <b>旅行</b>　';

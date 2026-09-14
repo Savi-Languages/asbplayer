@@ -8,6 +8,16 @@ const panel = new SpotifyPanel({
         events.textContent = JSON.stringify(message, null, 2);
         if (message.command === 'savi-watch-interest-config')
             return { account: 'synthetic', mode: 'explore', enabled: true };
+        if (message.command === 'savi-subtitle-translate')
+            return {
+                text: (
+                    {
+                        '今日は旅行です。': 'Today, I’m going on a trip.',
+                        'パリはきれいです。': 'Paris is beautiful.',
+                        '楽しいです。': 'It’s fun.',
+                    } as Record<string, string>
+                )[message.text],
+            };
         if (message.command === 'savi-tokenize')
             return {
                 tokens: Array.from(new Intl.Segmenter('ja', { granularity: 'word' }).segment(message.text), (s) => ({

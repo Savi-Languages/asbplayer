@@ -20,6 +20,7 @@ import {
     SaviGlossLineMessage,
     SaviGlossLineResponse,
     SaviGlossTranslateMessage,
+    SaviSubtitleTranslateMessage,
     SaviGlossTranslateResponse,
     SaviWarmProjectionsMessage,
     SaviWarmProjectionsResponse,
@@ -275,6 +276,11 @@ export default class SaviCommandHandler implements CommandHandler {
                     .then(sendResponse)
                     .catch(() => sendResponse({} as SaviGlossTranslateResponse));
                 return true;
+            case 'savi-subtitle-translate':
+                this._subtitleTranslate(command.message as SaviSubtitleTranslateMessage)
+                    .then(sendResponse)
+                    .catch(() => sendResponse({} as SaviGlossTranslateResponse));
+                return true;
             case 'savi-word-proficiency':
                 this._wordProficiency(command.message as SaviWordProficiencyMessage)
                     .then(sendResponse)
@@ -451,10 +457,20 @@ export default class SaviCommandHandler implements CommandHandler {
         }
     }
 
-    // Glossing (SV-12): translate ONE word into the user's known language, with
-    // the whole line as DeepL context. Straight to the cloud with the account
-    // JWT (added in cloud-client) — CORS blocks this from the content script.
-    // Empty response = signed out / all providers failed → the label is skipped.
+    // Whole subtitle translation shares the authenticated cloud provider chain.
+    // Failures are converted to an unavailable response by the command dispatcher.
+    private async _subtitleTranslate(message: SaviSubtitleTranslateMessage): Promise<SaviGlossTranslateResponse> {
+        if (
+            typeof message.text !== 'string' || !message.text.trim() || message.text.length > 4000 ||
+            typeof message.sourceLang !== 'string' || !/^[a-z]{2,3}(-[a-zA-Z0-9]{2,8})*$/.test(message.sourceLang) ||
+            (message.context !== undefined && (typeof message.context !== 'string' || message.context.length > 8000))
+        ) return {};
+        const { saviCloudUrl } = await this._settings.get(['saviCloudUrl']);
+        const result = await cloudTranslate(saviCloudUrl, message.text, 'en', message.sourceLang, message.context);
+        return { text: result.text, provider: result.provider };
+    }
+
+    // Word glosses use the user's known language and sentence context.
     private async _glossTranslate(message: SaviGlossTranslateMessage): Promise<SaviGlossTranslateResponse> {
         try {
             const { saviCloudUrl } = await this._settings.get(['saviCloudUrl']);

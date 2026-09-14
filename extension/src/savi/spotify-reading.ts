@@ -14,10 +14,20 @@ export interface SpotifyReadingSnapshot {
     lang: string;
     visible: boolean;
     pauseOnHoverMode: PauseOnHoverMode;
+    account?: string;
+    sourceLang?: string;
 }
 const nativeSelector =
     '#transcript-panel[role="tabpanel"] [data-encore-id="text"][dir="auto"], [data-testid="transcript-segment"], [data-testid="transcript-line"], [data-testid="lyrics-line"]';
-type Annotation = { cue: SpotifyLine; node?: Text; original?: string; normalized?: string };
+type Annotation = {
+    cue: SpotifyLine;
+    native?: boolean;
+    node?: Text;
+    original?: string;
+    normalized?: string;
+    english?: HTMLElement;
+};
+type Translation = { state: 'pending' | 'ready' | 'failed'; text?: string };
 
 /** Element bounds include Spotify's full-width rows and padding. Range fragments
  * follow the rendered text across wraps; separate runs exclude whitespace. */
@@ -42,6 +52,11 @@ export function pointOnSpotifyText(element: HTMLElement, x: number, y: number): 
 export class SpotifyReadingSurface {
     private captions = document.createElement('div');
     private caption = document.createElement('span');
+    private captionEnglish = document.createElement('span');
+    private translations = new Map<string, Translation>();
+    private translationScope = '';
+    private translationRunning = 0;
+    private translationRetryAt = 0;
     private back = document.createElement('button');
     private style = document.createElement('style');
     private annotations = new Map<HTMLElement, Annotation>();
@@ -59,7 +74,8 @@ export class SpotifyReadingSurface {
 
     constructor(
         private snapshot: () => SpotifyReadingSnapshot,
-        private select: (cue: SpotifyLine) => void
+        private select: (cue: SpotifyLine) => void,
+        private translate?: (text: string, sourceLang: string, context: string) => Promise<string | undefined>
     ) {
         this.dictionary = new SaviHoverDictionary(
             () => null,
@@ -84,7 +100,10 @@ export class SpotifyReadingSurface {
         this.captions.setAttribute('aria-label', 'Savi current caption');
         this.caption.dataset.saviSpotifyCaption = '';
         this.caption.title = 'Hover a word for its meaning. Click for details.';
-        this.captions.append(this.caption);
+        this.captionEnglish.dataset.saviSpotifyTranslation = '';
+        this.captionEnglish.lang = 'en';
+        this.captionEnglish.hidden = !this.translate;
+        this.captions.append(this.caption, this.captionEnglish);
         this.back.type = 'button';
         this.back.dataset.saviSpotifyFollow = '';
         this.back.textContent = 'Back to current line';
@@ -99,6 +118,10 @@ export class SpotifyReadingSurface {
             [data-savi-spotify-line][data-savi-current="true"]{color:#b7f7ce!important;background:#1d5036!important;border-radius:6px;box-shadow:0 0 0 5px #1d5036}
             [data-savi-spotify-captions]{position:fixed;z-index:2147483490;left:50%;transform:translateX(-50%);bottom:108px;width:max-content;max-width:min(760px,calc(100vw - 210px));padding:12px 20px;background:#121a18f5;color:#f5faf7;border:1px solid #ffffff24;border-radius:12px;box-shadow:0 6px 24px #0007;font:500 clamp(18px,2vw,26px)/1.6 system-ui;text-align:center;max-height:28vh;overflow:auto;white-space:pre-wrap}
             [data-savi-spotify-caption]{cursor:text}
+            [data-savi-spotify-line]:has(+[data-savi-spotify-translation]){padding-bottom:0!important;margin-bottom:0!important}
+            [data-savi-spotify-translation]{display:block;font:400 .85em/1.5 system-ui;color:#adbdb5;white-space:pre-wrap;margin:6px 0 12px;cursor:default}
+            [data-savi-spotify-captions] [data-savi-spotify-translation]{font-size:17px;margin:5px 0 0}
+            [data-savi-spotify-translation][hidden]{display:none!important}
             [data-savi-spotify-follow]{position:fixed;bottom:106px;left:50%;transform:translateX(-50%);z-index:2147483500;border:1px solid #ffffff40;border-radius:24px;padding:10px 18px;background:#183d2a;color:#eaffef;font:14px system-ui;cursor:pointer}
             [data-savi-spotify-captions][hidden],[data-savi-spotify-follow][hidden]{display:none!important}
             @media(max-width:600px){[data-savi-spotify-captions]{max-width:calc(100vw - 32px);bottom:150px;font-size:19px}}
@@ -144,6 +167,7 @@ export class SpotifyReadingSurface {
             if (info.node && info.node.textContent === info.normalized) info.node.textContent = info.original!;
             node.removeAttribute('data-savi-spotify-line');
             node.removeAttribute('data-savi-current');
+            info.english?.remove();
             this.annotations.delete(node);
         }
     }
@@ -178,6 +202,12 @@ export class SpotifyReadingSurface {
         if (this.disposed) return;
         const s = this.snapshot(),
             id = s.playback.identity?.id;
+        const scope = this.scope(s);
+        if (scope !== this.translationScope) {
+            this.translationScope = scope;
+            this.translations.clear();
+            this.translationRetryAt = 0;
+        }
         if (id !== this.id) {
             this.dictionary.stop();
             this.dictionaryStarted = false;
@@ -217,7 +247,7 @@ export class SpotifyReadingSurface {
         for (const [el, info] of this.annotations) {
             if (
                 !candidates.includes(el) ||
-                !s.lines.includes(info.cue) ||
+                (!info.native && !s.lines.includes(info.cue)) ||
                 cleanProviderText(el.textContent ?? '', s.lang) !== info.cue.text
             )
                 this.restore(el);
@@ -240,20 +270,27 @@ export class SpotifyReadingSurface {
             const text = cleanProviderText(el.textContent ?? '', s.lang);
             const indices = providerIndices.get(text) ?? [];
             const occurrences = indices.length;
-            if (occurrences > 1 && occurrences !== nativeCounts.get(text)) {
-                this.restore(el);
-                continue;
-            }
-            const index = indices.find((i) => i >= after);
-            if (index === undefined) continue;
-            after = index + 1;
+            if (!text) continue;
+            const ambiguous = occurrences > 1 && occurrences !== nativeCounts.get(text);
+            const index = ambiguous ? undefined : indices.find((i) => i >= after);
+            if (index !== undefined) after = index + 1;
             const existing = this.annotations.get(el);
+            // Native paragraphs can combine provider cues. They remain readable
+            // and translatable without assigning an invented playback interval.
+            const cue =
+                index !== undefined
+                    ? s.lines[index]
+                    : existing?.native && existing.cue.text === text
+                      ? existing.cue
+                      : { text, timing: 'untimed' as const };
             if (existing && existing.node === el.firstChild && existing.node?.textContent === text) {
-                existing.cue = s.lines[index];
+                existing.cue = cue;
+                existing.native = index === undefined;
+                if (existing.english?.previousSibling !== el && existing.english) el.after(existing.english);
                 continue;
             }
             if (existing) this.restore(el);
-            const info: Annotation = { cue: s.lines[index] };
+            const info: Annotation = { cue, native: index === undefined };
             if (el.childNodes.length === 1 && el.firstChild instanceof Text) {
                 info.node = el.firstChild;
                 info.original = info.node.textContent ?? '';
@@ -261,6 +298,12 @@ export class SpotifyReadingSurface {
                 info.node.textContent = text;
             }
             el.dataset.saviSpotifyLine = '';
+            if (this.translate) {
+                info.english = document.createElement('span');
+                info.english.dataset.saviSpotifyTranslation = '';
+                info.english.lang = 'en';
+                el.after(info.english);
+            }
             this.annotations.set(el, info);
         }
         const overPopup = !!this.pointer && this.dictionary.isOverHoverSurface(this.pointer.x, this.pointer.y);
@@ -297,12 +340,91 @@ export class SpotifyReadingSurface {
             if (this.caption.textContent !== (cue?.text ?? '')) this.caption.textContent = cue?.text ?? '';
         }
         this.captions.hidden = !this.active || (nativeVisible && this.pointed !== this.caption);
+        this.updateEnglish(s);
         this.back.hidden = !this.browsing || !nativeVisible || !cue;
         const player = document.querySelector<HTMLElement>('[data-testid="now-playing-bar"]');
         const top = player?.getBoundingClientRect().top;
         const bottom = top && top > 0 ? Math.max(100, innerHeight - top + 12) : 108;
         this.captions.style.bottom = `${bottom}px`;
         this.back.style.bottom = `${bottom}px`;
+    }
+    private scope(s: SpotifyReadingSnapshot) {
+        return JSON.stringify([s.account, s.playback.identity?.id, s.sourceLang ?? s.lang]);
+    }
+    private translationKey(cue: SpotifyLine, s = this.snapshot()) {
+        const index = s.lines.indexOf(cue);
+        if (index < 0) return JSON.stringify([cue.text]);
+        return JSON.stringify([cue.text, s.lines[index - 1]?.text, s.lines[index + 1]?.text]);
+    }
+    translationFor(cue: SpotifyLine): string | undefined {
+        if (this.scope(this.snapshot()) !== this.translationScope) return undefined;
+        return this.translations.get(this.translationKey(cue))?.text;
+    }
+    private updateEnglish(s: SpotifyReadingSnapshot) {
+        if (!this.translate) return;
+        const label = (cue?: SpotifyLine) => {
+            if (!cue) return '';
+            if (!s.account) return 'Sign in to Savi for English subtitles.';
+            const result = this.translations.get(this.translationKey(cue, s));
+            if (result?.text) return result.text;
+            return this.translationRetryAt > Date.now()
+                ? 'English translation unavailable. Retrying shortly…'
+                : 'Translating to English…';
+        };
+        const render = (element: HTMLElement, cue?: SpotifyLine) => {
+            const text = label(cue);
+            if (element.textContent !== text) element.textContent = text;
+        };
+        for (const info of this.annotations.values()) if (info.english) render(info.english, info.cue);
+        render(this.captionEnglish, this.active);
+        if (!s.account || !s.playback.identity || !s.visible || !s.lang || this.translationRetryAt > Date.now()) return;
+        const current = this.active ? s.lines.indexOf(this.active) : 0;
+        const priority = [
+            this.active,
+            ...Array.from(this.annotations)
+                .filter(([el]) => this.visible(el))
+                .map(([, info]) => info.cue),
+            ...s.lines.slice(Math.max(0, current), Math.max(0, current) + 6),
+            ...Array.from(this.annotations.values()).map((info) => info.cue),
+            ...s.lines,
+        ];
+        for (const cue of priority) {
+            if (this.translationRunning >= 2) break;
+            if (!cue) continue;
+            const key = this.translationKey(cue, s);
+            const cached = this.translations.get(key);
+            if (cached && cached.state !== 'failed') continue;
+            const index = s.lines.indexOf(cue);
+            const context =
+                index < 0
+                    ? cue.text
+                    : s.lines
+                          .slice(Math.max(0, index - 1), index + 2)
+                          .map((l) => l.text)
+                          .join('\n')
+                          .slice(0, 8000);
+            const scope = this.translationScope;
+            this.translations.set(key, { state: 'pending' });
+            this.translationRunning++;
+            void this.translate(cue.text, s.sourceLang ?? s.lang, context)
+                .then((text) => {
+                    if (this.disposed || scope !== this.scope(this.snapshot()) || scope !== this.translationScope)
+                        return;
+                    if (typeof text !== 'string' || !text.trim() || text.length > 12000)
+                        throw Error('Translation unavailable');
+                    this.translations.set(key, { state: 'ready', text: text.trim() });
+                })
+                .catch(() => {
+                    if (this.disposed || scope !== this.scope(this.snapshot()) || scope !== this.translationScope)
+                        return;
+                    this.translations.set(key, { state: 'failed' });
+                    this.translationRetryAt = Date.now() + 30000;
+                })
+                .finally(() => {
+                    this.translationRunning--;
+                    if (!this.disposed) this.update();
+                });
+        }
     }
     private followNative(cue: SpotifyLine) {
         const el = Array.from(this.annotations).find(([, info]) => info.cue === cue)?.[0];
