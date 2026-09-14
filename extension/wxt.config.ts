@@ -25,7 +25,7 @@ const addToPublicPathsType = (srcPath: string, destPath: string, paths: string[]
     }
 };
 
-const extName = 'asbplayer';
+const extName = 'Savi';
 
 // A persistent, dev-only Chrome profile (under the gitignored .wxt/) so a Netflix
 // sign-in survives across `yarn dev:extension` runs instead of a throwaway guest
@@ -84,7 +84,7 @@ export default defineConfig({
         const isDev = mode === 'development';
         const devLabel = isDev ? ' (Dev)' : '';
         const title = `${extName}${devLabel}`;
-        const name = `${title}: Language-learning with subtitles`;
+        const name = `${title}: Watch, understand, remember`;
 
         let manifest: UserManifest = {
             name,

@@ -1,4 +1,4 @@
-import { subtitleTokens } from "./token-cache";
+import { subtitleTokens } from './token-cache';
 // Live-subtitle hover dictionary: hover a word on the video's asbplayer
 // subtitle overlay and see (a) the word boxed under the cursor, Language
 // Reactor-style, and (b) its dictionary entry in a popup.
@@ -197,7 +197,7 @@ const POPUP_STYLE: Partial<CSSStyleDeclaration> = {
     background: POPUP_BG,
     color: '#e8eaed',
     border: '1px solid #2a313c',
-    borderRadius: '12px',
+    borderRadius: '14px',
     padding: '15px 18px',
     boxShadow: '0 8px 30px rgba(0,0,0,0.5)',
     font: '14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Sans", "Noto Sans JP", sans-serif',
@@ -212,9 +212,9 @@ const HIGHLIGHT_STYLE: Partial<CSSStyleDeclaration> = {
     zIndex: '2147483646', // just beneath the popup
     pointerEvents: 'none',
     boxSizing: 'border-box',
-    border: '1.5px solid rgba(255, 255, 255, 0.7)',
+    border: '1.5px solid rgba(76, 194, 255, 0.8)',
     borderRadius: '5px',
-    background: 'rgba(255, 255, 255, 0.12)',
+    background: 'rgba(76, 194, 255, 0.14)',
     transition: 'left 60ms linear, top 60ms linear, width 60ms linear, height 60ms linear',
     display: 'none',
 };
@@ -230,9 +230,9 @@ const MINE_BTN_STYLE: Partial<CSSStyleDeclaration> = {
     fontSize: '13px',
     fontWeight: '600',
     color: '#171b22',
-    background: '#ffd166',
+    background: '#4cc2ff',
     border: 'none',
-    borderRadius: '7px',
+    borderRadius: '10px',
     cursor: 'pointer',
 };
 
@@ -247,7 +247,7 @@ const BREAKDOWN_BTN_STYLE: Partial<CSSStyleDeclaration> = {
     color: '#cfd6df',
     background: 'transparent',
     border: '1px solid #3a424e',
-    borderRadius: '7px',
+    borderRadius: '10px',
     cursor: 'pointer',
 };
 

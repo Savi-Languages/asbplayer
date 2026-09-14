@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next';
+import LogoIcon from './LogoIcon';
 import React from 'react';
 import MuiDrawer, { type DrawerProps } from '@mui/material/Drawer';
 import Paper from '@mui/material/Paper';
@@ -16,6 +18,7 @@ interface Props extends DrawerProps {
 }
 
 const Drawer: React.FC<Props> = ({ children, showBackButton, label, onClose, drawerWidth, ...rest }) => {
+    const { t } = useTranslation();
     const width = drawerWidth === undefined ? '100%' : drawerWidth;
     const appBarHeight = useAppBarHeight();
     const showHeader = showBackButton || label !== undefined;
@@ -44,14 +47,16 @@ const Drawer: React.FC<Props> = ({ children, showBackButton, label, onClose, dra
                             flexShrink: 0,
                             display: 'flex',
                             alignItems: 'center',
-                            px: 1,
+                            px: 2,
+                            gap: 1,
                         }}
                     >
                         {showBackButton && (
-                            <IconButton onClick={onClose}>
+                            <IconButton aria-label={t('action.close')} onClick={onClose}>
                                 <ChevronRightIcon />
                             </IconButton>
                         )}
+                        <LogoIcon sx={{ width: 26, height: 26 }} />
                         {label !== undefined && (
                             <Typography variant="h6" sx={{ flexGrow: 1, pl: 1 }}>
                                 {label}

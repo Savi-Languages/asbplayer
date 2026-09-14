@@ -9,7 +9,7 @@
         "message": "Extraire le sous-titre actuel et ouvrir la boîte de dialogue d’export Anki. Lorsque la vidéo est synchronisée sans fichier de sous-titres, démarre/arrête l’enregistrement audio."
     },
     "shortcutUpdateLastCardDescription": {
-        "message": "Mettre à jour la dernière carte Anki créée avec les médias capturés par asbplayer. Lorsque la vidéo est synchronisée sans fichier de sous-titres, démarre/arrête l’enregistrement audio."
+        "message": "Mettre à jour la dernière carte Anki créée avec les médias capturés par Savi. Lorsque la vidéo est synchronisée sans fichier de sous-titres, démarre/arrête l’enregistrement audio."
     },
     "shortcutExportCardDescription": {
         "message": "Exporter la carte directement vers Anki, sans passer par la boîte de dialogue."

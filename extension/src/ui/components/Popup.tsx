@@ -1,48 +1,25 @@
-import Grid from '@mui/material/Grid';
-import { Command, HttpPostMessage, OpenStatisticsOverlayMessage, PopupToExtensionCommand } from '@project/common';
-import {
-    AsbplayerSettings,
-    Profile,
-    chromeCommandBindsToKeyBinds,
-    dictionaryTrackEnabled,
-} from '@project/common/settings';
-import SettingsForm from '@project/common/components/SettingsForm';
-import PanelIcon from '@project/common/components/PanelIcon';
-import LaunchIcon from '@mui/icons-material/Launch';
-import SettingsIcon from '@mui/icons-material/Settings';
-import { useCallback, useMemo } from 'react';
-import Button, { type ButtonProps } from '@mui/material/Button';
-import ButtonGroup from '@mui/material/ButtonGroup';
-import { useTranslation } from 'react-i18next';
-import { Fetcher } from '@project/common/src/fetcher';
-import { useLocalFontFamilies } from '@project/common/hooks';
-import { Anki } from '@project/common/anki';
-import { useSupportedLanguages } from '../hooks/use-supported-languages';
-import { useI18n } from '../hooks/use-i18n';
-import { isMobile } from 'react-device-detect';
-import { useTheme } from '@mui/material/styles';
-import SettingsProfileSelectMenu from '@project/common/components/SettingsProfileSelectMenu';
-import { settingsPageConfigs } from '@/services/pages';
-import Stack from '@mui/material/Stack';
-import TutorialIcon from '@project/common/components/TutorialIcon';
-import BarChartIcon from '@mui/icons-material/BarChart';
-import Paper from '@mui/material/Paper';
-import { DictionaryProvider } from '@project/common/dictionary-db';
-import { useAnnotationTutorial } from '@project/common/hooks/use-annotation-tutorial';
-import { ExtensionGlobalStateProvider } from '@/services/extension-global-state-provider';
-import { uiTabRegistry, useMediaId } from '../hooks/use-media-id';
-import { useSaviAccount } from '../hooks/use-savi-account';
-import { useSaviRoamingSettings } from '../hooks/use-savi-roaming-settings';
-import { useSaviMutedSites } from '../hooks/use-savi-muted-sites';
-import Statistics from '@project/common/components/Statistics';
+import { useCallback, useState } from 'react';
 import Box from '@mui/material/Box';
-import { createStatisticsPopup } from '@/services/statistics-util';
+import Stack from '@mui/material/Stack';
+import Typography from '@mui/material/Typography';
+import Button from '@mui/material/Button';
+import IconButton from '@mui/material/IconButton';
+import Paper from '@mui/material/Paper';
+import Switch from '@mui/material/Switch';
+import FormControlLabel from '@mui/material/FormControlLabel';
+import SettingsOutlined from '@mui/icons-material/SettingsOutlined';
+import ArrowForward from '@mui/icons-material/ArrowForward';
+import Launch from '@mui/icons-material/Launch';
+import Translate from '@mui/icons-material/Translate';
+import { isMobile } from 'react-device-detect';
+import { AsbplayerSettings, Profile } from '@project/common/settings';
+import { DictionaryProvider } from '@project/common/dictionary-db';
+import SaviBrand from '@project/common/components/SaviBrand';
 import Tooltip from '@project/common/components/Tooltip';
-import { useCurrentTabId } from '../hooks/use-current-tab-id';
-import { useLastMediaIdOnce } from '../hooks/use-media-id';
+import { useI18n } from '../hooks/use-i18n';
+import { useTranslation } from 'react-i18next';
+import { useSaviAccount } from '../hooks/use-savi-account';
 import SaviCapturePanel from '@/savi/ui/SaviCapturePanel';
-
-const globalStateProvider = new ExtensionGlobalStateProvider();
 
 interface Props {
     dictionaryProvider: DictionaryProvider;
@@ -60,250 +37,115 @@ interface Props {
     onSetActiveProfile: (name: string | undefined) => void;
 }
 
-class ExtensionFetcher implements Fetcher {
-    fetch(url: string, body: any) {
-        const httpPostCommand: PopupToExtensionCommand<HttpPostMessage> = {
-            sender: 'asbplayer-popup',
-            message: {
-                command: 'http-post',
-                url,
-                body,
-                messageId: '',
-            },
-        };
-        return browser.runtime.sendMessage(httpPostCommand);
-    }
-}
-
-const NavButton: React.FC<ButtonProps & { label: string }> = ({ label, ...buttonProps }) => {
-    const [isOverflowing, setIsOverflowing] = useState<boolean>();
-    return (
-        <Tooltip title={label} disabled={!isOverflowing}>
-            <Button size="small" variant="contained" color="primary" {...buttonProps}>
-                <span
-                    ref={(ref) => {
-                        setIsOverflowing(ref !== null && ref.scrollWidth > ref.clientWidth);
-                    }}
-                    style={{
-                        display: 'block',
-                        maxWidth: '100%',
-                        overflow: 'hidden',
-                        whiteSpace: 'nowrap',
-                        textOverflow: 'ellipsis',
-                    }}
-                >
-                    {label}
-                </span>
-            </Button>
-        </Tooltip>
-    );
-};
-
-const Popup = ({
-    dictionaryProvider,
-    settings,
-    commands,
-    onOpenApp,
-    onOpenSidePanel,
-    onSettingsChanged,
-    onOpenExtensionShortcuts,
-    onOpenUserGuide,
-    ...profilesContext
-}: Props) => {
+export default function Popup({ settings, onSettingsChanged, onOpenApp, onOpenSidePanel, onOpenUserGuide }: Props) {
+    const { initialized } = useI18n({ language: settings.language });
     const { t } = useTranslation();
-    const { initialized: i18nInitialized } = useI18n({ language: settings.language });
-    const anki = useMemo(() => new Anki(settings, new ExtensionFetcher()), [settings]);
-    const handleUnlockLocalFonts = useCallback(() => {
-        browser.tabs.create({
-            url: `${browser.runtime.getURL('/options.html')}#subtitle-appearance`,
-            active: true,
-        });
+    const account = useSaviAccount(settings.saviCloudUrl ?? '');
+    const [error, setError] = useState<string>();
+    const openSettings = useCallback((section = 'savi-settings') => {
+        browser.tabs.create({ active: true, url: `${browser.runtime.getURL('/options.html')}#${section}` });
     }, []);
-    const { supportedLanguages } = useSupportedLanguages();
-    const { localFontsAvailable, localFontsPermission, localFontFamilies } = useLocalFontFamilies();
-    const saviAccount = useSaviAccount(settings.saviCloudUrl ?? '');
-    const saviRoaming = useSaviRoamingSettings(settings.saviCloudUrl ?? '', saviAccount.email ?? '');
-    // The popup is a full settings surface, not a cut-down one — it renders the
-    // same Savi tab the options page does, so it has to supply the blacklist
-    // too or the section silently vanishes for anyone who reaches settings
-    // through the toolbar icon.
-    const saviMutedSites = useSaviMutedSites(settings.saviCloudUrl ?? '', saviAccount.email ?? '');
-    const theme = useTheme();
-    const { handleAnnotationTutorialSeen, inAnnotationTutorial } = useAnnotationTutorial({ globalStateProvider });
-    const [scrollToId, setScrollToId] = useState<string>();
-    const handleViewAnnotationSettings = useCallback(() => {
-        setScrollToId('annotation');
-        setStatisticsOpen(false);
-    }, []);
-    const handleOpenStatisticsOverlay = useCallback((mediaId: string) => {
-        const command: Command<OpenStatisticsOverlayMessage> = {
-            sender: 'asbplayer-popup',
-            message: {
-                command: 'open-statistics-overlay',
-                mediaId,
-                force: true,
-            },
-        };
-        browser.runtime.sendMessage(command);
-    }, []);
-
-    const [statisticsOpen, setStatisticsOpen] = useState<boolean>(false);
-
-    const settingsRef = useRef<AsbplayerSettings>(settings);
-    settingsRef.current = settings;
-
-    const currentTabId = useCurrentTabId();
-    const currentMediaIdWithSubtitles = useMediaId({
-        whereAsbplayer: (a) => a.tab?.id === currentTabId,
-        whereVideoElement: (v) => v.id === currentTabId,
-    });
-    const fallbackMediaIdWithSubtitles = useLastMediaIdOnce();
-    const mediaIdWithSubtitles = currentMediaIdWithSubtitles ?? fallbackMediaIdWithSubtitles;
-
-    useEffect(() => {
-        const annotationsEnabled =
-            settingsRef.current?.dictionaryTracks.some((dt) => dictionaryTrackEnabled(dt)) ?? false;
-        setStatisticsOpen(mediaIdWithSubtitles !== undefined && annotationsEnabled);
-    }, [mediaIdWithSubtitles]);
-
-    const handleToggleStatistics = useCallback(() => setStatisticsOpen((v) => !v), []);
-    const fetchStatisticsMediaInfo = useCallback(async (mediaId: string) => {
-        const sourceString = (await uiTabRegistry.activeVideoElements()).find((v) => v.src === mediaId)?.title;
-        return { sourceString: sourceString ?? '' };
-    }, []);
-
-    if (!i18nInitialized) {
-        return null;
-    }
-
+    if (!initialized) return null;
     return (
-        <Paper>
-            <Stack direction="column" spacing={1.5} sx={{ padding: theme.spacing(1.5) }}>
-                <SaviCapturePanel settings={settings} />
-                <ButtonGroup
-                    fullWidth
-                    size="small"
-                    variant="contained"
-                    color="primary"
-                    orientation="horizontal"
-                    sx={{
-                        '& .MuiButton-root': {
-                            height: '36px',
-                        },
-                    }}
-                >
-                    {mediaIdWithSubtitles !== undefined && (
-                        <>
-                            {statisticsOpen && (
-                                <NavButton
-                                    startIcon={<SettingsIcon />}
-                                    onClick={handleToggleStatistics}
-                                    label={t('bar.settings')}
-                                />
-                            )}
-                            {!statisticsOpen && (
-                                <NavButton
-                                    startIcon={<BarChartIcon />}
-                                    onClick={handleToggleStatistics}
-                                    label={t('statistics.title')}
-                                />
-                            )}
-                        </>
-                    )}
-                    <NavButton startIcon={<LaunchIcon />} onClick={onOpenApp} label={t('action.openApp')} />
-                    {!isMobile && (
-                        <NavButton
-                            startIcon={<PanelIcon />}
-                            onClick={onOpenSidePanel}
-                            label={t('action.openSidePanel')}
-                        />
-                    )}
-                    <NavButton startIcon={<TutorialIcon />} onClick={onOpenUserGuide} label={t('action.userGuide')} />
-                </ButtonGroup>
-                <Grid
-                    item
-                    style={{
-                        height: isMobile ? 'auto' : 390,
-                    }}
-                >
-                    {!statisticsOpen && (
-                        <SettingsForm
-                            heightConstrained
-                            extensionInstalled
-                            extensionVersion={browser.runtime.getManifest().version}
-                            extensionSupportsAppIntegration
-                            extensionSupportsOverlay
-                            extensionSupportsSidePanel
-                            extensionSupportsOrderableAnkiFields
-                            extensionSupportsTrackSpecificSettings
-                            extensionSupportsSubtitlesWidthSetting
-                            extensionSupportsPauseOnHover
-                            extensionSupportsExportCardBind
-                            extensionSupportsPageSettings
-                            extensionSupportsDictionary
-                            extensionSupportsDictionaryBrowser
-                            extensionSupportsDictionaryWaniKani
-                            extensionSupportsDictionaryMatchAcrossScripts
-                            extensionSupportsDictionaryTokenAnnotationConfig
-                            extensionSupportsSeekableTrackSetting
-                            extensionSupportsAutoCopyableTrackSetting
-                            extensionSupportsDictionaryTokenStatusDisplayAlpha
-                            extensionSupportsDictionaryYomitanMecab
-                            forceVerticalTabs={false}
-                            anki={anki}
-                            chromeKeyBinds={chromeCommandBindsToKeyBinds(commands)}
-                            dictionaryProvider={dictionaryProvider}
-                            settings={settings}
-                            profiles={profilesContext.profiles}
-                            activeProfile={profilesContext.activeProfile}
-                            pageConfigs={settingsPageConfigs}
-                            localFontsAvailable={localFontsAvailable}
-                            localFontsPermission={localFontsPermission}
-                            localFontFamilies={localFontFamilies}
-                            supportedLanguages={supportedLanguages}
-                            onSettingsChanged={onSettingsChanged}
-                            onOpenChromeExtensionShortcuts={onOpenExtensionShortcuts}
-                            onUnlockLocalFonts={handleUnlockLocalFonts}
-                            inAnnotationTutorial={inAnnotationTutorial}
-                            onAnnotationTutorialSeen={handleAnnotationTutorialSeen}
-                            scrollToId={scrollToId}
-                            saviAccountEmail={saviAccount.email}
-                            onSaviSignIn={saviAccount.signIn}
-                            onSaviSignOut={saviAccount.signOut}
-                            saviTargetLanguage={saviRoaming.targetLanguage}
-                            onSaviTargetLanguageChange={saviRoaming.setTargetLanguage}
-                            saviNativeLanguage={saviRoaming.nativeLanguage}
-                            onSaviNativeLanguageChange={saviRoaming.setNativeLanguage}
-                            saviMutedSites={saviMutedSites.sites}
-                            onSaviUnmuteSite={saviMutedSites.unmute}
-                        />
-                    )}
-                    {statisticsOpen && (
-                        <Box sx={{ display: 'flex', width: '100%', height: '100%', overflowY: 'scroll' }}>
-                            <Statistics
-                                mediaId={mediaIdWithSubtitles}
-                                dictionaryProvider={dictionaryProvider}
-                                settings={settings}
-                                hasSubtitles={mediaIdWithSubtitles !== undefined}
-                                onViewAnnotationSettings={handleViewAnnotationSettings}
-                                onOpenOverlay={handleOpenStatisticsOverlay}
-                                onSeekWasRequested={uiTabRegistry.focusTabForMediaId}
-                                onMineWasRequested={uiTabRegistry.focusTabForMediaId}
-                                onOpenInNewWindow={createStatisticsPopup}
-                                mediaInfoFetcher={fetchStatisticsMediaInfo}
-                                sx={{ m: 1 }}
-                            />
-                        </Box>
-                    )}
-                </Grid>
-                {!statisticsOpen && (
-                    <Grid item>
-                        <SettingsProfileSelectMenu {...profilesContext} />
-                    </Grid>
-                )}
+        <Box component="main" sx={{ p: 2.5, bgcolor: 'background.paper' }}>
+            <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 3 }}>
+                <SaviBrand caption={t('saviUi.watchingCompanion')} />
+                <Tooltip title={t('settings.title')}>
+                    <IconButton aria-label={t('settings.title')} onClick={() => openSettings()}>
+                        <SettingsOutlined />
+                    </IconButton>
+                </Tooltip>
             </Stack>
-        </Paper>
+            <Typography variant="overline" color="primary" sx={{ fontSize: 10, letterSpacing: '0.14em' }}>
+                {t('saviUi.makeItYours')}
+            </Typography>
+            <Typography component="h1" variant="h4" sx={{ fontSize: 29, mt: 0.5 }}>
+                {t('saviUi.keepWatching')}
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1, mb: 2.5 }}>
+                {t('saviUi.popupIntro')}
+            </Typography>
+            <Button
+                fullWidth
+                variant="contained"
+                endIcon={<ArrowForward />}
+                sx={{ minHeight: 46 }}
+                onClick={async () => {
+                    try {
+                        await (isMobile ? onOpenApp() : onOpenSidePanel());
+                    } catch {
+                        setError(t('saviUi.panelError'));
+                    }
+                }}
+            >
+                {isMobile ? t('saviUi.openPlayer') : t('saviUi.openStudyPanel')}
+            </Button>
+            {error && (
+                <Typography role="alert" color="error" variant="body2" sx={{ mt: 1 }}>
+                    {error}
+                </Typography>
+            )}
+            <Box sx={{ my: 2 }}>
+                <SaviCapturePanel settings={settings} />
+            </Box>
+            <Paper variant="outlined" sx={{ p: 1.5, mb: 2 }}>
+                <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
+                    <Translate color="primary" fontSize="small" />
+                    <Typography variant="subtitle2">{t('saviUi.whileWatching')}</Typography>
+                </Stack>
+                <FormControlLabel
+                    sx={{ display: 'flex', m: 0, justifyContent: 'space-between' }}
+                    labelPlacement="start"
+                    label={<Typography variant="body2">{t('saviUi.pauseToExplore')}</Typography>}
+                    control={
+                        <Switch
+                            checked={settings.pauseOnHoverMode !== 0}
+                            onChange={(_, checked) => onSettingsChanged({ pauseOnHoverMode: checked ? 1 : 0 })}
+                        />
+                    }
+                />
+                <Typography variant="caption" color="text.secondary">
+                    {t('saviUi.pauseDescription')}
+                </Typography>
+                <Button
+                    fullWidth
+                    variant="text"
+                    sx={{ mt: 1, justifyContent: 'space-between' }}
+                    endIcon={<ArrowForward fontSize="small" />}
+                    onClick={() => openSettings('subtitle-appearance')}
+                >
+                    {t('settings.subtitleAppearance')}
+                </Button>
+            </Paper>
+            <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
+                <Button variant="outlined" fullWidth startIcon={<Launch />} onClick={onOpenApp}>
+                    {t('saviUi.openPlayer')}
+                </Button>
+                <Button variant="outlined" fullWidth onClick={onOpenUserGuide}>
+                    {t('saviUi.watchGuide')}
+                </Button>
+            </Stack>
+            <Box sx={{ borderTop: 1, borderColor: 'divider', pt: 1.5, display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Box
+                    sx={{
+                        width: 6,
+                        height: 6,
+                        borderRadius: '50%',
+                        bgcolor: account.email ? 'success.main' : 'text.secondary',
+                        flexShrink: 0,
+                    }}
+                />
+                <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                >
+                    {account.email ?? t('saviUi.connectAccount')}
+                </Typography>
+                <Button size="small" onClick={() => openSettings()}>
+                    {account.email ? t('saviUi.account') : t('saviUi.signIn')}
+                </Button>
+            </Box>
+        </Box>
     );
-};
-
-export default Popup;
+}

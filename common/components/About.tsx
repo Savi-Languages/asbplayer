@@ -221,15 +221,15 @@ const About = ({ appVersion, extensionVersion }: Props) => {
             <Box style={{ width: '100%', textAlign: 'center' }}>
                 <LogoIcon style={{ width: 48, height: 48 }} />
                 <br />
-                <Link variant="h5" href="https://github.com/asbplayer/asbplayer">
-                    asbplayer
+                <Link variant="h5" href="https://github.com/Savi-Languages/asbplayer">
+                    Savi
                 </Link>
                 <br />
                 {appVersion && (
                     <>
                         <Typography variant="caption">
                             {t('about.appVersion')}{' '}
-                            <Link href={`https://github.com/asbplayer/asbplayer/commit/${appVersion}`}>
+                            <Link href={`https://github.com/Savi-Languages/asbplayer/commit/${appVersion}`}>
                                 {appVersion}
                             </Link>
                         </Typography>
@@ -239,13 +239,16 @@ const About = ({ appVersion, extensionVersion }: Props) => {
                 {extensionVersion && (
                     <Typography variant="caption">
                         {t('about.extensionVersion')}{' '}
-                        <Link href={`https://github.com/asbplayer/asbplayer/releases/tag/v${extensionVersion}`}>
+                        <Link href={`https://github.com/Savi-Languages/asbplayer/releases/tag/v${extensionVersion}`}>
                             {extensionVersion}
                         </Link>
                     </Typography>
                 )}
             </Box>
-            <p />
+            <Typography variant="body2" color="text.secondary" sx={{ my: 3 }}>
+                Savi is built on the open-source asbplayer project. The original authors and their MIT license are
+                credited below.
+            </Typography>
             <SettingsSection>{t('about.license')}</SettingsSection>
             <Paper variant="outlined" style={{ padding: theme.spacing(2), height: 'auto' }}>
                 <Typography variant="body2">
