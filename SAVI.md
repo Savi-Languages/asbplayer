@@ -178,3 +178,40 @@ cloud/daemon and AnkiConnect is still an integration check in the user's environ
 The small “Savi modes” control opens Watch / Explore / Listen and explicit Bookmark / Replay / Reveal actions. Mode is stored in the signed-in account's `saviImmersionMode` setting and refreshed each minute. Watch is the default: no automatic target card, hover mining, or gloss-hover pause. Explore allows those features subject to existing consent/settings. Listen hides the Savi subtitle layer with a reversible Reveal button; it does not rewrite subtitle settings. General asbplayer playback modes selected explicitly by the user remain separate.
 
 A bookmark is saved locally before upload even when hover mining is disabled. A paused hover must last 1.5 seconds, match an exact current primary cue, and be in Explore with consent. Strong AI selections become candidates; admission budgets are enforced in Savi. Playback alone never grades an item. The local outbox remains account/backend scoped; unavailable AI retries later.
+
+
+## Spotify Web (0.60)
+
+Open Spotify Web in the extension-enabled browser. The Savi panel follows the
+Now Playing item, independently of the page you browse. Open Spotify's Lyrics or
+Read along view to let the adapter observe text already delivered to that page.
+Availability varies by item and Spotify build. The adapter never calls private
+Spotify endpoints or reads Spotify credentials.
+
+- Select a line, then hover/tap its words for dictionary lookup. Save selected
+  line creates a bookmark in the same account's Savi review library. Explore
+  mode plus paused-hover consent enables the existing 1.5-second interest signal,
+  knowledge-aware selection and admission limits. AI card details remain manual.
+- Missing text: import SRT/VTT/LRC or paste publisher/user-supplied plain text.
+  The panel also offers an explicit import of visible Spotify text. Untimed text
+  stays untimed, has no exact replay or heard-word evidence, and saves as text.
+- Record audio requires timed text and a verified local native media clock.
+  Pause, seek, rate/volume/media changes close segments; changing item finishes
+  the previous capture. A different audible browser tab blocks the process tap.
+  Missing or ambiguous clocks, remote playback and crossfade disable capture.
+  Stop and retry after an audio failure; the panel reports the daemon's result.
+- Savi cards use canonical song/episode links. Spotify episode links include a
+  timestamp only for timed text. Spotify song links open the song; saved local
+  line audio uses the existing source-to-recording map.
+
+Listening is measured from actual local advancement, uses stable UUIDs for
+retries, and does not grade vocabulary. Imported text is scoped to the current
+item in the tab; saving selected lines persists them. Language-matched timed
+lines alone can contribute heard evidence. An imported file should match the
+learning language selected in Savi.
+
+QA: `node extension/qa/spotify/build.mjs`, then serve `extension/qa/spotify/` on
+localhost. It uses the production panel with a synthetic media clock and fake
+API responses, never the personal account, database, or real audio. This fixture
+is not evidence of live Spotify capture. Live verification needs Spotify sign-in
+and a reload of the installed extension.

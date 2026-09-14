@@ -74,3 +74,12 @@ test('Watch blocks automatic hover mining but permits deliberate bookmarks', asy
     expect(await queueWatchInterest('local', 'a', item)).toEqual({ ok: false });
     expect(await queueWatchInterest('local', 'a', { ...item, kind: 'bookmark' })).toEqual({ ok: true });
 });
+test('untimed interests keep absent timing and distinct text while retries dedupe', async () => {
+ const base={lang:'ja',episodeId:'spotify:track:1234567890123456789012',kind:'bookmark',lineText:'最初の行',textTiming:'untimed',lineStartMs:0,lineEndMs:0};
+ expect(await queueWatchInterest('local','a',base)).toEqual({ok:true});
+ await drainWatchInterest('local').catch(()=>{});
+ expect(await queueWatchInterest('local','a',base)).toEqual({ok:true});
+ expect(await queueWatchInterest('local','a',{...base,lineText:'次の行'})).toEqual({ok:true});
+ expect(Object.keys(pending).filter(k=>k.startsWith('saviWatchInterest:'))).toHaveLength(2);
+ expect(await queueWatchInterest('local','a',{...base,lineEndMs:1000})).toEqual({ok:false});
+});

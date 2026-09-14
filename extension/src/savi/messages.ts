@@ -74,6 +74,7 @@ export interface SaviStopCaptureResponse {
 // are low-frequency, so waking a sleeping service worker per batch is fine.
 export interface SaviPlaybackStateMessage {
     readonly command: 'savi-playback-state';
+    readonly episodeId?: string;
     readonly ops: SaviSegmentOp[];
 }
 

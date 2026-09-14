@@ -163,7 +163,7 @@ export default class SaviCommandHandler implements CommandHandler {
                     });
                 return true;
             case 'savi-stop-capture':
-                this._stopCapture().then(sendResponse);
+                this._stopCapture(command.message.episodeId, sender).then(sendResponse);
                 return true;
             case 'savi-playback-state':
                 this._playbackState(command.message as SaviPlaybackStateMessage, sender)
@@ -806,6 +806,11 @@ export default class SaviCommandHandler implements CommandHandler {
             }
         }
 
+        if (message.episodeId.startsWith('spotify:')) {
+            const audible = await browser.tabs.query({ audible: true });
+            if (audible.some(tab => tab.id !== tabId)) return { started: false, errorCode: 'other', errorMessage: 'Pause other audible browser tabs before recording Spotify.' };
+        }
+
         const { saviAudioRecording } = await this._settings.get(['saviAudioRecording']);
         let captureId: string;
         let audio: SaviCaptureAudio;
@@ -852,13 +857,16 @@ export default class SaviCommandHandler implements CommandHandler {
         return { started: true, captureId, audio };
     }
 
-    private async _stopCapture(): Promise<SaviStopCaptureResponse> {
+    private async _stopCapture(expectedEpisodeId?: string, sender?: Browser.runtime.MessageSender): Promise<SaviStopCaptureResponse> {
         const session = await getCaptureSession();
 
         if (session === undefined) {
             return { stopped: false, errorMessage: 'no savi capture is running' };
         }
 
+        if (expectedEpisodeId && (session.episodeId !== expectedEpisodeId || session.tabId !== sender?.tab?.id)) {
+            return { stopped: false, errorMessage: 'Another tab owns this capture.' };
+        }
         const config = await this._daemonConfig();
         await clearCaptureSession();
 
@@ -911,7 +919,7 @@ export default class SaviCommandHandler implements CommandHandler {
         const run = this._playbackChain.then(async (): Promise<SaviPlaybackStateResponse> => {
             const allocated = await nextPlaybackSeq();
 
-            if (allocated === undefined || (tabId !== undefined && allocated.session.tabId !== tabId)) {
+            if (allocated === undefined || (tabId !== undefined && allocated.session.tabId !== tabId) || (message.episodeId !== undefined && allocated.session.episodeId !== message.episodeId)) {
                 return { ok: false };
             }
 
@@ -922,6 +930,13 @@ export default class SaviCommandHandler implements CommandHandler {
             }
 
             const { session, seq } = allocated;
+            if (session.episodeId.startsWith('spotify:')) {
+                const audible = await browser.tabs.query({ audible: true });
+                if (audible.some(tab => tab.id !== tabId)) {
+                    await postPlaybackState(config, {captureId: session.captureId, seq, ops: [{type: 'segment-end'}]});
+                    return {ok: false, audio: 'off'};
+                }
+            }
             const post = () => postPlaybackState(config, { captureId: session.captureId, seq, ops: message.ops });
 
             const handle = async (result: Awaited<ReturnType<typeof post>>): Promise<SaviPlaybackStateResponse> => {
