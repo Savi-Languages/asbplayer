@@ -318,7 +318,7 @@ describe('hover overlays follow subtitle layout without mouse movement', () => {
         frame();
         resolve(result);
         await pending;
-        expect(parseFloat(surface('popup').style.top)).toBe(500 - 180 - 12 - 7);
+        expect(parseFloat(surface('popup').style.top)).toBe(500 - 180 - 72 - 7);
     });
 
     it('reanchors the same dictionary term at a different position', async () => {
