@@ -8,7 +8,7 @@ import TableRowWithHoverEffect from './TableRowWithHoverEffect';
 import TableCell from '@mui/material/TableCell';
 import SwitchLabelWithHoverEffect from './SwitchLabelWithHoverEffect';
 import { useTranslation } from 'react-i18next';
-import { AsbplayerSettings, Page, PageSettings, SubtitleListPreference, YoutubePage } from '../settings';
+import { AsbplayerSettings, Page, PageSettings, YoutubePage } from '../settings';
 import InputAdornment from '@mui/material/InputAdornment';
 import Paper from '@mui/material/Paper';
 import { pageMetadata } from '../pages';
@@ -42,14 +42,12 @@ const StreamingVideoSettingsTab: React.FC<Props> = ({
     settings,
     onSettingChanged,
     onSettingsChanged,
-    insideApp,
     extensionSupportsOverlay,
     extensionSupportsPageSettings,
     pageConfigs,
 }) => {
     const { t } = useTranslation();
     const {
-        streamingSubtitleListPreference,
         streamingEnableOverlay,
         streamingDisplaySubtitles,
         streamingRecordMedia,
@@ -60,7 +58,6 @@ const StreamingVideoSettingsTab: React.FC<Props> = ({
         streamingAutoSync,
         streamingAutoSyncPromptOnFailure,
         streamingCondensedPlaybackMinimumSkipIntervalMs,
-        streamingAppUrl,
         streamingPages,
     } = settings;
     const [pageSettingsFormKey, setPageSettingsFormKey] = useState<keyof PageSettings>('netflix');
@@ -81,33 +78,6 @@ const StreamingVideoSettingsTab: React.FC<Props> = ({
                 />
             )}
             <Stack spacing={1}>
-                <SettingsSection>{t('settings.appIntegration')}</SettingsSection>
-                <SwitchLabelWithHoverEffect
-                    control={
-                        <Switch
-                            checked={streamingSubtitleListPreference !== SubtitleListPreference.noSubtitleList}
-                            onChange={(e) =>
-                                onSettingChanged(
-                                    'streamingSubtitleListPreference',
-                                    streamingSubtitleListPreference === SubtitleListPreference.noSubtitleList
-                                        ? SubtitleListPreference.app
-                                        : SubtitleListPreference.noSubtitleList
-                                )
-                            }
-                        />
-                    }
-                    label={t('extension.settings.openSubtitleList')}
-                    labelPlacement="start"
-                />
-                {!insideApp && (
-                    <SettingsTextField
-                        color="primary"
-                        fullWidth
-                        label={t('extension.settings.asbplayerUrl')}
-                        value={streamingAppUrl}
-                        onChange={(e) => onSettingChanged('streamingAppUrl', e.target.value)}
-                    />
-                )}
                 <SettingsSection>{t('settings.ui')}</SettingsSection>
                 {extensionSupportsOverlay && (
                     <SwitchLabelWithHoverEffect

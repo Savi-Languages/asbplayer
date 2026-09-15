@@ -121,6 +121,16 @@ Load a second subtitle track (your native language) alongside the target track
 — Savi Settings → Subtitle appearance, and the track toggles (`1`/`2`).
 This gives the LR-style target + native view.
 
+## Optional companion player and licenses
+
+**Settings → Misc → Advanced integrations** contains the optional asbplayer
+companion-player toggle and URL. This opens a separate compatible subtitle/player
+app; it is not the Savi account or web-app connection. Existing preferences and
+custom player URLs are retained.
+
+**About Savi → Open-source licenses** contains the complete upstream MIT notice,
+author acknowledgements, and dependency credits.
+
 ## Furigana + word coloring (savi player)
 
 The savi player (served by the daemon at `http://localhost:4030`) shows the
