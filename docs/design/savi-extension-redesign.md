@@ -15,6 +15,8 @@ The main interaction changes are:
 - **Dialogs:** consistent Savi fields, buttons, spacing, surfaces, and headers across subtitle selection, card creation, notifications, statistics, and dictionary/settings dialogs.
 - **Onboarding:** direct setup and watching-tool actions replace the implicit scroll-to-start interaction.
 - **Identity:** packaged icons, page titles, localized product names, and extension metadata say Savi. The About page retains the upstream authors, MIT license, and dependency credits.
+- **Study controls:** Watch, Explore, and Listen switch immediately and save on this browser, with separate preferences for each account/backend and for signed-out use. A cloud mode supplies the initial default only until a local choice exists. Replay uses the current line, the previous line during gaps, or the first upcoming line; unavailable actions are dimmed with reasons.
+- **Hover playback:** with hover pausing enabled for the active learning language, a hovered subtitle plays to its end and pauses while the pointer remains on the line or dictionary popup. Leaving resumes a hover-owned pause, while manual pauses remain paused. The behavior is independent of study mode and applies to revealed text in Listen.
 
 ## Implementation decisions
 
@@ -24,9 +26,11 @@ The main interaction changes are:
 4. **Failure modes:** preserve transparent iframe backgrounds; avoid a toolbar covering transcript content; keep optional settings panel indices and ARIA relationships aligned; do not allow old cached upstream strings to erase new branding; preserve stored theme and subtitle preferences.
 5. **Verification:** build both browser targets, run all existing tests plus regressions, check types/lint/localization contracts, and inspect the production extension in a disposable browser profile.
 
-No data schema, cloud deployment, permission, capture protocol, or subtitle serialization changes. Shared UI changes also apply to the fork's local player client. Internal `asbplayer` message identifiers and asset paths remain compatibility contracts.
+The visual redesign does not change data schemas, cloud deployment, permissions, capture protocols, or subtitle serialization. Shared UI changes also apply to the fork's local player client. Internal `asbplayer` message identifiers and asset paths remain compatibility contracts. The full branch also preserves the Spotify Web adapter and capture support from PR #38; its behavior and fixture limitations are documented in [SAVI.md](../../SAVI.md#spotify-web-060).
 
 ## Verification evidence
+
+The original visual redesign was verified before the Spotify merge and playback/control follow-ups:
 
 - Chromium production build: passed.
 - Firefox production build: passed (runtime Firefox testing not performed).
@@ -40,10 +44,14 @@ No data schema, cloud deployment, permission, capture protocol, or subtitle seri
 
 Regression tests were observed failing before fixes for speed accessibility, setting label association, and live hash navigation. The settings-host wiring guard now covers the full settings page; the popup routes there and is covered by the browser test.
 
+The completed study-control follow-up was verified on September 14 with 721 extension tests, TypeScript, lint on changed source files, and a Chromium production build. An isolated browser fixture exercised signed-out Listen/Reveal, previous-line Replay in subtitle gaps, and disabled-control explanations. Hover-pause and control regressions cover timing, pause ownership, stale configuration responses, and offline mode choices. These results do not establish live Netflix or Spotify capture behavior. The earlier Firefox, common, and client results above belong to the original redesign checks.
+
 ## Review and rollout
 
-The unpacked Chromium extension is in `extension/.output/chrome-mv3`; the Firefox build is in `extension/.output/firefox-mv2`. Build outputs are ignored by Git. The user's installed extension has not been replaced, and no branch has been merged or production site deployed.
+The unpacked Chromium extension is in `extension/.output/chrome-mv3`; the Firefox build is in `extension/.output/firefox-mv2`. Build outputs are ignored by Git. The Chromium build through `127854d6` was copied into the existing Edge installation directory, preserving its extension ID and settings; the extension was reloaded and verified enabled on September 15. No video tab was open for an authenticated playback check. The subsequent PR-review fixes described below have been built but have not replaced that running installation. This branch has not been merged and no production site has been deployed.
 
-New interface copy currently uses English fallbacks in other locales; existing translated settings remain translated. Live authenticated Netflix/YouTube playback and real audio capture require a separate smoke check before rollout. The redesign does not change their backend paths.
+PR preparation on September 15 fixed a mode refresh that could arrive during a pending save and made Replay propagate native playback failures and time out missing Netflix acknowledgements. Final checks passed: 728 extension tests, 92 common tests, 3 client tests, extension TypeScript, ESLint on 61 changed source files, locale/page-reference checks, and fresh Chromium and Firefox production builds. These automated checks do not replace live streaming and capture smoke tests.
+
+New interface copy currently uses English fallbacks in other locales; existing translated settings remain translated. Live authenticated Netflix/YouTube playback and real audio capture still require a separate smoke check. Spotify's synthetic fixture likewise does not verify live capture. The redesign does not change the existing Netflix/YouTube backend paths.
 
 To run the browser check, build the extension first, then run `node scripts/savi-redesign-qa.cjs` with Playwright installed. `PLAYWRIGHT_MODULE` and `CHROMIUM_PATH` can point to a host-provided Playwright installation and Chromium executable.
