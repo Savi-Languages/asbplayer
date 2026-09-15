@@ -20,12 +20,10 @@ export const useLocationHash = (requiredParams?: { [key: string]: string }) => {
             setHash(undefined);
             return;
         }
-        if (location.hash && location.hash.startsWith('#')) {
-            const hash = location.hash.substring(1, location.hash.length);
-            setHash(hash);
-        } else {
-            setHash('');
-        }
+        const refresh = () => setHash(location.hash.startsWith('#') ? location.hash.substring(1) : '');
+        refresh();
+        window.addEventListener('hashchange', refresh);
+        return () => window.removeEventListener('hashchange', refresh);
     }, [hasRequiredParams]);
     return { hash };
 };

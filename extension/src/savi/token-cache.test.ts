@@ -50,3 +50,13 @@ it('shares one request while preserving raw target lemmas and merged hover compo
     expect(hover).toHaveLength(1);
     expect(targets.map((t) => t.lemma)).toEqual(['理事', '長']);
 });
+
+it('exposes prepared tokens synchronously without starting a request', async () => {
+    const fetch = jest.fn().mockResolvedValue([{ text: '猫' }]);
+    const cache = new SharedTokenCache(fetch);
+    expect(cache.peek('ja', '猫')).toBeUndefined();
+    expect(fetch).not.toHaveBeenCalled();
+    await cache.get('ja', '猫');
+    expect(cache.peek('ja', '猫')).toEqual([{ text: '猫' }]);
+    expect(cache.peek('zh', '猫')).toBeUndefined();
+});

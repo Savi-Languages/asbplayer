@@ -30,6 +30,7 @@ import InputAdornment from '@mui/material/InputAdornment';
 import IconButton from '@mui/material/IconButton';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import SettingsSection from './SettingsSection';
+import CompanionPlayerSettings from './CompanionPlayerSettings';
 import { VideoSubtitleSplitBehavior } from '../settings';
 
 function regexIsValid(regex: string) {
@@ -463,6 +464,11 @@ const MiscSettingTab: React.FC<Props> = ({
                         onChange={(event) => onSettingChanged('tabName', event.target.value)}
                     />
                 )}
+                <CompanionPlayerSettings
+                    settings={settings}
+                    onSettingChanged={onSettingChanged}
+                    insideApp={insideApp}
+                />
                 <SettingsSection>{t('settings.title')}</SettingsSection>
                 <Stack direction="row" spacing={1}>
                     <Button variant="contained" color="primary" style={{ flex: 1 }} onClick={handleImportSettings}>

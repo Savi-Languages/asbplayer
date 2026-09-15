@@ -74,6 +74,7 @@ export interface SaviStopCaptureResponse {
 // are low-frequency, so waking a sleeping service worker per batch is fine.
 export interface SaviPlaybackStateMessage {
     readonly command: 'savi-playback-state';
+    readonly episodeId?: string;
     readonly ops: SaviSegmentOp[];
 }
 
@@ -487,6 +488,14 @@ export interface SaviGlossTranslateMessage {
     /** Language to gloss INTO (the user's known language), e.g. `en`. */
     readonly glossLang: string;
     /** The whole subtitle line (± neighbours) — influences the translation, not translated itself. */
+    readonly context?: string;
+}
+
+/** A whole subtitle translated into English, separate from word glosses. */
+export interface SaviSubtitleTranslateMessage {
+    readonly command: 'savi-subtitle-translate';
+    readonly text: string;
+    readonly sourceLang: string;
     readonly context?: string;
 }
 

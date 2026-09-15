@@ -35,6 +35,10 @@ export class SharedTokenCache {
         this.flights.set(key, pending);
         return pending;
     }
+    /** Already prepared tokens, without a promise or a background request. */
+    peek(lang: string, text: string): SaviToken[] | undefined {
+        return this.entries.get(JSON.stringify([lang, text]))?.tokens;
+    }
     async get(lang: string, text: string): Promise<SaviToken[]> {
         return (await this.load(lang, text)).tokens;
     }

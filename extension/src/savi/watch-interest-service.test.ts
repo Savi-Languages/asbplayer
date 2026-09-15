@@ -3,7 +3,12 @@ jest.mock('./cloud-client', () => ({ resolveCloudBase: (url: string) => url }));
 jest.mock('./target-service', () => ({ targetCloud: jest.fn() }));
 import { storedAccount } from './account';
 import { targetCloud } from './target-service';
-import { queueWatchInterest, drainWatchInterest } from './watch-interest-service';
+import {
+    queueWatchInterest,
+    drainWatchInterest,
+    setImmersionMode,
+    watchInterestConfig,
+} from './watch-interest-service';
 const pending: Record<string, any> = {};
 const request = jest.fn();
 beforeEach(() => {
@@ -73,4 +78,42 @@ test('Watch blocks automatic hover mining but permits deliberate bookmarks', asy
     };
     expect(await queueWatchInterest('local', 'a', item)).toEqual({ ok: false });
     expect(await queueWatchInterest('local', 'a', { ...item, kind: 'bookmark' })).toEqual({ ok: true });
+});
+test('untimed interests keep absent timing and distinct text while retries dedupe', async () => {
+    const base = {
+        lang: 'ja',
+        episodeId: 'spotify:track:1234567890123456789012',
+        kind: 'bookmark',
+        lineText: '最初の行',
+        textTiming: 'untimed',
+        lineStartMs: 0,
+        lineEndMs: 0,
+    };
+    expect(await queueWatchInterest('local', 'a', base)).toEqual({ ok: true });
+    await drainWatchInterest('local').catch(() => {});
+    expect(await queueWatchInterest('local', 'a', base)).toEqual({ ok: true });
+    expect(await queueWatchInterest('local', 'a', { ...base, lineText: '次の行' })).toEqual({ ok: true });
+    expect(Object.keys(pending).filter((k) => k.startsWith('saviWatchInterest:'))).toHaveLength(2);
+    expect(await queueWatchInterest('local', 'a', { ...base, lineEndMs: 1000 })).toEqual({ ok: false });
+});
+
+describe('local immersion modes', () => {
+    test('switches and restores modes without an account or cloud requests', async () => {
+        (storedAccount as jest.Mock).mockResolvedValue(null);
+        expect(await setImmersionMode('local', 'listen')).toMatchObject({ ok: true, mode: 'listen' });
+        expect(await watchInterestConfig('local')).toMatchObject({ enabled: false, mode: 'listen' });
+        expect(targetCloud).not.toHaveBeenCalled();
+    });
+    test('an offline account can switch modes without enabling hover collection', async () => {
+        (targetCloud as jest.Mock).mockRejectedValue(new Error('offline'));
+        expect(await setImmersionMode('local', 'explore')).toMatchObject({ ok: true });
+        expect(await watchInterestConfig('local')).toMatchObject({ mode: 'explore', enabled: false });
+    });
+    test('local choices survive older cloud settings and stay scoped to account and backend', async () => {
+        await setImmersionMode('local', 'listen');
+        expect(await watchInterestConfig('local')).toMatchObject({ mode: 'listen' });
+        expect(await watchInterestConfig('other')).toMatchObject({ mode: 'explore' });
+        (storedAccount as jest.Mock).mockResolvedValue(null);
+        expect(await watchInterestConfig('local')).toMatchObject({ mode: 'watch' });
+    });
 });

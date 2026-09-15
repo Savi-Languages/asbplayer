@@ -506,3 +506,70 @@
     background: #f0f0f0;
     color: #15171c;
 }
+
+/* Savi watching chrome. Scoped to extension-owned controls, never the host page. */
+.savi-record-button,
+.savi-replay-button,
+.savi-speed-control {
+    border: 1px solid #2a313c;
+    border-radius: 12px;
+    background: rgba(15, 17, 21, 0.96);
+    color: #e8eaed;
+    box-shadow: 0 8px 24px #0005;
+    opacity: 0.9;
+}
+.savi-record-button,
+.savi-replay-button {
+    min-height: 36px;
+}
+.savi-speed-control {
+    padding: 4px;
+    gap: 4px;
+}
+.savi-speed-button {
+    min-height: 30px;
+    border-radius: 8px;
+    font-weight: 550;
+}
+.savi-speed-button.active {
+    background: #4cc2ff;
+    color: #06222e;
+}
+.savi-speed-control:focus-within,
+.savi-record-button:focus-visible,
+.savi-replay-button:focus-visible {
+    opacity: 1;
+}
+.savi-speed-button:focus-visible,
+.savi-record-button:focus-visible,
+.savi-replay-button:focus-visible {
+    outline: 2px solid #4cc2ff;
+    outline-offset: 3px;
+}
+.savi-record-button.recording {
+    border-color: #c76662;
+}
+@media (prefers-reduced-motion: reduce) {
+    .savi-record-button,
+    .savi-record-dot,
+    .savi-replay-button,
+    .savi-speed-control {
+        animation: none !important;
+        transition: none !important;
+    }
+}
+
+.asbplayer-notification {
+    color: #e8eaed;
+    background: #171b22;
+    border: 1px solid #2a313c;
+    border-radius: 12px;
+    padding: 10px 14px;
+    text-shadow: none;
+    font:
+        550 13px -apple-system,
+        BlinkMacSystemFont,
+        'Segoe UI',
+        sans-serif;
+    box-shadow: 0 8px 24px #0005;
+}

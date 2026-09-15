@@ -59,10 +59,14 @@ export class SaviSpeedControl {
 
         const root = document.createElement('div');
         root.className = 'savi-speed-control';
+        root.setAttribute('role', 'group');
+        root.setAttribute('aria-label', 'Playback speed');
 
         for (const speed of SPEEDS) {
             const button = document.createElement('button');
             button.className = 'savi-speed-button';
+            button.type = 'button';
+            button.setAttribute('aria-label', `${speed}× playback speed`);
             button.textContent = `${speed}×`; // e.g. "0.75×"
             button.addEventListener('click', (event) => {
                 event.preventDefault();
@@ -88,7 +92,9 @@ export class SaviSpeedControl {
         }
         const rate = this._video.playbackRate;
         for (const [speed, button] of this._buttons) {
-            button.classList.toggle('active', Math.abs(speed - rate) < 0.001);
+            const active = Math.abs(speed - rate) < 0.001;
+            button.classList.toggle('active', active);
+            button.setAttribute('aria-pressed', String(active));
         }
     }
 }

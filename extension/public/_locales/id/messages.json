@@ -9,7 +9,7 @@
         "message": "Menambang takarir saat ini dan buka dialog ekspor Anki. Jika video disinkronkan tanpa berkas takarir, mulai/hentikan perekaman audio."
     },
     "shortcutUpdateLastCardDescription": {
-        "message": "Perbarui kartu Anki terakhir yang dibuat dengan media yang diambil oleh asbplayer. Jika video disinkronkan tanpa berkas takarir, mulai/hentikan perekaman audio."
+        "message": "Perbarui kartu Anki terakhir yang dibuat dengan media yang diambil oleh Savi. Jika video disinkronkan tanpa berkas takarir, mulai/hentikan perekaman audio."
     },
     "shortcutExportCardDescription": {
         "message": "Ekspor kartu langsung ke Anki tanpa membuka dialog."

@@ -25,7 +25,7 @@ const addToPublicPathsType = (srcPath: string, destPath: string, paths: string[]
     }
 };
 
-const extName = 'asbplayer';
+const extName = 'Savi';
 
 // A persistent, dev-only Chrome profile (under the gitignored .wxt/) so a Netflix
 // sign-in survives across `yarn dev:extension` runs instead of a throwaway guest
@@ -80,14 +80,15 @@ export default defineConfig({
         // Tracks the savi monorepo's GLOBAL semver (root package.json there) —
         // bump this manually alongside `pnpm version:set` in the savi repo.
         // (Independent of the upstream asbplayer version this fork came from.)
-        const version = '0.59.1';
+        const version = '0.60.0';
         const isDev = mode === 'development';
         const devLabel = isDev ? ' (Dev)' : '';
         const title = `${extName}${devLabel}`;
-        const name = `${title}: Language-learning with subtitles`;
+        const name = title;
 
         let manifest: UserManifest = {
             name,
+            short_name: title,
             description: '__MSG_extensionDescription__',
             version,
             action: { default_title: title },

@@ -13,13 +13,12 @@ export interface Localization {
 }
 
 export const fetchLocalization = async (lang: string): Promise<Localization> => {
-    if (import.meta.env.MODE === 'development') {
-        return (await bundledStringsForLang(lang)) ?? (await bundledStringsForLang('en'))!;
-    }
-
+    // Product copy ships with Savi. Upstream remotely cached strings can be
+    // older than this build and must never replace Savi branding or new keys.
+    // Retain remote locales only for languages not included in this release.
     return (
-        (await cachedStringsForLang(lang)) ??
         (await bundledStringsForLang(lang)) ??
+        (await cachedStringsForLang(lang)) ??
         (await bundledStringsForLang('en'))!
     );
 };

@@ -18,7 +18,7 @@
         "message": "字幕がロードされていても手動で録音を開始/終了する。"
     },
     "shortcutUpdateLastCardDescription": {
-        "message": "最後に作成した Anki カードに asbplayer でキャプチャしたメディアを添付して更新する。動画が字幕ファイルなしで同期されている場合、録音を開始/停止する。"
+        "message": "最後に作成した Anki カードに Savi でキャプチャしたメディアを添付して更新する。動画が字幕ファイルなしで同期されている場合、録音を開始/停止する。"
     },
     "contextMenuMineSubtitle": {
         "message": "字幕をマイニングする"
