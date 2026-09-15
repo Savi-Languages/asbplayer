@@ -181,6 +181,36 @@ describe('study controls', () => {
         expect(onModeChange).toHaveBeenLastCalledWith('listen', true);
         expect(button('Reveal text').disabled).toBe(false);
     });
+    test.each(['during', 'after'])(
+        'a refresh started while saving cannot undo the choice %s the save',
+        async (timing) => {
+            let finishSave: (value: unknown) => void = () => {};
+            let finishConfig: (value: unknown) => void = () => {};
+            send.mockImplementation(
+                (message: any) =>
+                    new Promise((resolve) => {
+                        if (message.command === 'savi-watch-interest-config') finishConfig = resolve;
+                        else finishSave = resolve;
+                    })
+            );
+            button('Listen').click();
+            jest.advanceTimersByTime(60000);
+            if (timing === 'during') {
+                finishConfig({ mode: 'watch' });
+                await flush();
+                expect(onModeChange).toHaveBeenLastCalledWith('listen', true);
+            }
+            finishSave({ ok: true });
+            await flush();
+            if (timing === 'after') {
+                finishConfig({ mode: 'watch' });
+                await flush();
+            }
+            expect(onModeChange).toHaveBeenLastCalledWith('listen', true);
+            expect(button('Listen').getAttribute('aria-pressed')).toBe('true');
+            expect(button('Reveal text').disabled).toBe(false);
+        }
+    );
     test('failed playback is explained instead of swallowed', async () => {
         replay.mockRejectedValue(new Error('blocked'));
         button('Replay previous line').click();

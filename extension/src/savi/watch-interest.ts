@@ -96,7 +96,9 @@ export class SaviWatchInterest {
     }
     private async config() {
         const generation = this.generation;
-        const revision = this.modeRevision;
+        // A refresh begun during a save can read the previous preference, even
+        // if its response arrives after the save succeeds.
+        const revision = this.savingMode ? undefined : this.modeRevision;
         try {
             const result = await this.deps.send({ command: 'savi-watch-interest-config' });
             if (!this.bound || generation !== this.generation) return;

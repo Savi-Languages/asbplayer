@@ -103,6 +103,7 @@ import { SaviHoverDictionary } from '../savi/hover-dict';
 import { SaviGlossController } from '../savi/gloss';
 import { SaviGlossHover } from '../savi/gloss-hover';
 import { SaviHoverPause } from '../savi/hover-pause';
+import { replayFrom } from '../savi/replay';
 import { SaviControlsClearance } from '../savi/controls-clearance';
 import { SaviEncounterReporter } from '../savi/encounter-reporter';
 import { SaviRecordingGuardBanner } from '../savi/recording-guard-banner';
@@ -331,7 +332,7 @@ export default class Binding {
         });
         this.saviWatchInterest = new SaviWatchInterest({
             video,
-            replay: async (startMs) => { this.seek(startMs / 1000); await this.play(); },
+            replay: (startMs) => replayFrom(this.video, startMs, (seconds) => this.seek(seconds), netflix),
             onModeChange: (mode,hideText) => {
                 if(this._saviImmersionMode !== mode) {
                     this._saviImmersionMode=mode;
