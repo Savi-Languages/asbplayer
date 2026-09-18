@@ -351,3 +351,144 @@ describe('SaviHoverDictionary hover — boxes and popup on a wrapped word', () =
         dict.stop();
     });
 });
+
+// ── Fullscreen hosting (SV-44) ────────────────────────────────────────────
+// Fullscreen paints only the fullscreened element's subtree; a body-level
+// popup exists, gets positioned, and is never seen. The overlays must follow
+// the player in — and come back out.
+describe('SaviHoverDictionary — overlays follow the player into fullscreen', () => {
+    const entries = [{ kanji: ['同棲'], readings: ['どうせい'], senses: [{ pos: ['n'], glosses: ['cohabitation'] }] }];
+    let fullscreen: Element | null = null;
+
+    beforeEach(() => {
+        cols = 100;
+        originY = 500;
+        fullscreen = null;
+        Object.defineProperty(document, 'fullscreenElement', { configurable: true, get: () => fullscreen });
+        (globalThis as any).browser = {
+            runtime: {
+                sendMessage: async (command: { message: { command: string } }) => {
+                    switch (command.message.command) {
+                        case 'savi-tokenize':
+                            return { tokens };
+                        case 'savi-dict':
+                            return { entries, kanji: [] };
+                        case 'savi-segment-line':
+                            return { ai: false, tokens: [] };
+                        case 'savi-explain-word':
+                            return { explanation: null };
+                        case 'savi-kanji':
+                            return { kanji: [] };
+                        default:
+                            throw new Error(`unexpected ${command.message.command}`);
+                    }
+                },
+            },
+        };
+    });
+
+    afterEach(() => {
+        delete (document as any).fullscreenElement;
+        delete (globalThis as any).browser;
+    });
+
+    /** The subtitle inside a player container — the element streaming sites fullscreen. */
+    function playerWithLine(): { player: HTMLElement; el: HTMLElement } {
+        document.body.innerHTML =
+            '<div id="player"><div class="asbplayer-subtitles"><span data-track="0" id="line">同棲中の男性が</span></div></div>';
+        return {
+            player: document.getElementById('player') as HTMLElement,
+            el: document.getElementById('line') as HTMLElement,
+        };
+    }
+    const hover = (dict: SaviHoverDictionary, el: HTMLElement, x: number, y: number) =>
+        (dict as any)._handleHover(el, x, y) as Promise<void>;
+    const q = (sel: string) => document.querySelector(sel) as HTMLElement;
+    const OVERLAYS = ['.savi-dict-popup', '.savi-dict-highlight', '.savi-dict-bridge'];
+    const settle = () => new Promise((r) => setTimeout(r, 0));
+
+    it('parents the popup, boxes and bridge inside the fullscreen container, and back on body on exit', async () => {
+        const { player, el } = playerWithLine();
+        fullscreen = player;
+        const dict = new SaviHoverDictionary();
+        dict.start();
+        await hover(dict, el, 5, glyphMidY(0));
+        for (const sel of OVERLAYS) {
+            expect(q(sel).parentElement).toBe(player);
+            expect(q(sel).hasAttribute('popover')).toBe(false); // inside the subtree: no top layer needed
+        }
+        fullscreen = null;
+        document.dispatchEvent(new Event('fullscreenchange'));
+        for (const sel of OVERLAYS) {
+            expect(q(sel).parentElement).toBe(document.body);
+            expect(q(sel).style.display).toBe('none'); // the layout it was anchored to is gone
+        }
+        dict.stop();
+    });
+
+    it('moves an overlay created windowed into the player when fullscreen starts', async () => {
+        const { player, el } = playerWithLine();
+        const dict = new SaviHoverDictionary();
+        dict.start();
+        await hover(dict, el, 5, glyphMidY(0));
+        expect(q('.savi-dict-popup').parentElement).toBe(document.body);
+        fullscreen = player;
+        document.dispatchEvent(new Event('fullscreenchange'));
+        expect(q('.savi-dict-popup').parentElement).toBe(player);
+        // …and the next hover shows it there.
+        await hover(dict, el, 5, glyphMidY(0));
+        expect(q('.savi-dict-popup').style.display).toBe('block');
+        expect(q('.savi-dict-popup').parentElement).toBe(player);
+        dict.stop();
+    });
+
+    it('keeps the tap panel up across the toggle, re-hosted', async () => {
+        const { player, el } = playerWithLine();
+        fullscreen = player;
+        const dict = new SaviHoverDictionary();
+        dict.start();
+        await (dict as any)._openWordDetail(el.textContent, { token: tokens[0], start: 0, end: 2 });
+        await settle(); // let the panel's AI sections land while it exists
+        const panel = q('.savi-word-panel');
+        expect(panel.parentElement).toBe(player);
+        expect(panel.style.display).toBe('flex');
+        fullscreen = null;
+        document.dispatchEvent(new Event('fullscreenchange'));
+        expect(panel.parentElement).toBe(document.body);
+        expect(panel.style.display).toBe('flex'); // still up — it paused the video
+        dict.stop();
+    });
+
+    it('lifts the overlays into the top layer over a bare fullscreen video, keeping their borders', async () => {
+        const shown: string[] = [];
+        (HTMLElement.prototype as any).showPopover = function (this: HTMLElement) {
+            shown.push(this.className);
+        };
+        (HTMLElement.prototype as any).hidePopover = function () {};
+        try {
+            document.body.innerHTML =
+                '<video id="v"></video><div class="asbplayer-subtitles"><span data-track="0" id="line">同棲中の男性が</span></div>';
+            fullscreen = document.getElementById('v');
+            const el = document.getElementById('line') as HTMLElement;
+            const dict = new SaviHoverDictionary();
+            dict.start();
+            await hover(dict, el, 5, glyphMidY(0));
+            const popup = q('.savi-dict-popup');
+            expect(popup.parentElement).toBe(document.body);
+            expect(popup.getAttribute('popover')).toBe('manual');
+            expect(shown).toEqual(
+                expect.arrayContaining(['savi-dict-highlight', 'savi-dict-popup', 'savi-dict-bridge'])
+            );
+            // The popover reset drops an overlay's border; the popup's and the box's are kept.
+            expect([popup.style.borderWidth, popup.style.borderStyle]).toEqual(['1px', 'solid']);
+            expect([q('.savi-dict-highlight').style.borderWidth, q('.savi-dict-highlight').style.borderStyle]).toEqual([
+                '1.5px',
+                'solid',
+            ]);
+            dict.stop();
+        } finally {
+            delete (HTMLElement.prototype as any).showPopover;
+            delete (HTMLElement.prototype as any).hidePopover;
+        }
+    });
+});

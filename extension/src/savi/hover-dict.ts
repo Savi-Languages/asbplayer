@@ -54,6 +54,7 @@ import { deriveEpisodeId } from './episode';
 import { SaviWordPanel, WordContext } from './word-panel';
 import { friendlySaviError } from './savi-errors';
 import { cropAndResize } from '@project/common/src/image-transformer';
+import { hostOverlay } from '@/services/top-layer';
 
 // The overlay that stacks subtitle lines (the target language AND its
 // translation). We never tokenize this whole thing — we resolve the single
@@ -165,12 +166,19 @@ const HIGHLIGHT_STYLE: Partial<CSSStyleDeclaration> = {
     zIndex: '2147483646', // just beneath the popup
     pointerEvents: 'none',
     boxSizing: 'border-box',
+    padding: '0', // inline, so the popover UA padding never applies in the top layer
     border: '1.5px solid rgba(76, 194, 255, 0.8)',
     borderRadius: '5px',
     background: 'rgba(76, 194, 255, 0.14)',
     transition: 'left 60ms linear, top 60ms linear, width 60ms linear, height 60ms linear',
     display: 'none',
 };
+
+// What lifting an overlay into the top layer must not take away: the popover
+// UA reset drops an overlay's own border (see hostOverlay).
+const POPUP_KEEP: Partial<CSSStyleDeclaration> = { border: POPUP_STYLE.border };
+const HIGHLIGHT_KEEP: Partial<CSSStyleDeclaration> = { border: HIGHLIGHT_STYLE.border };
+const TOAST_KEEP: Partial<CSSStyleDeclaration> = { border: '1px solid' };
 
 // The "+ Add to Anki" button at the bottom of the popup. The popup itself is
 // interactive (pointer-events:auto) and stays alive while hovered, so the
@@ -430,6 +438,11 @@ export class SaviHoverDictionary {
     private _lastBoxes: Box[] | null = null;
     private _highlightTop: number | null = null;
     private _bridge: HTMLDivElement | null = null; // transparent gap-cover from word up to popup
+    /** Every body-level overlay and its top-layer bookkeeping, so all of them
+     *  can be re-hosted when fullscreen toggles (SV-44). */
+    private readonly _hosted = new Map<HTMLElement, { promoted: boolean; keep: Partial<CSSStyleDeclaration> }>();
+    /** The last mousemove landed on the popup or the bridge. */
+    private _pointerOnSurface = false;
     private _toastEl: HTMLDivElement | null = null; // standalone mine-result toast (outlives the popup)
     private _toastTimer: number | null = null;
     private _cursorLine: HTMLElement | null = null; // line we set cursor:pointer on
@@ -508,6 +521,7 @@ export class SaviHoverDictionary {
         document.addEventListener('click', this._onClick, true);
         this._prefetchTimer = setInterval(() => void this._prefetch(), 500);
         void this._prefetch();
+        document.addEventListener('fullscreenchange', this._onFullscreenChange);
     }
 
     stop() {
@@ -519,6 +533,7 @@ export class SaviHoverDictionary {
         this._prefetchTimer = undefined;
         document.removeEventListener('mousemove', this._onMouseMove, true);
         document.removeEventListener('click', this._onClick, true);
+        document.removeEventListener('fullscreenchange', this._onFullscreenChange);
         this._clear();
         this._panelOpen = false;
         this._pausedForPanel = false;
@@ -534,6 +549,12 @@ export class SaviHoverDictionary {
     isOverHoverSurface(x: number, y: number): boolean {
         if (this._panelOpen) {
             return true; // study panel up — tell the binding to keep the video paused
+        }
+        if (this._pointerOnSurface) {
+            // What the last mousemove actually targeted. elementFromPoint below
+            // does not report top-layer elements, which is where the popup lives
+            // over a bare fullscreen video (SV-44).
+            return true;
         }
         const el = document.elementFromPoint(x, y);
         if (!(el instanceof Node)) return false;
@@ -552,6 +573,7 @@ export class SaviHoverDictionary {
             const target = event.target;
             const onPopup = !!this._popup && target instanceof Node && this._popup.contains(target);
             const onBridge = this._isOverBridge(event.clientX, event.clientY);
+            this._pointerOnSurface = onPopup || onBridge;
             if (onPopup || onBridge) {
                 // Empty space in the gap keeps the popup reachable. Actual text
                 // resolves above and takes priority, allowing direct line-to-line hover.
@@ -566,6 +588,7 @@ export class SaviHoverDictionary {
         // On a subtitle line. A pending hide is cancelled only once a word is
         // actually hit (_applyTokens): roaming the translation line or a cue's
         // punctuation is leaving, as far as the popup is concerned.
+        this._pointerOnSurface = false;
         const { clientX, clientY } = event;
         void this._handleHover(line, clientX, clientY);
     };
@@ -1148,7 +1171,10 @@ export class SaviHoverDictionary {
     }
 
     private _ensureToast(): HTMLDivElement {
-        if (this._toastEl) return this._toastEl;
+        if (this._toastEl) {
+            this._host(this._toastEl, TOAST_KEEP);
+            return this._toastEl;
+        }
         const el = document.createElement('div');
         el.className = 'savi-toast';
         Object.assign(el.style, {
@@ -1169,8 +1195,8 @@ export class SaviHoverDictionary {
             maxWidth: '80vw',
             textAlign: 'center',
         });
-        document.body.appendChild(el);
         this._toastEl = el;
+        this._host(el, TOAST_KEEP);
         return el;
     }
 
@@ -1329,6 +1355,7 @@ export class SaviHoverDictionary {
     private _hidePopup() {
         this._endReveal();
         this._currentTerm = null;
+        this._pointerOnSurface = false;
         this._generation++;
         if (this._popup) this._popup.style.display = 'none';
         if (this._bridge) this._bridge.style.display = 'none';
@@ -1346,7 +1373,10 @@ export class SaviHoverDictionary {
     }
 
     private _ensurePopup(): HTMLDivElement {
-        if (this._popup) return this._popup;
+        if (this._popup) {
+            this._host(this._popup, POPUP_KEEP);
+            return this._popup;
+        }
         const popup = document.createElement('div');
         popup.className = 'savi-dict-popup';
         Object.assign(popup.style, POPUP_STYLE);
@@ -1371,12 +1401,39 @@ export class SaviHoverDictionary {
         });
         popup.appendChild(arrow);
 
-        document.body.appendChild(popup);
         this._popup = popup;
         this._popupContent = content;
         this._arrow = arrow;
+        this._host(popup, POPUP_KEEP);
         return popup;
     }
+
+    /** Keep a body-level overlay paintable under the current fullscreen state
+     *  (SV-44): inside the fullscreen element on streaming sites, in the top
+     *  layer over a bare fullscreen video. Fullscreen renders only the
+     *  fullscreened element's subtree, so a body-level popup exists, gets
+     *  positioned, and is never painted — which is how the whole hover
+     *  dictionary went invisible the moment the player went fullscreen, long
+     *  after line detection there was fixed. Runs on every show, so an overlay
+     *  created windowed follows the player in. */
+    private _host(el: HTMLElement, keep: Partial<CSSStyleDeclaration>) {
+        const hosted = this._hosted.get(el) ?? { promoted: false, keep };
+        hosted.promoted = hostOverlay(el, hosted.promoted, keep);
+        this._hosted.set(el, hosted);
+    }
+
+    /** Fullscreen toggled: whatever the hover had up is anchored to a layout
+     *  that no longer exists — take it down — and every overlay moves into or
+     *  out of the fullscreen element (or the top layer). The tap panel stays
+     *  up across the toggle, re-hosted: it paused the video and must remain
+     *  dismissable. */
+    private _onFullscreenChange = () => {
+        this._clear();
+        this._hosted.forEach((hosted, el) => {
+            hosted.promoted = hostOverlay(el, hosted.promoted, hosted.keep);
+        });
+        this._wordPanel?.rehost();
+    };
 
     /** The `i`th outline box, created on demand (one per row of the boxed word). */
     private _ensureHighlight(i: number): HTMLDivElement {
@@ -1384,14 +1441,17 @@ export class SaviHoverDictionary {
             const el = document.createElement('div');
             el.className = 'savi-dict-highlight';
             Object.assign(el.style, HIGHLIGHT_STYLE);
-            document.body.appendChild(el);
             this._highlights.push(el);
         }
+        this._host(this._highlights[i], HIGHLIGHT_KEEP);
         return this._highlights[i];
     }
 
     private _ensureBridge(): HTMLDivElement {
-        if (this._bridge) return this._bridge;
+        if (this._bridge) {
+            this._host(this._bridge, {});
+            return this._bridge;
+        }
         const el = document.createElement('div');
         el.className = 'savi-dict-bridge';
         Object.assign(el.style, {
@@ -1399,10 +1459,11 @@ export class SaviHoverDictionary {
             zIndex: '2147483646', // geometry only; underlying words remain interactive
             pointerEvents: 'none',
             background: 'transparent',
+            padding: '0',
             display: 'none',
         });
-        document.body.appendChild(el);
         this._bridge = el;
+        this._host(el, {});
         return el;
     }
 
