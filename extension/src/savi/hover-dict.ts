@@ -13,6 +13,21 @@ import { subtitleTokens } from "./token-cache";
 import { SaviDictEntry, SaviKanjiFull, SaviKanjiInfo, SaviToken } from './daemon-client';
 import { headwordReading } from './headword';
 import {
+    Box,
+    boxBottom,
+    boxRight,
+    HitPad,
+    highlightBoxes,
+    popupAnchor,
+    textExtent,
+    TokenSpan,
+    tokenSpanAtOffset,
+    tokenSpanAtPoint,
+} from './hit-test';
+// The offset-based helpers live in hit-test.ts now; still exported from here
+// for their existing importers.
+export { rangeForCharSpan, tokenAtOffset, tokenSpanAtOffset } from './hit-test';
+import {
     SaviCaptureFrameMessage,
     SaviCaptureFrameResponse,
     SaviCommand,
@@ -61,31 +76,6 @@ const HIDE_GRACE_MS = 250;
 const TOKENIZE_CACHE_MAX = 64;
 const DICT_CACHE_MAX = 300;
 
-/** The token whose `[start, start+len)` range contains `offset`, plus that
- *  span — tokens concatenate back to the line (the daemon emits gap tokens for
- *  any whitespace it would otherwise drop), so a running sum of surface lengths
- *  locates the word under a character offset. Pure — unit-tested without the
- *  DOM. */
-export function tokenSpanAtOffset(
-    tokens: SaviToken[],
-    offset: number
-): { token: SaviToken; start: number; end: number } | null {
-    let start = 0;
-    for (const token of tokens) {
-        const end = start + token.text.length;
-        if (offset >= start && offset < end) {
-            return { token, start, end };
-        }
-        start = end;
-    }
-    return null;
-}
-
-/** The token under `offset`, or null. Thin wrapper over {@link tokenSpanAtOffset}. */
-export function tokenAtOffset(tokens: SaviToken[], offset: number): SaviToken | null {
-    return tokenSpanAtOffset(tokens, offset)?.token ?? null;
-}
-
 /** The term to look up for a token: its dictionary form (lemma) when the
  *  analyzer supplied one — needed to un-inflect verbs/adjectives (続け → 続ける)
  *  — otherwise its surface. Crucial for the surface fallback: conjunctions,
@@ -94,29 +84,6 @@ export function tokenAtOffset(tokens: SaviToken[], offset: number): SaviToken | 
  *  so looking up the surface defines them instead of silently skipping them. */
 export function lookupTermFor(token: SaviToken): string {
     return token.lemma ?? token.text;
-}
-
-/** A DOM Range covering characters `[start, end)` of `root`'s text, walking
- *  across nested text nodes (asbplayer may wrap a line in inner spans). Null if
- *  the span runs past the available text. Used to box the hovered word. */
-export function rangeForCharSpan(root: HTMLElement, start: number, end: number): Range | null {
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    const range = document.createRange();
-    let acc = 0;
-    let started = false;
-    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-        const len = node.textContent?.length ?? 0;
-        if (!started && acc + len > start) {
-            range.setStart(node, start - acc);
-            started = true;
-        }
-        if (started && acc + len >= end) {
-            range.setEnd(node, end - acc);
-            return range;
-        }
-        acc += len;
-    }
-    return null;
 }
 
 type SaviVideoMessage =
@@ -151,22 +118,6 @@ export function lineElement(target: EventTarget | null): HTMLElement | null {
         return line;
     }
     return null;
-}
-
-/** Char offset of (x,y) within `el`'s text, or null if the caret isn't inside. */
-function caretOffsetWithin(el: HTMLElement, x: number, y: number): number | null {
-    const range = caretRangeFromPoint(x, y);
-    if (!range || !el.contains(range.startContainer)) {
-        return null;
-    }
-    const measure = document.createRange();
-    measure.setStart(el, 0);
-    try {
-        measure.setEnd(range.startContainer, range.startOffset);
-    } catch {
-        return null;
-    }
-    return measure.toString().length;
 }
 
 export function caretRangeFromPoint(x: number, y: number): Range | null {
@@ -361,21 +312,23 @@ function renderEntry(
     return root;
 }
 
-// Anchor the popup to the WORD (not the cursor), centered above it with a clear
-// gap, and point the arrow at the word's center. Flips below when there's no
-// room above.
-function positionPopup(popup: HTMLDivElement, arrow: HTMLDivElement, word: DOMRect) {
+// Anchor the popup to the hovered word's row fragment horizontally and to the
+// whole cue vertically: centered above the cue with a clear gap, arrow pointing
+// at the fragment's center. Flips below when there's no room above. Above the
+// CUE rather than the fragment, because a word on a wrapped cue's second row
+// would otherwise get the popup sitting on top of the first row.
+function positionPopup(popup: HTMLDivElement, arrow: HTMLDivElement, anchor: Box) {
     const pr = popup.getBoundingClientRect();
     const margin = 8;
-    const wordCenterX = word.left + word.width / 2;
+    const wordCenterX = anchor.left + anchor.width / 2;
 
     let left = wordCenterX - pr.width / 2;
     left = Math.max(margin, Math.min(left, window.innerWidth - pr.width - margin));
 
-    let top = word.top - pr.height - POPUP_GAP - ARROW_SIZE; // prefer above
+    let top = anchor.top - pr.height - POPUP_GAP - ARROW_SIZE; // prefer above
     const below = top < margin;
     if (below) {
-        top = word.bottom + POPUP_GAP + ARROW_SIZE;
+        top = boxBottom(anchor) + POPUP_GAP + ARROW_SIZE;
     }
 
     popup.style.left = `${left}px`;
@@ -398,6 +351,14 @@ function positionPopup(popup: HTMLDivElement, arrow: HTMLDivElement, word: DOMRe
     }
 }
 
+/** Hit-test slack for a subtitle line: 2px sideways, and vertically half the
+ *  row's leading (from the line's computed line-height), so the gap between two
+ *  wrapped rows still lands on the nearer row — as the old caret snap did. */
+function hitPadFor(line: HTMLElement): HitPad {
+    const lineHeight = parseFloat(getComputedStyle(line).lineHeight);
+    return { x: 2, y: 3, lineHeight: Number.isFinite(lineHeight) ? lineHeight : undefined };
+}
+
 /** Attaches a hover handler over subtitle text: boxes the word under the
  *  cursor and shows a daemon-backed dictionary popup for it. */
 /** The headline label of a dictionary result — the first gloss of the first
@@ -417,10 +378,14 @@ export class SaviHoverDictionary {
     private _popup: HTMLDivElement | null = null;
     private _popupContent: HTMLDivElement | null = null;
     private _arrow: HTMLDivElement | null = null;
-    private _highlight: HTMLDivElement | null = null;
-    /** The subtitle line element the highlight box currently sits on. Moves
-     *  within it glide; a move to any other line snaps. See _highlightRect. */
+    /** One outline per row the boxed word occupies (a wrapped word has two);
+     *  extras beyond the current word stay hidden. */
+    private _highlights: HTMLDivElement[] = [];
+    /** The subtitle line element the highlight box currently sits on, and the
+     *  row (top edge) it is on. Moves along that row glide; a move to any other
+     *  row or line snaps. See _highlightBoxes. */
     private _highlightLine: HTMLElement | null = null;
+    private _highlightTop: number | null = null;
     private _bridge: HTMLDivElement | null = null; // transparent gap-cover from word up to popup
     private _toastEl: HTMLDivElement | null = null; // standalone mine-result toast (outlives the popup)
     private _toastTimer: number | null = null;
@@ -529,8 +494,9 @@ export class SaviHoverDictionary {
             this._scheduleHide();
             return;
         }
-        // Back on a subtitle line — cancel any pending hide.
-        this._cancelHide();
+        // On a subtitle line. A pending hide is cancelled only once a word is
+        // actually hit (_applyTokens): roaming the translation line or a cue's
+        // punctuation is leaving, as far as the popup is concerned.
         const { clientX, clientY } = event;
         clearTimeout(this._hoverTimer);
         this._hoverTimer = setTimeout(() => void this._handleHover(line, clientX, clientY), HOVER_DEBOUNCE_MS);
@@ -554,9 +520,10 @@ export class SaviHoverDictionary {
     private async _handleHover(line: HTMLElement, x: number, y: number) {
         const generation = ++this._generation;
         const text = (line.textContent ?? '').replace(/\s+$/, '');
-        const offset = caretOffsetWithin(line, x, y);
-        if (offset === null || !text || !JAPANESE.test(text)) {
-            this._clear();
+        if (!text || !JAPANESE.test(text)) {
+            // The translation line: leaving, as far as the popup is concerned —
+            // the same grace as leaving into the video, not an instant blink-off.
+            this._scheduleHide();
             return;
         }
         // Hover is purely rule-based — instant, and never touches the LLM. The AI
@@ -566,40 +533,53 @@ export class SaviHoverDictionary {
         if (generation !== this._generation) {
             return; // a newer hover (or a clear) superseded this one
         }
-        await this._applyTokens(line, text, offset, x, y, tokens, generation);
+        await this._applyTokens(line, text, x, y, tokens, generation);
     }
 
-    /** Box the token at `offset` and show its rule-based dictionary popup. */
+    /** Box the word under (x, y) and show its rule-based dictionary popup. */
     private async _applyTokens(
         line: HTMLElement,
         text: string,
-        offset: number,
         x: number,
         y: number,
         tokens: SaviToken[],
         generation: number
     ) {
-        const span = tokenSpanAtOffset(tokens, offset);
+        // By geometry, not by caret: the word whose glyph boxes contain the
+        // cursor (hit-test.ts says what the caret got wrong).
+        const span = tokenSpanAtPoint(line, tokens, x, y, hitPadFor(line));
         if (!span || !JAPANESE.test(span.token.text)) {
-            this._clear(); // between words / on whitespace / punctuation
+            // Between words, on punctuation, in a row's padding: the cursor is
+            // usually on its way to the next word or up to the popup, so the last
+            // word's box and popup linger through the grace instead of blinking
+            // off at every 「(」 — the same grace as leaving the line.
+            this._scheduleHide();
             return;
         }
+        this._cancelHide();
 
         // Box the word under the cursor whether or not it resolves to an entry
-        // — every word gets the outline, like Language Reactor.
-        const range = rangeForCharSpan(line, span.start, span.end);
-        const wordRect = range ? range.getBoundingClientRect() : null;
-        if (wordRect && (wordRect.width > 0 || wordRect.height > 0)) {
-            this._highlightRect(line, wordRect);
-        } else {
-            this._hideHighlight();
-        }
+        // — every word gets the outline, like Language Reactor. One box per row
+        // the word occupies, so a word that wraps is boxed on both rows rather
+        // than by one box spanning them.
+        this._highlightBoxes(line, span.boxes);
+
+        // Aim the popup at the hovered row fragment, above (or below) the whole
+        // cue — never on top of the cue's other row.
+        const anchor = popupAnchor(span.hit, textExtent(line));
 
         // Look up the dictionary form — fall back to the surface so words without
         // a lemma (しかし, そこ, 東京) get defined instead of skipped.
         const term = lookupTermFor(span.token);
         if (term === this._currentTerm) {
-            return; // already showing this word's definition
+            // Same definition — another occurrence of the word in the cue, or the
+            // same one after the page moved it. Re-aim the popup and bridge at
+            // where it is now; the entry itself is already on screen.
+            if (this._popup && this._popup.style.display !== 'none') {
+                positionPopup(this._popup, this._arrow!, anchor);
+                this._positionBridge(anchor);
+            }
+            return;
         }
         const result = await this._lookupDict(term);
         if (generation !== this._generation) {
@@ -620,15 +600,13 @@ export class SaviHoverDictionary {
                 result.entries,
                 result.kanji,
                 (button) => void this._mine(text, span.token, term, button),
-                () => void this._openWordDetail(text, offset)
+                () => void this._openWordDetail(text, span)
             )
         );
         popup.style.display = 'block';
         // The word's meaning is now on screen — a hover_glossed encounter with
         // the shown label (SV-20). Kanji-only results reveal no label ('').
         this._noteReveal(text, span.token.text, firstDictGloss(result.entries));
-        // Anchor to the word so the arrow points at it; fall back to the cursor.
-        const anchor = wordRect ?? new DOMRect(x, y, 0, 0);
         positionPopup(popup, this._arrow!, anchor);
         // Lay the invisible bridge over the gap so the path to the popup never
         // crosses (and triggers) the other subtitle line.
@@ -751,24 +729,32 @@ export class SaviHoverDictionary {
             return; // not on a subtitle — let the click through (video controls, etc.)
         }
         const text = (line.textContent ?? '').replace(/\s+$/, '');
-        const offset = caretOffsetWithin(line, event.clientX, event.clientY);
-        if (offset === null || !text || !JAPANESE.test(text)) {
+        if (!text || !JAPANESE.test(text)) {
             return;
         }
         // Swallow the tap so it doesn't also toggle the video's play/pause.
         event.preventDefault();
         event.stopPropagation();
-        void this._openWordDetail(text, offset);
+        void this._openWordDetailAt(line, text, event.clientX, event.clientY);
     };
 
-    /** Open the tap panel for the word at `offset`: full dictionary entry + kanji
+    /** The study panel for the word under (x, y) — the same geometric hit-test
+     *  as the hover, so a tap opens the word the box is on. Nothing opens on
+     *  punctuation or in the line's padding. */
+    private async _openWordDetailAt(line: HTMLElement, text: string, x: number, y: number) {
+        const tokens = await this._tokenize(text);
+        const span = tokenSpanAtPoint(line, tokens, x, y, hitPadFor(line));
+        if (span) {
+            await this._openWordDetail(text, span);
+        }
+    }
+
+    /** Open the tap panel for `span`'s word: full dictionary entry + kanji
      *  immediately, then the AI in-context reading + whole-line breakdown fetched
      *  on demand. This is the ONLY place the segmentation LLM runs, so a slow or
      *  failed call only ever affects this panel — never the hover popup. */
-    private async _openWordDetail(text: string, offset: number) {
-        const tokens = await this._tokenize(text);
-        const span = tokenSpanAtOffset(tokens, offset);
-        if (!span || !JAPANESE.test(span.token.text)) {
+    private async _openWordDetail(text: string, span: TokenSpan) {
+        if (!JAPANESE.test(span.token.text)) {
             return;
         }
         const term = lookupTermFor(span.token);
@@ -819,7 +805,7 @@ export class SaviHoverDictionary {
             .then(({ tokens: aiTokens, unavailable }) => {
                 let featured: WordContext | null = null;
                 if (aiTokens) {
-                    const aiSpan = tokenSpanAtOffset(aiTokens, offset);
+                    const aiSpan = tokenSpanAtOffset(aiTokens, span.start);
                     if (aiSpan) {
                         featured = { gloss: aiSpan.token.gloss, grammar: aiSpan.token.grammar };
                     }
@@ -996,7 +982,7 @@ export class SaviHoverDictionary {
     /** Hide the popup / highlight / bridge for a clean screenshot; returns a
      *  restore fn. Uses `visibility` (no reflow) so positions are preserved. */
     private _hideForCapture(): () => void {
-        const els = [this._popup, this._highlight, this._bridge].filter((e): e is HTMLDivElement => e !== null);
+        const els = [this._popup, ...this._highlights, this._bridge].filter((e): e is HTMLDivElement => e !== null);
         const prev = els.map((e) => e.style.visibility);
         els.forEach((e) => {
             e.style.visibility = 'hidden';
@@ -1073,41 +1059,56 @@ export class SaviHoverDictionary {
         return result;
     }
 
-    private _highlightRect(line: HTMLElement, rect: DOMRect) {
-        // Japanese cues carry letter-spacing, which the word's rect includes as
-        // trailing space on the right — drop it so the box ends at the last
-        // glyph instead of reaching into the next word. Small horizontal room,
-        // a touch more vertical.
+    /** Outline the word's glyph rows — one box per row it occupies. */
+    private _highlightBoxes(line: HTMLElement, boxes: Box[]) {
         const trailing = parseFloat(getComputedStyle(line).letterSpacing) || 0;
-        const padX = 1;
-        const padY = 3;
-        const el = this._ensureHighlight();
+        const shown = highlightBoxes(boxes, trailing);
+        if (shown.length === 0) {
+            this._hideHighlight();
+            return;
+        }
         // The box GLIDES between words (60ms transition on left/top/width/height)
-        // so it reads as one cursor sliding along a line. That's right within a
-        // line and wrong across lines: hopping from a word on the Japanese line
-        // to a word on the English line beneath — or to the next cue's line
-        // after the previous one is gone — slid the box diagonally across the
-        // video, which reads as the subtitle scrolling. Same story when the box
-        // was last left on some far-away word and reappears here. Glide only
-        // when staying on the same line element; otherwise snap, and re-enable
-        // the transition on the next frame so the NEXT within-line move glides.
-        const sameLine = this._highlightLine === line && el.style.display !== 'none';
-        if (!sameLine) {
-            el.style.transition = 'none';
+        // so it reads as one cursor sliding along a row. That's right within a
+        // row and wrong anywhere else: hopping from a word on the Japanese line
+        // to a word on the English line beneath, to the next cue's line after
+        // the previous one is gone, or to the other row of the same wrapped cue
+        // slid the box diagonally across the video, which reads as the subtitle
+        // scrolling. Same story when the box was last left on some far-away word
+        // and reappears here. Glide only when a single box stays on the same row
+        // of the same line element; otherwise snap, and re-enable the transition
+        // on the next frame so the NEXT within-row move glides.
+        const first = this._highlights[0];
+        const sameRow =
+            this._highlightLine === line &&
+            this._highlightTop !== null &&
+            first !== undefined &&
+            first.style.display !== 'none' &&
+            shown.length === 1 &&
+            Math.abs(shown[0].top - this._highlightTop) < 1;
+        shown.forEach((box, i) => {
+            const el = this._ensureHighlight(i);
+            const snap = !sameRow || i > 0;
+            if (snap) {
+                el.style.transition = 'none';
+            }
+            el.style.left = `${box.left}px`;
+            el.style.top = `${box.top}px`;
+            el.style.width = `${box.width}px`;
+            el.style.height = `${box.height}px`;
+            el.style.display = 'block';
+            if (snap) {
+                // Force the style flush at the snapped position before restoring
+                // the transition, or the browser coalesces both writes and glides
+                // anyway.
+                void el.offsetWidth;
+                el.style.transition = HIGHLIGHT_STYLE.transition ?? '';
+            }
+        });
+        for (const el of this._highlights.slice(shown.length)) {
+            el.style.display = 'none';
         }
         this._highlightLine = line;
-        el.style.left = `${rect.left - padX}px`;
-        el.style.top = `${rect.top - padY}px`;
-        el.style.width = `${Math.max(0, rect.width - trailing + padX * 2)}px`;
-        el.style.height = `${rect.height + padY * 2}px`;
-        el.style.display = 'block';
-        if (!sameLine) {
-            // Force the style flush at the snapped position before restoring
-            // the transition, or the browser coalesces both writes and glides
-            // anyway.
-            void el.offsetWidth;
-            el.style.transition = HIGHLIGHT_STYLE.transition ?? '';
-        }
+        this._highlightTop = shown[0].top;
         // The subtitle container forces cursor:text; signal the word is
         // clickable with a pointer while it's boxed.
         if (this._cursorLine !== line) {
@@ -1132,8 +1133,9 @@ export class SaviHoverDictionary {
     }
 
     private _hideHighlight() {
-        if (this._highlight) this._highlight.style.display = 'none';
+        for (const el of this._highlights) el.style.display = 'none';
         this._highlightLine = null;
+        this._highlightTop = null;
         if (this._cursorLine) {
             this._cursorLine.style.cursor = '';
             this._cursorLine = null;
@@ -1173,14 +1175,16 @@ export class SaviHoverDictionary {
         return popup;
     }
 
-    private _ensureHighlight(): HTMLDivElement {
-        if (this._highlight) return this._highlight;
-        const el = document.createElement('div');
-        el.className = 'savi-dict-highlight';
-        Object.assign(el.style, HIGHLIGHT_STYLE);
-        document.body.appendChild(el);
-        this._highlight = el;
-        return el;
+    /** The `i`th outline box, created on demand (one per row of the boxed word). */
+    private _ensureHighlight(i: number): HTMLDivElement {
+        while (this._highlights.length <= i) {
+            const el = document.createElement('div');
+            el.className = 'savi-dict-highlight';
+            Object.assign(el.style, HIGHLIGHT_STYLE);
+            document.body.appendChild(el);
+            this._highlights.push(el);
+        }
+        return this._highlights[i];
     }
 
     private _ensureBridge(): HTMLDivElement {
@@ -1199,23 +1203,24 @@ export class SaviHoverDictionary {
         return el;
     }
 
-    // Cover the gap between the hovered word and its popup with a transparent,
+    // Cover the gap between the hovered cue and its popup with a transparent,
     // interactive strip. The cursor travels over this on its way to the popup,
     // and `_onMouseMove` treats the bridge as "on the popup" — so reaching the
     // buttons never crosses the OTHER subtitle line that sits in that gap for a
     // bottom-line word. Geometry-driven, so it needs no hover timing.
-    private _positionBridge(word: DOMRect) {
+    private _positionBridge(word: Box) {
         const popup = this._popup;
         const bridge = this._ensureBridge();
         if (!popup) return;
         const pr = popup.getBoundingClientRect();
+        const wordBottom = boxBottom(word);
         const left = Math.min(word.left, pr.left);
-        const right = Math.max(word.right, pr.right);
+        const right = Math.max(boxRight(word), pr.right);
         let top: number;
         let height: number;
-        if (pr.top >= word.bottom) {
-            top = word.bottom; // popup sits below the word
-            height = pr.top - word.bottom;
+        if (pr.top >= wordBottom) {
+            top = wordBottom; // popup sits below the word
+            height = pr.top - wordBottom;
         } else {
             top = pr.bottom; // popup sits above the word (the usual case)
             height = word.top - pr.bottom;
