@@ -6,6 +6,7 @@
 // hover popup. Inline-styled + appended to document.body, like the toast/popup.
 
 import { SaviDictEntry, SaviKanjiFull, SaviKanjiInfo, SaviToken } from './daemon-client';
+import { headwordReading } from './headword';
 import { SaviAiUnavailable } from './messages';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -347,10 +348,11 @@ export class SaviWordPanel {
         const head = document.createElement('div');
         Object.assign(head.style, { fontSize: '22px', fontWeight: '700', lineHeight: '1.25' });
         head.textContent = input.term;
-        if (input.token.reading && input.token.reading !== input.term) {
+        const headReading = headwordReading(input.term, input.token, input.entries);
+        if (headReading) {
             const r = document.createElement('span');
             Object.assign(r.style, { fontSize: '15px', color: '#4cc2ff', marginLeft: '10px', fontWeight: '400' });
-            r.textContent = input.token.reading;
+            r.textContent = headReading;
             head.appendChild(r);
         }
         scroll.appendChild(head);

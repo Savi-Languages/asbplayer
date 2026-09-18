@@ -11,6 +11,7 @@ import { subtitleTokens } from "./token-cache";
 // fetches from content scripts).
 
 import { SaviDictEntry, SaviKanjiFull, SaviKanjiInfo, SaviToken } from './daemon-client';
+import { headwordReading } from './headword';
 import {
     SaviCaptureFrameMessage,
     SaviCaptureFrameResponse,
@@ -264,7 +265,8 @@ function renderEntry(
     const head = document.createElement('div');
     Object.assign(head.style, { fontSize: '20px', fontWeight: '650', lineHeight: '1.3', marginBottom: '6px' });
     head.textContent = term;
-    if (token.reading && token.reading !== term) {
+    const headReading = headwordReading(term, token, entries);
+    if (headReading) {
         const reading = document.createElement('span');
         Object.assign(reading.style, {
             fontSize: '13px',
@@ -272,7 +274,7 @@ function renderEntry(
             marginLeft: '8px',
             fontWeight: '400',
         });
-        reading.textContent = token.reading;
+        reading.textContent = headReading;
         head.appendChild(reading);
     }
     root.appendChild(head);
