@@ -50,7 +50,9 @@ describe('Spotify hover adapter isolation', () => {
                 resolve = r;
             });
         dict._lookupDict = jest.fn();
-        const pending = dict._openWordDetail('旅行', 0);
+        // The tap resolves its word by geometry once the tokens arrive; the
+        // episode changes while they are in flight.
+        const pending = dict._openWordDetailAt(document.createElement('span'), '旅行', 0, 0);
         id = 'new-item';
         resolve([tok('旅行')]);
         await pending;
@@ -227,12 +229,13 @@ describe('hover overlays follow subtitle layout without mouse movement', () => {
         frames.clear();
         callbacks.forEach((callback) => callback(0));
     };
-    const show = (offset = 0) =>
+    const CHAR = 20; // px per glyph in the fake layout below
+    // Hover at (x, 410): the first 裏工作 is laid out at rect.left + 0..60, the second at 60..120.
+    const show = (x = 210) =>
         dict._applyTokens(
             line,
             line.textContent,
-            offset,
-            210,
+            x,
             410,
             [
                 { text: '裏工作', lemma: '裏工作' },
@@ -255,10 +258,16 @@ describe('hover overlays follow subtitle layout without mouse movement', () => {
         jest.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
             frames.delete(id);
         });
-        // jsdom has no layout; keep real DOM ranges and supply measured geometry.
-        Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+        // jsdom has no layout; keep real DOM ranges and lay the line out as one
+        // row of CHAR-px glyphs at `rect` (a zero rect = not laid out at all).
+        Object.defineProperty(Range.prototype, 'getClientRects', {
             configurable: true,
-            value: () => rect,
+            value(this: Range) {
+                if (rect.width === 0 && rect.height === 0) return [];
+                const start = this.startContainer === line ? 0 : this.startOffset;
+                const end = this.endContainer === line ? line.textContent!.length : this.endOffset;
+                return [makeRect(rect.left + start * CHAR, rect.top, (end - start) * CHAR, rect.height)];
+            },
         });
         jest.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
             return makeRect(parseFloat(this.style.left) || 0, parseFloat(this.style.top) || 0, 300, 180);
@@ -270,24 +279,17 @@ describe('hover overlays follow subtitle layout without mouse movement', () => {
     afterEach(() => {
         dict.stop();
         jest.restoreAllMocks();
-        delete (Range.prototype as any).getBoundingClientRect;
+        delete (Range.prototype as any).getClientRects;
         document.body.innerHTML = '';
     });
 
     it('renders a prepared word during the mouse event, without timers or pending promises', () => {
         line.className = 'asbplayer-subtitle-text';
-        const caret = document.createRange();
-        caret.setStart(line.firstChild!, 0);
-        Object.defineProperty(document, 'caretRangeFromPoint', { configurable: true, value: () => caret });
         jest.spyOn(dict, '_tokenize').mockReturnValue([{ text: '裏工作裏工作', lemma: '裏工作' }]);
         dict._lookupDict.mockReturnValue(result);
-        try {
-            line.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 210, clientY: 410 }));
-            expect(surface('popup')?.style.display).toBe('block');
-            expect(surface('popup')?.textContent).toContain('裏工作');
-        } finally {
-            delete (document as any).caretRangeFromPoint;
-        }
+        line.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 210, clientY: 410 }));
+        expect(surface('popup')?.style.display).toBe('block');
+        expect(surface('popup')?.textContent).toContain('裏工作');
     });
 
     it('moves the outline, popup and bridge with controls hiding and showing', async () => {
@@ -322,11 +324,12 @@ describe('hover overlays follow subtitle layout without mouse movement', () => {
     });
 
     it('reanchors the same dictionary term at a different position', async () => {
-        await show();
+        await show(); // the first 裏工作
         rect = makeRect(350, 400, 120, 40);
-        await show(3);
+        await show(350 + 70); // the second 裏工作, now laid out at 410..470
         frame();
-        expect(parseFloat(surface('popup').style.left)).toBe(350 + 60 - 150);
+        // Centered on that occurrence (its center, less half the popup width).
+        expect(parseFloat(surface('popup').style.left)).toBe(350 + 60 + 30 - 150);
         expect(dict._lookupDict).toHaveBeenCalledTimes(1);
     });
 
