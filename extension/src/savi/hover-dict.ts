@@ -388,6 +388,16 @@ function hitPadFor(line: HTMLElement): HitPad {
 
 /** Attaches a hover handler over subtitle text: boxes the word under the
  *  cursor and shows a daemon-backed dictionary popup for it. */
+/** How the tap panel pauses and resumes the video. Raw `video.pause()` /
+ *  `play()` is NOT it on Netflix: the player owns the element there, and the
+ *  binding routes both through the page script (`asbplayer-netflix-pause` /
+ *  `-play`) — asbplayer's own play/pause and gloss-hover's hold-the-line both
+ *  go through that pair for the same reason. */
+export interface SaviPlaybackControl {
+    pause(): void;
+    play(): void;
+}
+
 /** The headline label of a dictionary result — the first gloss of the first
  *  sense (what the popup shows most prominently). '' when there's none (a
  *  kanji-only result still teaches, but there is no label to persist). */
@@ -467,14 +477,18 @@ export class SaviHoverDictionary {
      *  was READ to tell a lookup from a cursor passing through.
      *  @param _onRetract the user MINED this word (added a card, or opened the
      *  study panel). That makes the reveal collection rather than failed
-     *  recall, so no dwell is claimed for it and the card is never lapsed. */
+     *  recall, so no dwell is claimed for it and the card is never lapsed.
+     *  @param _adapter a platform's own line/episode/playback resolution (Spotify).
+     *  @param _playbackControl the binding's Netflix-aware pause/play pair — see
+     *  {@link SaviPlaybackControl}. Absent → the media object itself. */
     constructor(
         private readonly _videoProvider: () => HTMLMediaElement | null = () => null,
         private readonly _subtitleProvider: () => SerializableSubtitle[] = () => [],
         private readonly _onReveal?: (lineText: string, word: string, gloss: string) => void,
         private readonly _onRevealEnd?: (lineText: string, word: string) => void,
         private readonly _onRetract?: (lineText: string, word: string) => void,
-        private readonly _adapter?: SaviHoverAdapter
+        private readonly _adapter?: SaviHoverAdapter,
+        private readonly _playbackControl?: SaviPlaybackControl
     ) {}
 
     private _episodeId() {
@@ -931,7 +945,7 @@ export class SaviHoverDictionary {
         this._panelOpen = true;
         const video = this._playback();
         if (video && !video.paused) {
-            video.pause();
+            this._pauseVideo(video);
             this._pausedForPanel = true;
             this._panelPlayback = video;
             this._panelEpisode = episode;
@@ -998,9 +1012,28 @@ export class SaviHoverDictionary {
             this._pausedForPanel = false;
             const video = this._playback();
             if (video && video === this._panelPlayback && this._episodeId() === this._panelEpisode && video.paused) {
-                void video.play().catch(() => {});
+                this._playVideo(video);
             }
             this._panelPlayback = null;
+        }
+    }
+
+    /** Through the binding's pair when it gave us one and no adapter owns
+     *  playback (Spotify's does) — on Netflix a raw `video.pause()`/`play()`
+     *  fights the player — else the media object itself. */
+    private _pauseVideo(media: Pick<HTMLMediaElement, 'pause'>) {
+        if (this._playbackControl && !this._adapter) {
+            this._playbackControl.pause();
+        } else {
+            media.pause();
+        }
+    }
+
+    private _playVideo(media: Pick<HTMLMediaElement, 'play'>) {
+        if (this._playbackControl && !this._adapter) {
+            this._playbackControl.play();
+        } else {
+            void media.play().catch(() => {});
         }
     }
 

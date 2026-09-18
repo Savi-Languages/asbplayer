@@ -426,3 +426,117 @@ describe('hover dictionary preparation', () => {
         expect(send).not.toHaveBeenCalled();
     });
 });
+
+describe('SaviHoverDictionary tap panel — pauses through the binding, not the raw element', () => {
+    // On Netflix the player owns the <video>: asbplayer's binding routes pause and
+    // play through the page script, and gloss-hover's hold was handed that pair
+    // for the same reason. The panel used to call video.pause()/play() directly.
+    const entries = [{ kanji: ['改善'], readings: ['かいぜん'], senses: [{ pos: ['n'], glosses: ['improvement'] }] }];
+
+    beforeEach(() => {
+        (globalThis as any).browser = {
+            runtime: {
+                sendMessage: async (command: { message: { command: string } }) => {
+                    switch (command.message.command) {
+                        case 'savi-dict':
+                            return { entries, kanji: [] };
+                        case 'savi-segment-line':
+                            return { ai: false, tokens: [] };
+                        case 'savi-explain-word':
+                            return { explanation: null };
+                        case 'savi-kanji':
+                            return { kanji: [] };
+                        default:
+                            throw new Error(`unexpected ${command.message.command}`);
+                    }
+                },
+            },
+        };
+    });
+
+    afterEach(() => {
+        delete (globalThis as any).browser;
+    });
+
+    // A stand-in that actually flips `paused`: the panel resumes only a video
+    // it paused, which is still paused, and it checks the element to know.
+    const fakeVideo = (paused = false) => {
+        const video = {
+            paused,
+            pause: jest.fn(() => {
+                video.paused = true;
+            }),
+            play: jest.fn(async () => {
+                video.paused = false;
+            }),
+        };
+        return video as unknown as HTMLMediaElement;
+    };
+    const span = { token: tok('改善', '改善'), start: 0, end: 2 };
+    const settle = () => new Promise((r) => setTimeout(r, 0)); // let the panel's AI sections land
+    const openPanel = async (dict: SaviHoverDictionary) => {
+        await (dict as any)._openWordDetail('改善を', span);
+        await settle();
+    };
+
+    it('pauses and resumes through the binding when given its pair', async () => {
+        const video = fakeVideo();
+        // The binding's pair reaches the element by another road (the Netflix
+        // page script), so it flips `paused` without touching video.pause/play.
+        // The panel resumes only a video that is still paused, so a pair that
+        // left `paused` alone would (rightly) never be asked to play.
+        const playback = {
+            pause: jest.fn(() => {
+                (video as { paused: boolean }).paused = true;
+            }),
+            play: jest.fn(() => {
+                (video as { paused: boolean }).paused = false;
+            }),
+        };
+        const dict = new SaviHoverDictionary(
+            () => video,
+            () => [],
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            playback
+        );
+        await openPanel(dict);
+        expect(playback.pause).toHaveBeenCalledTimes(1);
+        expect(video.pause).not.toHaveBeenCalled();
+        (dict as any)._onPanelClosed();
+        expect(playback.play).toHaveBeenCalledTimes(1);
+        expect(video.play).not.toHaveBeenCalled();
+        dict.stop();
+    });
+
+    it('does not resume a video it did not pause', async () => {
+        const video = fakeVideo(true);
+        const playback = { pause: jest.fn(), play: jest.fn() };
+        const dict = new SaviHoverDictionary(
+            () => video,
+            () => [],
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            playback
+        );
+        await openPanel(dict);
+        expect(playback.pause).not.toHaveBeenCalled();
+        (dict as any)._onPanelClosed();
+        expect(playback.play).not.toHaveBeenCalled();
+        dict.stop();
+    });
+
+    it('falls back to the raw element without the pair', async () => {
+        const video = fakeVideo();
+        const dict = new SaviHoverDictionary(() => video);
+        await openPanel(dict);
+        expect(video.pause).toHaveBeenCalledTimes(1);
+        (dict as any)._onPanelClosed();
+        expect(video.play).toHaveBeenCalledTimes(1);
+        dict.stop();
+    });
+});
