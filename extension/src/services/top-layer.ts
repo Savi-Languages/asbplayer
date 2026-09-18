@@ -120,3 +120,43 @@ export function setTopLayer(el: HTMLElement, promote: boolean, currentlyPromoted
 
     return promote;
 }
+
+/**
+ * Keep an overlay paintable under the current fullscreen state, in one call:
+ * parent it inside the fullscreen element when that can host children, else
+ * on <body> and lifted into the top layer — the two halves above, in the
+ * order that makes them safe together. Also re-attaches an overlay a page
+ * wipe disconnected.
+ *
+ * `promoted` is the caller's top-layer bookkeeping (see `setTopLayer`); the
+ * new value is returned. A promoted overlay that has to move is demoted
+ * FIRST, while it is still in the document: moving a shown popover closes it
+ * behind our back, and a later `hidePopover` would then throw and leave the
+ * attribute behind.
+ *
+ * `keep` are inline styles to re-assert whenever the top-layer state flips.
+ * Promotion neutralizes the popover UA chrome with blanket resets — `border:
+ * 0`, `max-height: none`, see `neutralizePopoverChrome` — that also survive
+ * demotion, and an overlay with a border or a height cap of its own wants
+ * them back both times.
+ */
+export function hostOverlay(el: HTMLElement, promoted: boolean, keep: Partial<CSSStyleDeclaration> = {}): boolean {
+    const fullscreen = document.fullscreenElement ?? null;
+    const parent = overlayParent(fullscreen);
+    let now = promoted;
+    let flipped = false;
+    if (el.parentElement !== parent || !el.isConnected) {
+        if (now) {
+            now = setTopLayer(el, false, true);
+            flipped = flipped || !now;
+        }
+        parent.appendChild(el);
+    }
+    const before = now;
+    now = setTopLayer(el, needsTopLayer(fullscreen, el), now);
+    flipped = flipped || now !== before;
+    if (flipped) {
+        Object.assign(el.style, keep);
+    }
+    return now;
+}
