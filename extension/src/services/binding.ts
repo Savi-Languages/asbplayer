@@ -466,15 +466,17 @@ export default class Binding {
             glossMode: () => (this.saviGlossController.glossable ? 'glossed' : 'bare'),
             send: (message) => browser.runtime.sendMessage({ sender: 'savi-video', message }),
         });
-        // Lift the subtitles above the streaming player's control bar while it is
-        // visible (they share the same bottom strip and fight over the mouse),
-        // restoring the user's configured offset when it hides. Runtime-only.
+        // Rest the subtitles above where the streaming player's control bar
+        // appears (they share the same bottom strip and fight over the mouse) —
+        // always, not only while it is up, so the text never moves under a
+        // hovering cursor when the controls come and go. Runtime-only.
         this.saviControlsClearance = new SaviControlsClearance({
             video: () => this.video,
             applyOffset: (px) => {
                 this.subtitleController.bottomSubtitlePositionOffset = px;
                 this.subtitleController.refresh();
             },
+            currentOffset: () => this.subtitleController.bottomSubtitlePositionOffset,
         });
         this.hoveredToken = new HoveredToken();
         this.recordMedia = true;
@@ -1516,10 +1518,12 @@ export default class Binding {
         this.pauseOnHoverMode = currentSettings.pauseOnHoverMode;
 
         this.subtitleController.displaySubtitles = currentSettings.streamingDisplaySubtitles;
-        this.subtitleController.bottomSubtitlePositionOffset = currentSettings.subtitlePositionOffset;
-        // The controls-clearance watcher lifts the runtime offset above the
-        // player's control bar; the SETTING stays its resting baseline.
+        // The SETTING is the floor; controls-clearance rests the runtime offset
+        // above the player's control bar. Apply ITS answer here, not the bare
+        // setting: writing the setting dropped the text onto the control strip
+        // on every settings reload, and it stayed there.
         this.saviControlsClearance.baseOffsetPx = currentSettings.subtitlePositionOffset;
+        this.subtitleController.bottomSubtitlePositionOffset = this.saviControlsClearance.effectiveOffsetPx();
         this.subtitleController.topSubtitlePositionOffset = currentSettings.topSubtitlePositionOffset;
         this.subtitleController.subtitlesWidth = currentSettings.subtitlesWidth;
         this.subtitleController.surroundingSubtitlesCountRadius = currentSettings.surroundingSubtitlesCountRadius;
