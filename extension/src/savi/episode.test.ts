@@ -104,6 +104,54 @@ describe('deriveEpisodeId — YouTube', () => {
             deriveEpisodeId('https://www.youtube.com/feed/subscriptions', 'Subscriptions - YouTube')
         ).toBeUndefined();
     });
+
+    it('uses the /embed/<id> path segment of an embedded player', () => {
+        expect(deriveEpisodeId('https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=1', 'YouTube')).toBe(
+            'youtube:dQw4w9WgXcQ'
+        );
+    });
+
+    it('resolves an embed on youtube.googleapis.com to the same id as its watch page', () => {
+        // Seen live on 2026-09-20: this host was unknown, so the embed fell
+        // through to the generic fallback and came out
+        // `youtube.googleapis.com:youtube`.
+        expect(deriveEpisodeId('https://youtube.googleapis.com/embed/dQw4w9WgXcQ?rel=0', 'YouTube')).toBe(
+            'youtube:dQw4w9WgXcQ'
+        );
+        expect(deriveEpisodeId('https://youtube.googleapis.com/v/dQw4w9WgXcQ', 'YouTube')).toBe('youtube:dQw4w9WgXcQ');
+    });
+
+    it('yields NO id on a youtube.googleapis.com embed with no video id', () => {
+        // The document title of every embed is a bare "YouTube", so a title
+        // slug here is ONE bucket shared by every embedded video anywhere.
+        expect(deriveEpisodeId('https://youtube.googleapis.com/embed/', 'YouTube')).toBeUndefined();
+        expect(deriveEpisodeId('https://youtube.googleapis.com/', 'YouTube')).toBeUndefined();
+    });
+
+    it('resolves the other embed-only hosts too', () => {
+        expect(deriveEpisodeId('https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ', 'YouTube')).toBe(
+            'youtube:dQw4w9WgXcQ'
+        );
+        expect(deriveEpisodeId('https://www.youtubeeducation.com/embed/dQw4w9WgXcQ', 'YouTube')).toBe(
+            'youtube:dQw4w9WgXcQ'
+        );
+        expect(deriveEpisodeId('https://www.youtube-nocookie.com/embed/', 'YouTube')).toBeUndefined();
+    });
+
+    it('does not mistake an embed MODE for a video id', () => {
+        // Both are 11 characters, exactly like a real id. The video they play
+        // comes from ?list= / ?channel= and is not in the URL.
+        expect(deriveEpisodeId('https://www.youtube.com/embed/videoseries?list=PLabc', 'YouTube')).toBeUndefined();
+        expect(
+            deriveEpisodeId('https://www.youtube-nocookie.com/embed/live_stream?channel=UCabc', 'YouTube')
+        ).toBeUndefined();
+    });
+
+    it('does not treat a lookalike host as YouTube', () => {
+        expect(deriveEpisodeId('https://notyoutube-nocookie.com/embed/dQw4w9WgXcQ', 'Some Talk')).toBe(
+            'notyoutube-nocookie.com:some-talk'
+        );
+    });
 });
 
 describe('deriveEpisodeId — generic fallback', () => {
