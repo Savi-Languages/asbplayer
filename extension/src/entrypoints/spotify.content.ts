@@ -25,8 +25,18 @@ export default defineContentScript({
             }),
         });
         panel.start();
-        const listener = (request: any) => {
-            if (request.sender === 'savi-extension-to-video') panel.captureEnded(request.message);
+        const listener = (request: any, _sender: unknown, sendResponse: (response?: any) => void) => {
+            if (request.sender !== 'savi-extension-to-video') return;
+            if (request.message?.command === 'savi-capture-ping') {
+                // Answer only while capturing — silence is how the background
+                // recognises a session record nobody owns (capture-staleness.ts).
+                if (panel.isCapturing()) {
+                    sendResponse({ capturing: true });
+                    return true;
+                }
+                return;
+            }
+            panel.captureEnded(request.message);
         };
         browser.runtime.onMessage.addListener(listener);
         ctx.onInvalidated(() => {

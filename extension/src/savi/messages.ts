@@ -589,6 +589,18 @@ export interface SaviRequestStartToVideoMessage {
     readonly command: 'savi-request-start';
 }
 
+/** "Is anyone in this tab still feeding a capture?" — how the background tells
+ *  a live session record from one orphaned by a page reload (see
+ *  capture-staleness.ts). Broadcast to every frame; ONLY a controller that is
+ *  capturing answers, so silence means the record has no owner. */
+export interface SaviCapturePingToVideoMessage {
+    readonly command: 'savi-capture-ping';
+}
+
+export interface SaviCapturePingResponse {
+    readonly capturing: true;
+}
+
 export interface SaviCommand<M> {
     readonly sender: 'savi-video' | 'savi-popup' | 'savi-extension-to-video';
     readonly message: M;
