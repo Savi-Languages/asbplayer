@@ -1048,12 +1048,7 @@ export default class VideoDataSyncController {
                 }
             }
 
-            if (
-                !videoDataMatchesEpisode(
-                    sourceEpisodeId,
-                    deriveEpisodeId(window.location.href, document.title)
-                )
-            ) {
+            if (!videoDataMatchesEpisode(sourceEpisodeId, deriveEpisodeId(window.location.href, document.title))) {
                 console.info('[savi subtitle sync] page changed while subtitles were downloading; discarding them');
                 return false;
             }
@@ -1137,10 +1132,7 @@ export default class VideoDataSyncController {
 
             if (
                 !videoDataMatchesEpisode(data.episodeId, sourceEpisodeId) ||
-                !videoDataMatchesEpisode(
-                    data.episodeId,
-                    deriveEpisodeId(window.location.href, document.title)
-                )
+                !videoDataMatchesEpisode(data.episodeId, deriveEpisodeId(window.location.href, document.title))
             ) {
                 console.info('[savi subtitle sync] discarding stale lazy subtitle response');
                 return undefined;
