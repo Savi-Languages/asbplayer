@@ -116,15 +116,20 @@ it('automatically records verified playback once, pauses segments, and respects 
     const f = await autoFixture();
     await f.advance();
     expect(sent.some((m) => m.command === 'savi-start-capture')).toBe(false);
+    expect(f.p.isCapturing()).toBe(false);
     f.play();
     await f.advance(12);
     expect(sent.filter((m) => m.command === 'savi-start-capture')).toEqual([
         expect.objectContaining({ manuallyRequested: false }),
     ]);
+    // What the background's ownership ping reads: a paused capture is still
+    // owned, a stopped one is not.
+    expect(f.p.isCapturing()).toBe(true);
     Object.defineProperty(f.media, 'paused', { value: true, writable: true });
     jest.advanceTimersByTime(250);
     await settle();
     expect(sent.filter((m) => m.command === 'savi-playback-state').at(-1)?.ops).toContainEqual({ op: 'segment-end' });
+    expect(f.p.isCapturing()).toBe(true);
     f.play();
     await f.advance(12);
     expect(sent.filter((m) => m.command === 'savi-start-capture')).toHaveLength(1);
@@ -133,6 +138,7 @@ it('automatically records verified playback once, pauses segments, and respects 
         .click();
     await f.advance(12);
     expect(sent.filter((m) => m.command === 'savi-start-capture')).toHaveLength(1);
+    expect(f.p.isCapturing()).toBe(false);
     document.querySelector('a')!.href = '/episode/abcdefghijklmnopqrstuv';
     await f.advance(1);
     f.importLines();
