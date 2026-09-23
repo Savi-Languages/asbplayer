@@ -160,4 +160,21 @@ it('retries a transient preparation failure after a bounded cooldown without pau
     clock.mockRestore();
 });
 
-it('Watch mode never auto-pauses for a prepared target card', async()=>{const video=document.createElement('video');const pause=jest.fn();const c=new SaviTargetController({video,metadata:()=>({episodeId:'netflix:1',title:'S1',show:'Show'}),subtitles:()=>[],pause,play:jest.fn(),send:jest.fn(async()=>prep())});c.start('ja');await settle();video.dispatchEvent(new Event('play'));expect(pause).not.toHaveBeenCalled();expect(document.querySelector('[data-savi-target-card]')).toBeNull();c.stop();});
+it('Watch mode never auto-pauses for a prepared target card', async () => {
+    const video = document.createElement('video');
+    const pause = jest.fn();
+    const c = new SaviTargetController({
+        video,
+        metadata: () => ({ episodeId: 'netflix:1', title: 'S1', show: 'Show' }),
+        subtitles: () => [],
+        pause,
+        play: jest.fn(),
+        send: jest.fn(async () => prep()),
+    });
+    c.start('ja');
+    await settle();
+    video.dispatchEvent(new Event('play'));
+    expect(pause).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-savi-target-card]')).toBeNull();
+    c.stop();
+});
