@@ -5,6 +5,12 @@ import { resolveTargetEpisode } from './episode-resolver';
 import type { TargetEpisode, TargetFeedback, TargetPreparation, TargetWord } from './target-types';
 
 const OUTBOX = 'saviTargetFeedback:';
+export class TargetCloudRequestError extends Error {
+    constructor(readonly status: number) {
+        super(`Target words unavailable (${status})`);
+        this.name = 'TargetCloudRequestError';
+    }
+}
 export async function targetCloud(cloudUrl: string) {
     const token = await currentAccessToken();
     const account = await storedAccount();
@@ -24,7 +30,7 @@ export async function targetCloud(cloudUrl: string) {
                 headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
                 ...(body === undefined ? {} : { body: JSON.stringify(body) }),
             });
-            if (!res.ok) throw new Error(`Target words unavailable (${res.status})`);
+            if (!res.ok) throw new TargetCloudRequestError(res.status);
             const value = await res.json();
             await check();
             return value;

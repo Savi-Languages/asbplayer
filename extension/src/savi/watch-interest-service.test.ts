@@ -79,7 +79,7 @@ test('Watch blocks automatic hover mining but permits deliberate bookmarks', asy
     expect(await queueWatchInterest('local', 'a', item)).toEqual({ ok: false });
     expect(await queueWatchInterest('local', 'a', { ...item, kind: 'bookmark' })).toEqual({ ok: true });
 });
-test('untimed interests keep absent timing and distinct text while retries dedupe', async () => {
+test('rejects untimed interests that the cloud contract cannot store', async () => {
     const base = {
         lang: 'ja',
         episodeId: 'spotify:track:1234567890123456789012',
@@ -89,12 +89,32 @@ test('untimed interests keep absent timing and distinct text while retries dedup
         lineStartMs: 0,
         lineEndMs: 0,
     };
-    expect(await queueWatchInterest('local', 'a', base)).toEqual({ ok: true });
-    await drainWatchInterest('local').catch(() => {});
-    expect(await queueWatchInterest('local', 'a', base)).toEqual({ ok: true });
-    expect(await queueWatchInterest('local', 'a', { ...base, lineText: '次の行' })).toEqual({ ok: true });
-    expect(Object.keys(pending).filter((k) => k.startsWith('saviWatchInterest:'))).toHaveLength(2);
+    expect(await queueWatchInterest('local', 'a', base)).toEqual({ ok: false });
+    expect(Object.keys(pending).filter((k) => k.startsWith('saviWatchInterest:'))).toHaveLength(0);
     expect(await queueWatchInterest('local', 'a', { ...base, lineEndMs: 1000 })).toEqual({ ok: false });
+});
+
+test('drops a queued row after a definitive client error instead of retrying forever', async () => {
+    const item = {
+        lang: 'ja',
+        episodeId: 'spotify:track:1234567890123456789012',
+        kind: 'bookmark',
+        lineText: '時間のある行',
+        textTiming: 'timed',
+        lineStartMs: 1000,
+        lineEndMs: 2000,
+    };
+    expect(await queueWatchInterest('local', 'a', item)).toEqual({ ok: true });
+    await drainWatchInterest('local').catch(() => {});
+    request.mockImplementation(async (path: string) => {
+        if (path === '/v2/settings')
+            return { settings: { saviSavePausedHovers: { value: true }, saviImmersionMode: { value: 'explore' } } };
+        throw { status: 400 };
+    });
+    const key = Object.keys(pending).find((candidate) => candidate.startsWith('saviWatchInterest:'))!;
+    pending[key].retryAt = Date.now() - 1;
+    await drainWatchInterest('local');
+    expect(pending[key]).toBeUndefined();
 });
 
 describe('local immersion modes', () => {
