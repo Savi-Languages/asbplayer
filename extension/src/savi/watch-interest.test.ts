@@ -103,3 +103,78 @@ test('Listen has a reversible text reveal and teardown restores subtitles', asyn
     expect(onModeChange).toHaveBeenLastCalledWith('watch', false);
     expect(document.querySelector('[data-savi-immersion]')).toBeNull();
 });
+
+describe('Savi modes control', () => {
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => {
+        jest.useRealTimers();
+        document.body.innerHTML = '';
+    });
+
+    const fixture = async (setMode: (message: any) => Promise<any> = async () => ({ ok: true })) => {
+        const video = document.createElement('video');
+        video.getBoundingClientRect = () =>
+            ({ x: 100, y: 50, left: 100, top: 50, width: 800, height: 450, right: 900, bottom: 500 }) as DOMRect;
+        document.body.append(video);
+        const onModeChange = jest.fn();
+        const send = jest.fn((message: any) =>
+            message.command === 'savi-watch-interest-config'
+                ? Promise.resolve({ account: 'u', enabled: true, mode: 'watch' })
+                : setMode(message)
+        );
+        const controller = new SaviWatchInterest({
+            video,
+            subtitles: () => cues,
+            metadata: () => ({ episodeId: 'netflix:1', title: 'Episode' }),
+            onModeChange,
+            send,
+        });
+        controller.start('ja');
+        await flush();
+        const host = document.querySelector<HTMLElement>('[data-savi-immersion]')!;
+        const shadow = host.shadowRoot!;
+        return { controller, host, shadow, onModeChange, send };
+    };
+
+    test('the collapsed button follows player activity instead of staying stuck over the video', async () => {
+        const f = await fixture();
+        expect(f.host.style.display).not.toBe('none');
+        jest.advanceTimersByTime(3000);
+        expect(f.host.style.display).toBe('none');
+        document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true }));
+        expect(f.host.style.display).not.toBe('none');
+        f.controller.stop();
+    });
+
+    test('a mode takes effect optimistically without waiting for cloud persistence', async () => {
+        let resolve!: (value: any) => void;
+        const f = await fixture(
+            () =>
+                new Promise((r) => {
+                    resolve = r;
+                })
+        );
+        const details = Array.from(f.shadow.querySelectorAll('button')).find((b) => b.textContent === 'Savi modes')!;
+        details.click();
+        const explore = Array.from(f.shadow.querySelectorAll('button')).find((b) => b.textContent === 'Explore')!;
+        explore.click();
+        expect(f.onModeChange).toHaveBeenLastCalledWith('explore', false);
+        expect(explore.getAttribute('aria-pressed')).toBe('true');
+        resolve({ ok: true });
+        await flush();
+        f.controller.stop();
+    });
+
+    test('the menu collapses on an outside click and then gets out of the way', async () => {
+        const f = await fixture();
+        const details = Array.from(f.shadow.querySelectorAll('button')).find((b) => b.textContent === 'Savi modes')!;
+        details.click();
+        jest.advanceTimersByTime(3000);
+        expect(f.host.style.display).not.toBe('none');
+        document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+        expect(details.textContent).toBe('Savi modes');
+        jest.advanceTimersByTime(3000);
+        expect(f.host.style.display).toBe('none');
+        f.controller.stop();
+    });
+});

@@ -1,5 +1,6 @@
 import { captureWatchScreenshot } from './watch-screenshot';
 import { lineElement } from './hover-dict';
+import { VideoAnchor } from './anchor';
 
 interface Cue {
     text: string;
@@ -19,6 +20,7 @@ const normalize = (text: string) =>
         .replace(/<[^>]*>/g, '')
         .replace(/\s+/g, '')
         .trim();
+const CONTROL_IDLE_MS = 2500;
 /** Only exact, current primary subtitle cues qualify; overlay notifications don't. */
 export function interestCue(cues: readonly Cue[], text: string, timeMs: number): Cue | undefined {
     return cues.find(
@@ -32,6 +34,7 @@ export class SaviWatchInterest {
     private toolbar?: HTMLElement;
     private toolbarHost?: HTMLElement;
     private revealButton?: HTMLButtonElement;
+    private detailsButton?: HTMLButtonElement;
     private status?: HTMLElement;
     private account = '';
     private enabled = false;
@@ -40,6 +43,10 @@ export class SaviWatchInterest {
     private element: HTMLElement | null = null;
     private timer?: ReturnType<typeof setTimeout>;
     private refresh?: ReturnType<typeof setInterval>;
+    private controlTimer?: ReturnType<typeof setTimeout>;
+    private controlsCollapsed = true;
+    private modeRequest = 0;
+    private anchor?: VideoAnchor;
     private saved = new Set<string>();
     constructor(private readonly deps: Sources) {}
     start(lang: string) {
@@ -60,6 +67,8 @@ export class SaviWatchInterest {
     stop() {
         this.bound = false;
         this.toolbarHost?.remove();
+        this.anchor?.destroy();
+        this.anchor = undefined;
         this.toolbarHost = undefined;
         this.toolbar = undefined;
         this.mode = 'watch';
@@ -71,9 +80,12 @@ export class SaviWatchInterest {
         this.account = '';
         this.saved.clear();
         this.clear();
+        clearTimeout(this.controlTimer);
+        this.controlTimer = undefined;
         clearInterval(this.refresh);
         document.removeEventListener('mousemove', this.move);
         document.removeEventListener('mouseout', this.leave);
+        document.removeEventListener('pointerdown', this.outsidePointer, true);
         window.removeEventListener('blur', this.clear);
         for (const event of ['play', 'seeking']) this.deps.video.removeEventListener(event, this.clear);
         this.deps.video.removeEventListener('pause', this.arm);
@@ -93,14 +105,22 @@ export class SaviWatchInterest {
             if (nextMode !== this.mode) this.revealed = false;
             this.mode = nextMode;
             this.updateMode();
-            if (!this.enabled) this.clear();
+            if (this.enabled) this.showControls();
+            else {
+                this.hideControls();
+                this.clear();
+            }
         } catch {
             this.enabled = false;
+            this.hideControls();
             this.clear();
         }
     }
     private fullscreen = () => {
-        if (this.toolbarHost) (document.fullscreenElement ?? document.body).append(this.toolbarHost);
+        if (this.toolbarHost) {
+            (document.fullscreenElement ?? document.body).append(this.toolbarHost);
+            this.anchor?.schedule();
+        }
     };
     private updateMode() {
         this.deps.onModeChange?.(this.mode, this.mode === 'listen' && !this.revealed);
@@ -119,8 +139,7 @@ export class SaviWatchInterest {
         host.dataset.saviImmersion = 'true';
         Object.assign(host.style, {
             position: 'fixed',
-            left: '16px',
-            bottom: '90px',
+            display: 'none',
             zIndex: '2147483600',
             fontSize: '12px',
         });
@@ -154,20 +173,34 @@ export class SaviWatchInterest {
         };
         for (const mode of ['watch', 'explore', 'listen']) {
             const b = button(mode[0].toUpperCase() + mode.slice(1), () => {
+                const previousMode = this.mode;
+                const previousRevealed = this.revealed;
+                const request = ++this.modeRequest;
+                // The mode is a playback interaction, so apply it immediately;
+                // cloud persistence happens behind the UI and rolls back only
+                // if this is still the latest selection.
+                this.mode = mode;
+                this.revealed = false;
+                this.updateMode();
                 void this.deps
                     .send({ command: 'savi-set-immersion-mode', mode })
                     .then((r) => {
-                        if (!this.bound) return;
+                        if (!this.bound || request !== this.modeRequest) return;
                         if (!r?.ok) {
                             if (this.status) this.status.textContent = 'Could not save mode. Try again.';
+                            this.mode = previousMode;
+                            this.revealed = previousRevealed;
+                            this.updateMode();
                             return;
                         }
-                        this.mode = mode;
-                        this.revealed = false;
-                        this.updateMode();
+                        if (this.status) this.status.textContent = '';
                     })
                     .catch(() => {
+                        if (!this.bound || request !== this.modeRequest) return;
                         if (this.status) this.status.textContent = 'Mode unavailable.';
+                        this.mode = previousMode;
+                        this.revealed = previousRevealed;
+                        this.updateMode();
                     });
             });
             b.dataset.mode = mode;
@@ -194,13 +227,9 @@ export class SaviWatchInterest {
             void this.bookmark();
         });
         const details = button('−', () => {
-            const collapsed = box.dataset.collapsed !== 'true';
-            box.dataset.collapsed = String(collapsed);
-            for (const child of Array.from(box.children)) {
-                if (child !== details) (child as HTMLElement).style.display = collapsed ? 'none' : '';
-            }
-            details.textContent = collapsed ? 'Savi modes' : '−';
+            this.setControlsCollapsed(!this.controlsCollapsed);
         });
+        this.detailsButton = details;
         const status = document.createElement('span');
         status.setAttribute('role', 'status');
         box.append(status);
@@ -209,28 +238,79 @@ export class SaviWatchInterest {
         (document.fullscreenElement ?? document.body).append(host);
         this.toolbarHost = host;
         this.toolbar = box;
-        details.click();
+        this.anchor = new VideoAnchor(host, () => this.deps.video, 'top-left', 18);
+        document.addEventListener('pointerdown', this.outsidePointer, true);
+        this.setControlsCollapsed(true);
         this.updateMode();
     }
+    private setControlsCollapsed(collapsed: boolean) {
+        this.controlsCollapsed = collapsed;
+        if (!this.toolbar || !this.detailsButton) return;
+        this.toolbar.dataset.collapsed = String(collapsed);
+        for (const child of Array.from(this.toolbar.children)) {
+            if (child !== this.detailsButton) (child as HTMLElement).style.display = collapsed ? 'none' : '';
+        }
+        this.detailsButton.textContent = collapsed ? 'Savi modes' : '−';
+        if (collapsed) this.scheduleControlsHide();
+        else clearTimeout(this.controlTimer);
+        this.anchor?.schedule();
+    }
+    private showControls() {
+        if (!this.enabled || !this.toolbarHost) return;
+        this.toolbarHost.style.display = 'block';
+        this.anchor?.schedule();
+        if (this.controlsCollapsed) this.scheduleControlsHide();
+    }
+    private hideControls() {
+        clearTimeout(this.controlTimer);
+        this.controlTimer = undefined;
+        if (this.toolbarHost) this.toolbarHost.style.display = 'none';
+    }
+    private scheduleControlsHide() {
+        clearTimeout(this.controlTimer);
+        if (!this.controlsCollapsed) return;
+        this.controlTimer = setTimeout(() => this.hideControls(), CONTROL_IDLE_MS);
+    }
+    private outsidePointer = (event: Event) => {
+        if (this.controlsCollapsed || !this.toolbarHost || event.composedPath().includes(this.toolbarHost)) return;
+        this.setControlsCollapsed(true);
+    };
     private async saveMoment(account: string, item: any) {
         const generation = this.generation;
         const time = this.deps.video.currentTime;
-        const current = () => this.bound && generation === this.generation && this.account === account && this.deps.metadata().episodeId === item.episodeId && Math.abs(this.deps.video.currentTime-time)<0.05;
+        const current = () =>
+            this.bound &&
+            generation === this.generation &&
+            this.account === account &&
+            this.deps.metadata().episodeId === item.episodeId &&
+            Math.abs(this.deps.video.currentTime - time) < 0.05;
         let screenshotDataUrl: string | undefined;
         if (this.deps.video.getBoundingClientRect().width > 0) {
             let expired = false;
             let timer: ReturnType<typeof setTimeout> | undefined;
             try {
                 screenshotDataUrl = await Promise.race([
-                    captureWatchScreenshot(this.deps.video,this.deps.send,()=>!expired&&current()),
-                    new Promise<undefined>(resolve=>{timer=setTimeout(()=>{expired=true;resolve(undefined);},2000);}),
+                    captureWatchScreenshot(this.deps.video, this.deps.send, () => !expired && current()),
+                    new Promise<undefined>((resolve) => {
+                        timer = setTimeout(() => {
+                            expired = true;
+                            resolve(undefined);
+                        }, 2000);
+                    }),
                 ]);
-            } finally { expired=true;clearTimeout(timer); }
+            } finally {
+                expired = true;
+                clearTimeout(timer);
+            }
         }
         // The chosen subtitle remains valid even if the player subsequently moves,
         // but account changes must never enqueue into another account.
-        if (!this.bound || generation !== this.generation || this.account !== account) return {ok:false};
-        return this.deps.send({command:'savi-save-watch-interest',account,item:{...item,...(screenshotDataUrl?{screenshotDataUrl}:{})}});
+        if (!this.bound || generation !== this.generation || this.account !== account) return { ok: false };
+        return this.deps.send({
+            command: 'savi-save-watch-interest',
+            account,
+            item: { ...item, ...(screenshotDataUrl ? { screenshotDataUrl } : {}) },
+        });
     }
     private async bookmark() {
         const cue = this.deps
@@ -248,19 +328,19 @@ export class SaviWatchInterest {
         }
         try {
             const r = await this.saveMoment(this.account, {
-                    lang: this.lang,
-                    episodeId: meta.episodeId,
-                    show: meta.show ?? '',
-                    episodeTitle: meta.title,
-                    lineStartMs: cue.start,
-                    lineEndMs: cue.end,
-                    lineText: cue.text,
-                    kind: 'bookmark',
-                    context: this.deps
-                        .subtitles()
-                        .filter((c) => (c.track ?? 0) === 0 && c !== cue && Math.abs(c.start - cue.start) < 20000)
-                        .slice(0, 4)
-                        .map((c) => c.text),
+                lang: this.lang,
+                episodeId: meta.episodeId,
+                show: meta.show ?? '',
+                episodeTitle: meta.title,
+                lineStartMs: cue.start,
+                lineEndMs: cue.end,
+                lineText: cue.text,
+                kind: 'bookmark',
+                context: this.deps
+                    .subtitles()
+                    .filter((c) => (c.track ?? 0) === 0 && c !== cue && Math.abs(c.start - cue.start) < 20000)
+                    .slice(0, 4)
+                    .map((c) => c.text),
             });
             if (this.status)
                 this.status.textContent = r?.ok
@@ -279,6 +359,7 @@ export class SaviWatchInterest {
         if (!this.element?.contains(event.relatedTarget as Node | null)) this.clear();
     };
     private move = (event: MouseEvent) => {
+        this.showControls();
         const element = lineElement(event.target);
         if (element === this.element) return;
         this.clear();
@@ -325,29 +406,29 @@ export class SaviWatchInterest {
             )
                 return;
             void this.saveMoment(account, {
-                        lang: this.lang,
-                        episodeId: meta.episodeId,
-                        show: meta.show ?? '',
-                        episodeTitle: meta.title,
-                        lineStartMs: Math.round(cue.start),
-                        lineEndMs: Math.round(cue.end),
-                        lineText: cue.text,
-                        kind: 'hover',
-                        dwellMs: 1500,
-                        context: this.deps
-                            .subtitles()
-                            .filter(
-                                (c) =>
-                                    (c.track ?? 0) === 0 &&
-                                    c !== cue &&
-                                    c.start >= cue.start - 20000 &&
-                                    c.start <= cue.end + 20000
-                            )
-                            .sort((a, b) => Math.abs(a.start - cue.start) - Math.abs(b.start - cue.start))
-                            .slice(0, 4)
-                            .sort((a, b) => a.start - b.start)
-                            .map((c) => c.text.slice(0, 1000)),
-                })
+                lang: this.lang,
+                episodeId: meta.episodeId,
+                show: meta.show ?? '',
+                episodeTitle: meta.title,
+                lineStartMs: Math.round(cue.start),
+                lineEndMs: Math.round(cue.end),
+                lineText: cue.text,
+                kind: 'hover',
+                dwellMs: 1500,
+                context: this.deps
+                    .subtitles()
+                    .filter(
+                        (c) =>
+                            (c.track ?? 0) === 0 &&
+                            c !== cue &&
+                            c.start >= cue.start - 20000 &&
+                            c.start <= cue.end + 20000
+                    )
+                    .sort((a, b) => Math.abs(a.start - cue.start) - Math.abs(b.start - cue.start))
+                    .slice(0, 4)
+                    .sort((a, b) => a.start - b.start)
+                    .map((c) => c.text.slice(0, 1000)),
+            })
                 .then((result) => {
                     if (result?.ok && this.account === account) this.saved.add(key);
                 })
