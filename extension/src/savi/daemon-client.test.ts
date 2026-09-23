@@ -3,10 +3,7 @@ import { browserHintFromUserAgent, explainWord, postPlaybackState, segmentLine }
 describe('postPlaybackState openSegment', () => {
     const replyWith = (body: Record<string, unknown>) => {
         global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => body }) as any;
-        return postPlaybackState(
-            { baseUrl: 'http://127.0.0.1:4030', token: 't' },
-            { captureId: 'c', seq: 1, ops: [] }
-        );
+        return postPlaybackState({ baseUrl: 'http://127.0.0.1:4030', token: 't' }, { captureId: 'c', seq: 1, ops: [] });
     };
 
     it('reports the open segment id', async () => {
@@ -37,7 +34,9 @@ describe('browserHintFromUserAgent', () => {
             )
         ).toBe('edge');
         expect(
-            browserHintFromUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:127.0) Gecko/20100101 Firefox/127.0')
+            browserHintFromUserAgent(
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:127.0) Gecko/20100101 Firefox/127.0'
+            )
         ).toBe('firefox');
         expect(
             browserHintFromUserAgent(

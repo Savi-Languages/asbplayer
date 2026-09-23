@@ -797,7 +797,7 @@ export class SaviHoverDictionary {
         term: string,
         reading?: string
     ): Promise<{ explanation: string | null; unavailable?: SaviAiUnavailable }> {
-        const cacheKey = `${this._adapter ? this._episodeId() ?? '' : ''}\u0000${term}\u0000${text}`;
+        const cacheKey = `${this._adapter ? (this._episodeId() ?? '') : ''}\u0000${term}\u0000${text}`;
         const cached = this._explainCache.get(cacheKey);
         if (cached !== undefined) {
             return { explanation: cached };
