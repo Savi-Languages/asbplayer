@@ -175,6 +175,9 @@ export class SaviControlsClearance {
     private _site?: ControlsSite;
     private _timer?: ReturnType<typeof setInterval>;
     private _measured: MeasuredLifts = {};
+    private _storeLoaded = false;
+    private _learnedWhileLoading = false;
+    private _loadCycle = 0;
     /** The previous tick's raw reading. A reading is only believed once two
      *  consecutive ticks agree, so a strip caught mid-transition is never
      *  learned as its resting size. */
@@ -194,10 +197,21 @@ export class SaviControlsClearance {
             return; // unknown site (no-op)
         }
         const site = this._site;
+        const loadCycle = ++this._loadCycle;
+        this._storeLoaded = false;
+        this._learnedWhileLoading = false;
         this._timer = setInterval(() => this._tick(), POLL_MS);
         void this._store.load(site.key).then((stored) => {
+            if (this._loadCycle !== loadCycle || this._site?.key !== site.key) {
+                return;
+            }
             // Anything measured while this was loading is fresher than storage.
             this._measured = { ...stored, ...this._measured };
+            this._storeLoaded = true;
+            if (this._learnedWhileLoading) {
+                this._learnedWhileLoading = false;
+                void this._store.save(site.key, { ...this._measured });
+            }
             this._tick();
         });
         this._tick();
@@ -208,6 +222,9 @@ export class SaviControlsClearance {
             clearInterval(this._timer);
             this._timer = undefined;
         }
+        ++this._loadCycle;
+        this._storeLoaded = false;
+        this._learnedWhileLoading = false;
         this._lastReading = undefined;
     }
 
@@ -257,6 +274,14 @@ export class SaviControlsClearance {
         }
         const key = String(height);
         const inUse = restingLiftPx(this._measured, height, site.restingRatio);
+        const exact = this._measured[key];
+        if (exact !== undefined && lift > exact + SETTLE_PX) {
+            // A transient expanded player UI can look stable for two polls. An
+            // established exact measurement may be safely lowered, but never
+            // raised from that brief observation (which would persist excess
+            // empty space across future sessions).
+            return;
+        }
         if (Math.abs(lift - inUse) <= SETTLE_PX) {
             if (this._measured[key] !== undefined) {
                 return; // already known at this height; this is layout noise
@@ -268,6 +293,12 @@ export class SaviControlsClearance {
             this._measured[key] = lift;
         }
         pruneMeasuredLifts(this._measured, height, MAX_MEASURED);
-        void this._store.save(site.key, { ...this._measured });
+        if (this._storeLoaded) {
+            void this._store.save(site.key, { ...this._measured });
+        } else {
+            // Wait for the stored map before saving so an early measurement at
+            // one height cannot erase measurements from other player heights.
+            this._learnedWhileLoading = true;
+        }
     }
 }

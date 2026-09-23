@@ -22,10 +22,11 @@ export function headwordReading(term: string, token: SaviToken, entries: SaviDic
 }
 
 /** The dictionary reading of headword `term`: the first reading of the entry
- *  that actually lists `term` as one of its kanji spellings, falling back to the
- *  first entry (the daemon orders them by match quality). Kana-only entries
+ *  that actually lists `term` as one of its kanji spellings. Search results can
+ *  contain related spellings, so using an unmatched first result would attach a
+ *  plausible but wrong reading to the displayed headword. Kana-only entries
  *  carry no distinct reading, so they yield none. */
 function lemmaReading(term: string, entries: SaviDictEntry[]): string | undefined {
-    const entry = entries.find((e) => e.kanji.includes(term)) ?? entries[0];
+    const entry = entries.find((e) => e.kanji.includes(term));
     return entry && entry.kanji.length > 0 ? entry.readings[0] : undefined;
 }

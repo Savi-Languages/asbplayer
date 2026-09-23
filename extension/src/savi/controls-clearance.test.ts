@@ -103,6 +103,7 @@ describe('SaviControlsClearance — the subtitles rest above the control strip a
     let applied: number[];
     let saved: MeasuredLifts[];
     let stored: MeasuredLifts;
+    let load: () => Promise<MeasuredLifts>;
     let clearance: SaviControlsClearance | undefined;
 
     const video = {
@@ -110,7 +111,7 @@ describe('SaviControlsClearance — the subtitles rest above the control strip a
     } as HTMLMediaElement;
 
     const store: ClearanceStore = {
-        load: async () => ({ ...stored }),
+        load: async () => load(),
         save: async (_site, measured) => {
             saved.push(measured);
         },
@@ -149,6 +150,7 @@ describe('SaviControlsClearance — the subtitles rest above the control strip a
         applied = [];
         saved = [];
         stored = {};
+        load = async () => ({ ...stored });
         const strip = document.createElement('div');
         strip.className = 'watch-video--bottom-controls-container';
         strip.getBoundingClientRect = () =>
@@ -198,6 +200,33 @@ describe('SaviControlsClearance — the subtitles rest above the control strip a
         expect(offset).toBe(210); // and it does NOT drop back when they hide
         expect(applied).toEqual([170, 210]);
         expect(saved[saved.length - 1]).toEqual({ '1000': 210 });
+    });
+
+    it('does not raise a stored exact lift from a brief stable-looking transient', async () => {
+        stored = { '1000': 170 };
+        start();
+        await tick();
+        controlsTop = 800; // two polls at 210 used to permanently replace 170
+        await tick(2);
+        expect(offset).toBe(170);
+        expect(saved).toEqual([]);
+    });
+
+    it('merges measurements learned before storage finishes loading', async () => {
+        let resolveLoad!: (measured: MeasuredLifts) => void;
+        load = () =>
+            new Promise((resolve) => {
+                resolveLoad = resolve;
+            });
+        controlsTop = 800;
+        start();
+        await tick(); // the initial tick plus this poll confirm the 210px measurement
+        expect(saved).toEqual([]);
+
+        resolveLoad({ '500': 90 });
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(saved[saved.length - 1]).toEqual({ '500': 90, '1000': 210 });
     });
 
     it('never learns a strip caught mid-transition', async () => {

@@ -20,8 +20,8 @@ describe('headwordReading', () => {
         expect(headwordReading('負う', tok('負っ', 'おっ', '負う'), entries)).toBe('おう');
     });
 
-    it('falls back to the first entry when none lists the headword spelling', () => {
-        expect(headwordReading('見ル', tok('見', 'み', '見ル'), [entry(['見る'], ['みる'])])).toBe('みる');
+    it('prints nothing when no entry lists the displayed headword spelling', () => {
+        expect(headwordReading('見ル', tok('見', 'み', '見ル'), [entry(['見る'], ['みる'])])).toBeUndefined();
     });
 
     it('prints nothing rather than a wrong reading when no entry matched', () => {
