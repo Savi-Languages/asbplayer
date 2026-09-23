@@ -8,6 +8,7 @@ import {
     stripSiteSuffix,
     youtubeShowAndTitle,
     youtubeShowId,
+    captureTitle,
 } from './episode';
 
 describe('slugify', () => {
@@ -97,6 +98,15 @@ describe('deriveEpisodeId — YouTube', () => {
         expect(deriveEpisodeId('https://music.youtube.com/watch?v=abc123', 'Song')).toBe('youtube:abc123');
     });
 
+    it('uses the path segment on Shorts and Live pages', () => {
+        expect(deriveEpisodeId('https://www.youtube.com/shorts/dQw4w9WgXcQ', 'A short - YouTube')).toBe(
+            'youtube:dQw4w9WgXcQ'
+        );
+        expect(deriveEpisodeId('https://www.youtube.com/live/abc123?feature=share', 'A stream - YouTube')).toBe(
+            'youtube:abc123'
+        );
+    });
+
     it('yields NO id on a YouTube page with no video id', () => {
         // Same rule as Netflix: a known platform never falls back to a title
         // slug, because the daemon keys its episode store on this id.
@@ -151,6 +161,18 @@ describe('deriveEpisodeId — YouTube', () => {
         expect(deriveEpisodeId('https://notyoutube-nocookie.com/embed/dQw4w9WgXcQ', 'Some Talk')).toBe(
             'notyoutube-nocookie.com:some-talk'
         );
+    });
+});
+
+describe('captureTitle', () => {
+    it('omits the generic YouTube title so an embed cannot overwrite real metadata', () => {
+        expect(captureTitle('https://www.youtube.com/embed/dQw4w9WgXcQ', 'YouTube')).toBeUndefined();
+        expect(captureTitle('https://youtube.googleapis.com/v/dQw4w9WgXcQ', ' YouTube ')).toBeUndefined();
+    });
+
+    it('keeps a real YouTube title and generic-site titles', () => {
+        expect(captureTitle('https://www.youtube.com/watch?v=abc', 'A real video')).toBe('A real video');
+        expect(captureTitle('https://example.com/video', 'YouTube')).toBe('YouTube');
     });
 });
 

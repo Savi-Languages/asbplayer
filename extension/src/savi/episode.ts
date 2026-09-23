@@ -105,10 +105,21 @@ const youtubeVideoId = (parsed: URL): string | undefined => {
     }
 
     if (youtubeHosts.some((host) => hostMatches(parsed.host, host))) {
-        return parsed.searchParams.get('v') || youtubeEmbedVideoId(parsed);
+        const pathVideoId = parsed.pathname.match(/^\/(?:shorts|live)\/([^/]+)/)?.[1];
+        return parsed.searchParams.get('v') || pathVideoId || youtubeEmbedVideoId(parsed);
     }
 
     return undefined;
+};
+
+/** Metadata sent to capture/start must never replace a real episode title with
+ *  the generic title rendered by YouTube players. Omitting the field lets the
+ *  daemon preserve metadata already stored for this stable episode id. */
+export const captureTitle = (url: string, title: string): string | undefined => {
+    const value = asString(title).trim();
+    const parsed = parseUrl(url);
+    const isYoutubeVideo = parsed !== undefined && youtubeVideoId(parsed) !== undefined;
+    return isYoutubeVideo && /^youtube$/iu.test(stripSiteSuffix(value)) ? undefined : value || undefined;
 };
 
 // Hosts whose episodes have a STABLE platform id. On these, a title slug is

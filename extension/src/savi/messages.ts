@@ -31,8 +31,9 @@ export interface SaviStartCaptureMessage {
     // back to the name where absent.
     readonly showId?: string;
     // Episode label (e.g. "S1:E3 Secrets") or, when no show is known, the
-    // best available page title. Always present.
-    readonly title: string;
+    // best available page title. Omitted when an embedded player exposes only
+    // a generic site label, so an existing real title is not overwritten.
+    readonly title?: string;
     readonly lang?: string;
     readonly subtitles: string;
     readonly subtitleFormat: 'srt' | 'vtt';
@@ -595,7 +596,21 @@ export interface SaviCommand<M> {
 }
 
 // Target attention features are independent of capture success and never delay it.
-export interface SaviEpisodeTargetsMessage { command: 'savi-episode-targets'; episodeId: string; title: string; show?: string; lang: string }
-export interface SaviTargetFeedbackMessage { command: 'savi-target-feedback'; account: string; actions: import('./target-types').TargetFeedback[] }
+export interface SaviEpisodeTargetsMessage {
+    command: 'savi-episode-targets';
+    episodeId: string;
+    title: string;
+    show?: string;
+    lang: string;
+}
+export interface SaviTargetFeedbackMessage {
+    command: 'savi-target-feedback';
+    account: string;
+    actions: import('./target-types').TargetFeedback[];
+}
 
-export interface SaviMineTargetsMessage { command: 'savi-mine-targets'; account: string; mines: import('./target-types').HeardTargetMine[] }
+export interface SaviMineTargetsMessage {
+    command: 'savi-mine-targets';
+    account: string;
+    mines: import('./target-types').HeardTargetMine[];
+}

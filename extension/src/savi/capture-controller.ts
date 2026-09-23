@@ -21,9 +21,11 @@ import {
     deriveEpisodeId,
     deriveShowAndTitle,
     deriveShowAndTitleFromBasename,
+    captureTitle,
     youtubeShowAndTitle,
     youtubeShowId,
 } from './episode';
+import { isTopLevelFrame } from './capture-context';
 import { NativeSubtitleHider, nativeSubtitleSelectorForHost } from './native-subtitle-hider';
 import { SaviRecordButton } from './record-button';
 import { SaviReplayButton } from './replay-button';
@@ -242,7 +244,12 @@ export class SaviCaptureController {
                         // with what was already finished. A deliberate stop
                         // stays stopped.
                         const { episodeId } = this._pageMetadata();
-                        if (episodeId !== undefined && !this._starting && !this._deliberatelyStopped.has(episodeId)) {
+                        if (
+                            isTopLevelFrame() &&
+                            episodeId !== undefined &&
+                            !this._starting &&
+                            !this._deliberatelyStopped.has(episodeId)
+                        ) {
                             this._host.notify('Savi: capture restarted after idle timeout');
                             this.start(false);
                         }
@@ -315,6 +322,7 @@ export class SaviCaptureController {
                     // throwaway id and split the episode's takes in two.
                     if (
                         episodeId !== undefined &&
+                        isTopLevelFrame() &&
                         !this._active &&
                         !this._starting &&
                         !this._deliberatelyStopped.has(episodeId)
@@ -433,7 +441,7 @@ export class SaviCaptureController {
                     episodeId,
                     show,
                     showId: this._showId ?? this._youtubeShowId(),
-                    title,
+                    title: captureTitle(this._safeLocationHref(), title),
                     lang,
                     subtitles: serializeToSrt(subtitles),
                     subtitleFormat: 'srt',
@@ -494,7 +502,9 @@ export class SaviCaptureController {
     // start. All DOM reading lives here (content-script context); the
     // parsing/derivation is delegated to the pure helpers in episode.ts so
     // it stays unit-tested. Fully defensive — never throws.
-    targetMetadata() { return this._pageMetadata(); }
+    targetMetadata() {
+        return this._pageMetadata();
+    }
 
     private _pageMetadata(): { episodeId: string | undefined; show?: string; title: string } {
         const url = this._safeLocationHref();
