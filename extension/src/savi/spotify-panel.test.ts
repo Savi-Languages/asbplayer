@@ -222,7 +222,7 @@ afterEach(() => {
     jest.restoreAllMocks();
     document.body.replaceChildren();
 });
-it('saves untimed imported text without invented timings and clears it on a track change', async () => {
+it('does not offer saving for untimed imported text and clears it on a track change', async () => {
     const p = new SpotifyPanel({ send, settings: async () => ({ lang: 'ja', enabled: true, muted: false }) });
     p.start();
     await settle();
@@ -235,19 +235,12 @@ it('saves untimed imported text without invented timings and clears it on a trac
     const line = root.querySelector<HTMLButtonElement>('.lines button')!;
     line.click();
     await settle();
-    Array.from(root.querySelectorAll('button')).find((b) => b.textContent === 'Save selected line')!.disabled = false;
-    Array.from(root.querySelectorAll('button'))
-        .find((b) => b.textContent === 'Save selected line')!
-        .click();
+    const save = Array.from(root.querySelectorAll('button')).find((b) => b.textContent === 'Save selected line')!;
+    expect(save.disabled).toBe(true);
+    expect(save.title).toMatch(/timed/i);
+    save.click();
     await settle();
-    expect(sent.find((m) => m.command === 'savi-save-watch-interest')?.item).toMatchObject({
-        episodeId: `spotify:track:${id}`,
-        textTiming: 'untimed',
-        lineStartMs: 0,
-        lineEndMs: 0,
-        lineText: 'これはテストです',
-        kind: 'bookmark',
-    });
+    expect(sent.some((m) => m.command === 'savi-save-watch-interest')).toBe(false);
     const link = document.querySelector('a')!;
     link.href = '/episode/abcdefghijklmnopqrstuv';
     jest.advanceTimersByTime(250);
@@ -262,7 +255,7 @@ it('requires 1.5s paused continuous interest and rejects resume before the thres
     p.start();
     await settle();
     const root = document.querySelector('[data-savi-spotify]')!.shadowRoot!;
-    root.querySelector('textarea')!.value = '私のテスト';
+    root.querySelector('textarea')!.value = '00:00:00.000 --> 00:01:00.000\n私のテスト';
     Array.from(root.querySelectorAll('button'))
         .find((b) => b.textContent === 'Use this text')!
         .click();

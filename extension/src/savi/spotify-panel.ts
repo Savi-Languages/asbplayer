@@ -558,7 +558,7 @@ export class SpotifyPanel {
         this.previous = point;
         if (!next.playing && this.captureId) this.enqueueOps(this.segmenter?.pause() ?? []);
         if (next.playing || changed) this.cancelDwell();
-        this.bookmarkButton.disabled = !this.selected || !this.account;
+        this.updateBookmarkButton();
         this.replayButton.disabled = !this.selected || this.selected.timing !== 'timed' || !next.local;
         this.captureButton.disabled =
             this.captureBusy ||
@@ -660,11 +660,18 @@ export class SpotifyPanel {
         this.cancelDwell();
         this.selected = line;
         this.buttons.forEach((b, i) => b.setAttribute('aria-pressed', String(this.lines[i] === line)));
+        this.updateBookmarkButton();
         this.arm(line);
+    }
+    private updateBookmarkButton() {
+        this.bookmarkButton.disabled = !this.selected || this.selected.timing !== 'timed' || !this.account;
+        this.bookmarkButton.title =
+            this.selected?.timing === 'untimed' ? 'Saving requires timed lyrics or a timed transcript.' : '';
     }
     private arm(line: SpotifyLine) {
         this.cancelDwell();
         if (
+            line.timing !== 'timed' ||
             this.mode !== 'explore' ||
             !this.hoverEnabled ||
             !this.account ||
@@ -701,7 +708,7 @@ export class SpotifyPanel {
     private async save(kind: 'hover' | 'bookmark') {
         const line = this.selected,
             identity = this.state.identity;
-        if (!line || !identity || !this.account) return;
+        if (!line || line.timing !== 'timed' || !identity || !this.account) return;
         const account = this.account,
             key = `${account}:${identity.id}:${line.timing}:${line.start ?? line.text}`;
         if (kind === 'hover' && this.seen.has(key)) return;
