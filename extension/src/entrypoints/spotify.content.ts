@@ -14,15 +14,20 @@ export default defineContentScript({
         const panel = new SpotifyPanel({
             media: media.media,
             send: (message) => browser.runtime.sendMessage({ sender: 'savi-video', message }),
-            settings: async () => ({
-                lang: (await getCachedRoamingSettings()).targetLanguage,
-                enabled: await settings.getSingle('saviEncounterRecording'),
-                pauseOnHoverMode: await settings.getSingle('pauseOnHoverMode'),
-                autoCapture:
-                    (await settings.getSingle('saviCaptureEnabled')) &&
-                    (await settings.getSingle('saviAudioRecording')),
-                muted: (await mutedSites()).includes(location.hostname),
-            }),
+            settings: async () => {
+                const roaming = await getCachedRoamingSettings();
+                return {
+                    lang: roaming.targetLanguage,
+                    nativeLanguage: roaming.nativeLanguage,
+                    translate: await settings.getSingle('saviSpotifyTranslations'),
+                    enabled: await settings.getSingle('saviEncounterRecording'),
+                    pauseOnHoverMode: await settings.getSingle('pauseOnHoverMode'),
+                    autoCapture:
+                        (await settings.getSingle('saviCaptureEnabled')) &&
+                        (await settings.getSingle('saviAudioRecording')),
+                    muted: (await mutedSites()).includes(location.hostname),
+                };
+            },
         });
         panel.start();
         const listener = (request: any) => {

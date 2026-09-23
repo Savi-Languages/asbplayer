@@ -26,6 +26,8 @@ export interface SpotifyPanelDeps {
         muted: boolean;
         autoCapture?: boolean;
         pauseOnHoverMode?: PauseOnHoverMode;
+        translate?: boolean;
+        nativeLanguage?: string;
     }>;
 }
 /** One controller owns this document. Reuses Savi's account, outbox and capture API. */
@@ -111,6 +113,8 @@ export class SpotifyPanel {
     private menuButton = document.createElement('button');
     private reading?: SpotifyReadingSurface;
     private pauseOnHoverMode = PauseOnHoverMode.disabled;
+    private translate = false;
+    private nativeLanguage = '';
     constructor(private deps: SpotifyPanelDeps) {}
     start() {
         this.host.dataset.saviSpotify = 'true';
@@ -239,15 +243,18 @@ export class SpotifyPanel {
                     this.confirmedLanguages.get(this.state.identity?.id ?? '') ||
                     this.providerLanguages.get(this.state.identity?.id ?? '') ||
                     this.lang,
+                translationEnabled: this.translate,
+                nativeLanguage: this.nativeLanguage,
             }),
             (line) => {
                 if (this.selected !== line) this.select(line);
             },
-            async (text, sourceLang, context) => {
+            async (text, sourceLang, targetLang, context) => {
                 const response = await this.deps.send({
                     command: 'savi-subtitle-translate',
                     text,
                     sourceLang,
+                    targetLang,
                     context,
                 });
                 return response?.text;
@@ -318,6 +325,8 @@ export class SpotifyPanel {
             this.autoCapture =
                 settings.autoCapture === true && Boolean(this.account) && Boolean(this.lang) && !settings.muted;
             this.pauseOnHoverMode = settings.pauseOnHoverMode ?? PauseOnHoverMode.disabled;
+            this.translate = settings.translate === true;
+            this.nativeLanguage = settings.nativeLanguage?.trim() ?? '';
             this.hoverEnabled = config.enabled === true;
             this.mode = config.mode ?? 'watch';
             this.modeSelect.value = this.mode;
