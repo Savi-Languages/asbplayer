@@ -121,6 +121,9 @@ export default class VideoDataSyncController {
     private _autoSyncAttempted: boolean = false;
     private _saviAutoLoadAttempted: boolean = false;
     private _dataReceivedListener?: (event: Event) => void;
+    private _episodeSyncRetry?: number;
+    private _episodeSyncRetryAttempts = 0;
+    private _episodeSyncRetryLocation?: string;
     private _isTutorial: boolean;
 
     constructor(context: Binding, settings: SettingsProvider) {
@@ -154,6 +157,7 @@ export default class VideoDataSyncController {
         }
 
         this._dataReceivedListener = undefined;
+        this._resetEpisodeSyncRetry();
         this._syncedData = undefined;
         this._cleanupPlayBlocker();
         this._openedLocation = undefined;
@@ -226,6 +230,16 @@ export default class VideoDataSyncController {
             document.addEventListener('asbplayer-synced-data', this._dataReceivedListener, false);
         }
 
+        await this._dispatchSyncedDataRequest();
+    }
+
+    private async _dispatchSyncedDataRequest() {
+        const pageDelegate = await currentPageDelegate();
+
+        if (!this._context.hasPageScript || !pageDelegate?.isVideoPage()) {
+            return;
+        }
+
         if (pageDelegate.config.key === 'youtube') {
             const targetTranslationLanguageCodes =
                 (await this._settings.getSingle('streamingPages')).youtube.targetLanguages ?? [];
@@ -237,6 +251,35 @@ export default class VideoDataSyncController {
         } else {
             document.dispatchEvent(new CustomEvent('asbplayer-get-synced-data'));
         }
+    }
+
+    private _scheduleEpisodeSyncRetry() {
+        const location = window.location.href;
+
+        if (this._episodeSyncRetryLocation !== location) {
+            this._resetEpisodeSyncRetry();
+            this._episodeSyncRetryLocation = location;
+        }
+
+        if (this._episodeSyncRetry !== undefined || this._episodeSyncRetryAttempts >= 3) {
+            return;
+        }
+
+        this._episodeSyncRetryAttempts++;
+        this._episodeSyncRetry = window.setTimeout(() => {
+            this._episodeSyncRetry = undefined;
+            void this._dispatchSyncedDataRequest();
+        }, 500);
+    }
+
+    private _resetEpisodeSyncRetry() {
+        if (this._episodeSyncRetry !== undefined) {
+            window.clearTimeout(this._episodeSyncRetry);
+        }
+
+        this._episodeSyncRetry = undefined;
+        this._episodeSyncRetryAttempts = 0;
+        this._episodeSyncRetryLocation = undefined;
     }
 
     /**
@@ -427,8 +470,11 @@ export default class VideoDataSyncController {
                 data.episodeId,
                 currentEpisodeId ?? '(not ready)'
             );
+            this._scheduleEpisodeSyncRetry();
             return;
         }
+
+        this._resetEpisodeSyncRetry();
 
         const wasLoading = this._syncedData?.subtitles === undefined;
         this._syncedData = data;
@@ -618,7 +664,12 @@ export default class VideoDataSyncController {
                     );
                 }
 
-                await this._syncData(nativeTrack === undefined ? [track] : [track, nativeTrack]);
+                const loaded = await this._syncData(nativeTrack === undefined ? [track] : [track, nativeTrack]);
+
+                if (!loaded) {
+                    return false;
+                }
+
                 await this._rememberSaviLanguageForCapture(targetLanguage);
                 return true;
             }
@@ -1070,13 +1121,28 @@ export default class VideoDataSyncController {
     private async _syncDataArray(data: ConfirmedVideoDataSubtitleTrack[], syncWithAsbplayerId?: string) {
         try {
             let subtitles: SerializedSubtitleFile[] = [];
+            const sourceEpisodeId = this._syncedData?.episodeId;
 
             for (let i = 0; i < data.length; i++) {
                 const { name, language, extension, url, localFile } = data[i];
-                const subtitleFiles = await this._subtitlesForUrl(name, language, extension, url, localFile);
+                const subtitleFiles = await this._subtitlesForUrl(
+                    name,
+                    language,
+                    extension,
+                    url,
+                    localFile,
+                    sourceEpisodeId
+                );
                 if (subtitleFiles !== undefined) {
                     subtitles.push(...subtitleFiles);
                 }
+            }
+
+            if (!videoDataMatchesEpisode(sourceEpisodeId, deriveEpisodeId(window.location.href, document.title))) {
+                console.info(
+                    '[savi subtitle sync] page changed while picker subtitles were downloading; discarding them'
+                );
+                return false;
             }
 
             await this._syncSubtitles(
