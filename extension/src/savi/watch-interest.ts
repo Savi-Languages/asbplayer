@@ -105,14 +105,11 @@ export class SaviWatchInterest {
             if (nextMode !== this.mode) this.revealed = false;
             this.mode = nextMode;
             this.updateMode();
-            if (this.enabled) this.showControls();
-            else {
-                this.hideControls();
-                this.clear();
-            }
+            this.showControls();
+            if (!this.enabled) this.clear();
         } catch {
             this.enabled = false;
-            this.hideControls();
+            this.showControls();
             this.clear();
         }
     }
@@ -256,7 +253,7 @@ export class SaviWatchInterest {
         this.anchor?.schedule();
     }
     private showControls() {
-        if (!this.enabled || !this.toolbarHost) return;
+        if (!this.toolbarHost) return;
         this.toolbarHost.style.display = 'block';
         this.anchor?.schedule();
         if (this.controlsCollapsed) this.scheduleControlsHide();
