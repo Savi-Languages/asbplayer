@@ -1,4 +1,3 @@
-import { subtitleTokens } from "./token-cache";
 // Live-subtitle hover dictionary: hover a word on the video's asbplayer
 // subtitle overlay and see (a) the word boxed under the cursor, Language
 // Reactor-style, and (b) its dictionary entry in a popup.
@@ -404,6 +403,7 @@ function positionPopup(popup: HTMLDivElement, arrow: HTMLDivElement, word: DOMRe
 const firstDictGloss = (entries: SaviDictEntry[]): string => entries[0]?.senses?.[0]?.glosses?.[0] ?? '';
 
 export class SaviHoverDictionary {
+    private readonly _tokenizeCache = new Map<string, SaviToken[]>();
     // AI segmentations only — a rule-based fallback is never cached (see _segment).
     private readonly _segmentCache = new Map<string, SaviToken[]>();
     private readonly _explainCache = new Map<string, string | null>();
@@ -416,9 +416,6 @@ export class SaviHoverDictionary {
     private _popupContent: HTMLDivElement | null = null;
     private _arrow: HTMLDivElement | null = null;
     private _highlight: HTMLDivElement | null = null;
-    /** The subtitle line element the highlight box currently sits on. Moves
-     *  within it glide; a move to any other line snaps. See _highlightRect. */
-    private _highlightLine: HTMLElement | null = null;
     private _bridge: HTMLDivElement | null = null; // transparent gap-cover from word up to popup
     private _toastEl: HTMLDivElement | null = null; // standalone mine-result toast (outlives the popup)
     private _toastTimer: number | null = null;
@@ -633,8 +630,17 @@ export class SaviHoverDictionary {
         this._positionBridge(anchor);
     }
 
-    private _tokenize(text: string): Promise<SaviToken[]> {
-        return subtitleTokens.get(LANG, text);
+    private async _tokenize(text: string): Promise<SaviToken[]> {
+        const cached = this._tokenizeCache.get(text);
+        if (cached) return cached;
+        const res = await sendToBackground<SaviTokenizeResponse>({ command: 'savi-tokenize', lang: LANG, text });
+        const tokens = res.tokens ?? [];
+        if (this._tokenizeCache.size >= TOKENIZE_CACHE_MAX) {
+            const oldest = this._tokenizeCache.keys().next().value;
+            if (oldest !== undefined) this._tokenizeCache.delete(oldest);
+        }
+        this._tokenizeCache.set(text, tokens);
+        return tokens;
     }
 
     /** AI segmentation for a line (cached). `tokens` is null when the daemon fell
@@ -1080,32 +1086,11 @@ export class SaviHoverDictionary {
         const padX = 1;
         const padY = 3;
         const el = this._ensureHighlight();
-        // The box GLIDES between words (60ms transition on left/top/width/height)
-        // so it reads as one cursor sliding along a line. That's right within a
-        // line and wrong across lines: hopping from a word on the Japanese line
-        // to a word on the English line beneath — or to the next cue's line
-        // after the previous one is gone — slid the box diagonally across the
-        // video, which reads as the subtitle scrolling. Same story when the box
-        // was last left on some far-away word and reappears here. Glide only
-        // when staying on the same line element; otherwise snap, and re-enable
-        // the transition on the next frame so the NEXT within-line move glides.
-        const sameLine = this._highlightLine === line && el.style.display !== 'none';
-        if (!sameLine) {
-            el.style.transition = 'none';
-        }
-        this._highlightLine = line;
         el.style.left = `${rect.left - padX}px`;
         el.style.top = `${rect.top - padY}px`;
         el.style.width = `${Math.max(0, rect.width - trailing + padX * 2)}px`;
         el.style.height = `${rect.height + padY * 2}px`;
         el.style.display = 'block';
-        if (!sameLine) {
-            // Force the style flush at the snapped position before restoring
-            // the transition, or the browser coalesces both writes and glides
-            // anyway.
-            void el.offsetWidth;
-            el.style.transition = HIGHLIGHT_STYLE.transition ?? '';
-        }
         // The subtitle container forces cursor:text; signal the word is
         // clickable with a pointer while it's boxed.
         if (this._cursorLine !== line) {
@@ -1131,7 +1116,6 @@ export class SaviHoverDictionary {
 
     private _hideHighlight() {
         if (this._highlight) this._highlight.style.display = 'none';
-        this._highlightLine = null;
         if (this._cursorLine) {
             this._cursorLine.style.cursor = '';
             this._cursorLine = null;
