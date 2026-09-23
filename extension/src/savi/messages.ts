@@ -492,11 +492,12 @@ export interface SaviGlossTranslateMessage {
     readonly context?: string;
 }
 
-/** A whole subtitle translated into English, separate from word glosses. */
+/** A whole subtitle translated into the learner's native language, separate from word glosses. */
 export interface SaviSubtitleTranslateMessage {
     readonly command: 'savi-subtitle-translate';
     readonly text: string;
     readonly sourceLang: string;
+    readonly targetLang: string;
     readonly context?: string;
 }
 

@@ -116,4 +116,34 @@ describe('local immersion modes', () => {
         (storedAccount as jest.Mock).mockResolvedValue(null);
         expect(await watchInterestConfig('local')).toMatchObject({ mode: 'watch' });
     });
+    test('writes locally first and then syncs the timestamped choice to cloud', async () => {
+        jest.spyOn(Date, 'now').mockReturnValue(1234);
+        await expect(setImmersionMode('local', 'listen')).resolves.toMatchObject({ ok: true, mode: 'listen' });
+        expect(Object.values(pending)).toContainEqual({ mode: 'listen', at: 1234 });
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(request).toHaveBeenCalledWith('/v2/settings/saviImmersionMode', 'PUT', {
+            value: 'listen',
+            updatedAtMs: 1234,
+        });
+        jest.restoreAllMocks();
+    });
+    test('a newer cloud timestamp replaces stale local shadow state', async () => {
+        pending['saviLocalImmersionMode:["local","a"]'] = { mode: 'listen', at: 100 };
+        request.mockImplementation(async (path: string) => {
+            if (path === '/v2/settings')
+                return {
+                    settings: {
+                        saviSavePausedHovers: { value: true },
+                        saviImmersionMode: { value: 'explore', updatedAtMs: 200 },
+                    },
+                };
+            return {};
+        });
+        expect(await watchInterestConfig('local')).toMatchObject({ mode: 'listen' });
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(await watchInterestConfig('local')).toMatchObject({ mode: 'explore' });
+    });
 });

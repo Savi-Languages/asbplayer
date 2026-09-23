@@ -171,6 +171,7 @@ const SaviSettingsTab: React.FC<Props> = ({
         saviAiSegmentation,
         saviLanguageHushButton,
         saviGlossing,
+        saviSpotifyTranslations,
         saviHoverGloss,
         saviEncounterRecording,
         saviAudioRecording,
@@ -362,6 +363,16 @@ const SaviSettingsTab: React.FC<Props> = ({
                     />
                 }
                 label={'Show translations above words you haven’t learned yet (requires sign-in)'}
+                labelPlacement="start"
+            />
+            <SwitchLabelWithHoverEffect
+                control={
+                    <Switch
+                        checked={saviSpotifyTranslations}
+                        onChange={(e) => onSettingChanged('saviSpotifyTranslations', e.target.checked)}
+                    />
+                }
+                label={'Translate nearby Spotify transcript lines into your native language (requires sign-in)'}
                 labelPlacement="start"
             />
             <SwitchLabelWithHoverEffect

@@ -1,5 +1,6 @@
 import { captureWatchScreenshot } from './watch-screenshot';
 import { lineElement } from './hover-dict';
+import { VideoAnchor } from './anchor';
 
 interface Cue {
     text: string;
@@ -20,6 +21,7 @@ const normalize = (text: string) =>
         .replace(/<[^>]*>/g, '')
         .replace(/\s+/g, '')
         .trim();
+const CONTROL_IDLE_MS = 2500;
 /** Only exact, current primary subtitle cues qualify; overlay notifications don't. */
 export function interestCue(cues: readonly Cue[], text: string, timeMs: number): Cue | undefined {
     return cues.find(
@@ -33,6 +35,7 @@ export class SaviWatchInterest {
     private toolbar?: HTMLElement;
     private toolbarHost?: HTMLElement;
     private revealButton?: HTMLButtonElement;
+    private detailsButton?: HTMLButtonElement;
     private status?: HTMLElement;
     private availability?: HTMLElement;
     private replayButton?: HTMLButtonElement;
@@ -48,6 +51,9 @@ export class SaviWatchInterest {
     private element: HTMLElement | null = null;
     private timer?: ReturnType<typeof setTimeout>;
     private refresh?: ReturnType<typeof setInterval>;
+    private controlTimer?: ReturnType<typeof setTimeout>;
+    private controlsCollapsed = true;
+    private anchor?: VideoAnchor;
     private saved = new Set<string>();
     constructor(private readonly deps: Sources) {}
     start(lang: string) {
@@ -76,6 +82,8 @@ export class SaviWatchInterest {
         this.savingMode = false;
         this.savingBookmark = false;
         this.toolbarHost?.remove();
+        this.anchor?.destroy();
+        this.anchor = undefined;
         this.toolbarHost = undefined;
         this.toolbar = undefined;
         this.mode = 'watch';
@@ -87,9 +95,12 @@ export class SaviWatchInterest {
         this.account = '';
         this.saved.clear();
         this.clear();
+        clearTimeout(this.controlTimer);
+        this.controlTimer = undefined;
         clearInterval(this.refresh);
         document.removeEventListener('mousemove', this.move);
         document.removeEventListener('mouseout', this.leave);
+        document.removeEventListener('pointerdown', this.outsidePointer, true);
         window.removeEventListener('blur', this.clear);
         for (const event of ['play', 'seeking']) this.deps.video.removeEventListener(event, this.clear);
         this.deps.video.removeEventListener('pause', this.arm);
@@ -112,14 +123,19 @@ export class SaviWatchInterest {
             if (nextMode !== this.mode) this.revealed = false;
             this.mode = nextMode;
             this.updateMode();
+            this.showControls();
             if (!this.enabled) this.clear();
         } catch {
             this.enabled = false;
+            this.showControls();
             this.clear();
         }
     }
     private fullscreen = () => {
-        if (this.toolbarHost) (document.fullscreenElement ?? document.body).append(this.toolbarHost);
+        if (this.toolbarHost) {
+            (document.fullscreenElement ?? document.body).append(this.toolbarHost);
+            this.anchor?.schedule();
+        }
     };
     private updateMode() {
         this.deps.onModeChange?.(this.mode, this.mode === 'listen' && !this.revealed);
@@ -260,8 +276,7 @@ export class SaviWatchInterest {
         host.dataset.saviImmersion = 'true';
         Object.assign(host.style, {
             position: 'fixed',
-            left: '16px',
-            bottom: '90px',
+            display: 'none',
             zIndex: '2147483600',
             fontSize: '12px',
         });
@@ -328,16 +343,9 @@ export class SaviWatchInterest {
         for (const control of [this.revealButton, this.replayButton, this.bookmarkButton])
             control.setAttribute('aria-describedby', 'availability');
         const details = button('−', () => {
-            const collapsed = box.dataset.collapsed !== 'true';
-            box.dataset.collapsed = String(collapsed);
-            for (const child of Array.from(box.children)) {
-                if (child !== details) (child as HTMLElement).style.display = collapsed ? 'none' : '';
-            }
-            details.textContent = collapsed ? 'Savi modes' : '−';
-            details.setAttribute('aria-expanded', String(!collapsed));
-            details.setAttribute('aria-label', collapsed ? 'Expand study controls' : 'Collapse study controls');
+            this.setControlsCollapsed(!this.controlsCollapsed);
         });
-        details.setAttribute('aria-label', 'Expand study controls');
+        this.detailsButton = details;
         const status = document.createElement('span');
         status.setAttribute('role', 'status');
         box.append(status);
@@ -347,9 +355,45 @@ export class SaviWatchInterest {
         (document.fullscreenElement ?? document.body).append(host);
         this.toolbarHost = host;
         this.toolbar = box;
-        details.click();
+        this.anchor = new VideoAnchor(host, () => this.deps.video, 'top-left', 18);
+        document.addEventListener('pointerdown', this.outsidePointer, true);
+        this.setControlsCollapsed(true);
         this.updateMode();
     }
+    private setControlsCollapsed(collapsed: boolean) {
+        this.controlsCollapsed = collapsed;
+        if (!this.toolbar || !this.detailsButton) return;
+        this.toolbar.dataset.collapsed = String(collapsed);
+        for (const child of Array.from(this.toolbar.children)) {
+            if (child !== this.detailsButton) (child as HTMLElement).style.display = collapsed ? 'none' : '';
+        }
+        this.detailsButton.textContent = collapsed ? 'Savi modes' : '−';
+        this.detailsButton.setAttribute('aria-expanded', String(!collapsed));
+        this.detailsButton.setAttribute('aria-label', collapsed ? 'Expand study controls' : 'Collapse study controls');
+        if (collapsed) this.scheduleControlsHide();
+        else clearTimeout(this.controlTimer);
+        this.anchor?.schedule();
+    }
+    private showControls() {
+        if (!this.toolbarHost) return;
+        this.toolbarHost.style.display = 'block';
+        this.anchor?.schedule();
+        if (this.controlsCollapsed) this.scheduleControlsHide();
+    }
+    private hideControls() {
+        clearTimeout(this.controlTimer);
+        this.controlTimer = undefined;
+        if (this.toolbarHost) this.toolbarHost.style.display = 'none';
+    }
+    private scheduleControlsHide() {
+        clearTimeout(this.controlTimer);
+        if (!this.controlsCollapsed) return;
+        this.controlTimer = setTimeout(() => this.hideControls(), CONTROL_IDLE_MS);
+    }
+    private outsidePointer = (event: Event) => {
+        if (this.controlsCollapsed || !this.toolbarHost || event.composedPath().includes(this.toolbarHost)) return;
+        this.setControlsCollapsed(true);
+    };
     private async saveMoment(account: string, item: any) {
         const generation = this.generation;
         const time = this.deps.video.currentTime;
@@ -434,6 +478,7 @@ export class SaviWatchInterest {
         if (!this.element?.contains(event.relatedTarget as Node | null)) this.clear();
     };
     private move = (event: MouseEvent) => {
+        this.showControls();
         const element = lineElement(event.target);
         if (element === this.element) return;
         this.clear();
