@@ -491,11 +491,12 @@ export interface SaviGlossTranslateMessage {
     readonly context?: string;
 }
 
-/** A whole subtitle translated into English, separate from word glosses. */
+/** A whole subtitle translated into the learner's native language, separate from word glosses. */
 export interface SaviSubtitleTranslateMessage {
     readonly command: 'savi-subtitle-translate';
     readonly text: string;
     readonly sourceLang: string;
+    readonly targetLang: string;
     readonly context?: string;
 }
 
@@ -595,7 +596,21 @@ export interface SaviCommand<M> {
 }
 
 // Target attention features are independent of capture success and never delay it.
-export interface SaviEpisodeTargetsMessage { command: 'savi-episode-targets'; episodeId: string; title: string; show?: string; lang: string }
-export interface SaviTargetFeedbackMessage { command: 'savi-target-feedback'; account: string; actions: import('./target-types').TargetFeedback[] }
+export interface SaviEpisodeTargetsMessage {
+    command: 'savi-episode-targets';
+    episodeId: string;
+    title: string;
+    show?: string;
+    lang: string;
+}
+export interface SaviTargetFeedbackMessage {
+    command: 'savi-target-feedback';
+    account: string;
+    actions: import('./target-types').TargetFeedback[];
+}
 
-export interface SaviMineTargetsMessage { command: 'savi-mine-targets'; account: string; mines: import('./target-types').HeardTargetMine[] }
+export interface SaviMineTargetsMessage {
+    command: 'savi-mine-targets';
+    account: string;
+    mines: import('./target-types').HeardTargetMine[];
+}

@@ -5,15 +5,27 @@ const localModeKey = (base: string, account?: string) =>
     `saviLocalImmersionMode:${JSON.stringify([base, account ?? null])}`;
 const validMode = (mode: unknown): mode is string =>
     typeof mode === 'string' && ['watch', 'explore', 'listen'].includes(mode);
+type LocalMode = { mode: string; at: number };
+const localModeRecord = (value: unknown): LocalMode | undefined => {
+    if (validMode(value)) return { mode: value, at: 0 }; // pre-timestamp builds
+    if (
+        typeof value === 'object' &&
+        value !== null &&
+        validMode((value as LocalMode).mode) &&
+        Number.isFinite((value as LocalMode).at)
+    )
+        return { mode: (value as LocalMode).mode, at: Math.max(0, (value as LocalMode).at) };
+    return undefined;
+};
 const PREFIX = 'saviWatchInterest:';
 const cacheKey = (base: string, user: string) => `saviWatchInterestPreference:${base}:${user}`;
 export async function watchInterestConfig(url: string) {
     const account = await storedAccount();
     const base = resolveCloudBase(url);
     const localKey = localModeKey(base, account?.userId);
-    const localMode = (await browser.storage.local.get(localKey))[localKey];
-    if (!account) return { account: undefined, enabled: false, mode: validMode(localMode) ? localMode : 'watch' };
-    if (validMode(localMode)) {
+    const localMode = localModeRecord((await browser.storage.local.get(localKey))[localKey]);
+    if (!account) return { account: undefined, enabled: false, mode: localMode?.mode ?? 'watch' };
+    if (localMode) {
         // A local choice never waits on the network. Refresh consent separately;
         // selecting Explore is not consent to collect paused hovers.
         void refreshAccountConfig(url, account.userId).catch(() => {});
@@ -21,7 +33,7 @@ export async function watchInterestConfig(url: string) {
         const cached = (await browser.storage.local.get(key))[key] as { enabled?: boolean; at?: number } | undefined;
         return {
             account: account.userId,
-            mode: localMode,
+            mode: localMode.mode,
             enabled: cached?.enabled === true && Date.now() - (cached.at ?? 0) < 86400000,
         };
     }
@@ -34,26 +46,40 @@ async function refreshAccountConfig(url: string, userId: string) {
         const cloud = await targetCloud(url);
         if (cloud.user !== userId) throw new Error('Account changed');
         const settings = (await cloud.request('/v2/settings')).settings;
-        const mode = ['watch', 'explore', 'listen'].includes(settings?.saviImmersionMode?.value)
+        const cloudMode = ['watch', 'explore', 'listen'].includes(settings?.saviImmersionMode?.value)
             ? settings.saviImmersionMode.value
             : 'watch';
+        const cloudModeAt = Number.isFinite(settings?.saviImmersionMode?.updatedAtMs)
+            ? settings.saviImmersionMode.updatedAtMs
+            : 0;
         const enabled = settings?.saviSavePausedHovers?.value === true;
         await cloud.check();
         if ((await storedAccount())?.userId !== userId) throw new Error('Account changed');
-        await browser.storage.local.set({ [key]: { enabled, mode, at: Date.now() } });
         const localKey = localModeKey(base, userId);
-        const latest = (await browser.storage.local.get(localKey))[localKey];
-        return { account: cloud.user, enabled, mode: validMode(latest) ? latest : mode };
+        const local = localModeRecord((await browser.storage.local.get(localKey))[localKey]);
+        const localWins = local !== undefined && local.at >= cloudModeAt;
+        const mode = localWins ? local.mode : cloudMode;
+        const modeAt = localWins ? local.at : cloudModeAt;
+        if (localWins && local.at > cloudModeAt) {
+            await cloud.request('/v2/settings/saviImmersionMode', 'PUT', {
+                value: local.mode,
+                updatedAtMs: local.at,
+            });
+        } else if (!localWins) {
+            await browser.storage.local.set({ [localKey]: { mode: cloudMode, at: cloudModeAt } });
+        }
+        await browser.storage.local.set({ [key]: { enabled, mode, modeAt, at: Date.now() } });
+        return { account: cloud.user, enabled, mode };
     } catch {
         // Offline continuation is allowed only after explicit opt-in on this backend/account.
         const cached = (await browser.storage.local.get(key))[key] as
             | { enabled?: boolean; mode?: string; at: number }
             | undefined;
         const localKey = localModeKey(base, userId);
-        const latest = (await browser.storage.local.get(localKey))[localKey];
+        const latest = localModeRecord((await browser.storage.local.get(localKey))[localKey]);
         return {
             account: userId,
-            mode: validMode(latest) ? latest : (cached?.mode ?? 'watch'),
+            mode: latest?.mode ?? cached?.mode ?? 'watch',
             enabled: cached?.enabled === true && Date.now() - (cached?.at ?? 0) < 86400000,
         };
     }
@@ -147,7 +173,16 @@ export function bindWatchInterestDrain(url: () => Promise<string>) {
 export async function setImmersionMode(url: string, mode: string) {
     if (!validMode(mode)) return { ok: false };
     const account = await storedAccount();
+    const at = Date.now();
     const key = localModeKey(resolveCloudBase(url), account?.userId);
-    await browser.storage.local.set({ [key]: mode });
+    await browser.storage.local.set({ [key]: { mode, at } });
+    if (account) {
+        void targetCloud(url)
+            .then(async (cloud) => {
+                if (cloud.user !== account.userId || (await storedAccount())?.userId !== account.userId) return;
+                await cloud.request('/v2/settings/saviImmersionMode', 'PUT', { value: mode, updatedAtMs: at });
+            })
+            .catch(() => {});
+    }
     return { ok: true, mode };
 }

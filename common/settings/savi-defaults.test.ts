@@ -14,5 +14,6 @@ describe('savi setting defaults', () => {
         // the prompt grew a ✕ that declines it per-site. So it is offered
         // again; turning it off is now a preference, not damage control.
         expect(defaultSettings.saviLanguageHushButton).toBe(true);
+        expect(defaultSettings.saviSpotifyTranslations).toBe(false);
     });
 });

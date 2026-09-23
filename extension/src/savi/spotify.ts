@@ -58,9 +58,24 @@ function time(s: string): number | undefined {
         return;
     return Math.round(p.reduce((a, b) => a * 60 + b, 0) * 1000);
 }
+const decodeEntity = (_match: string, entity: string): string => {
+    const named: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+    if (entity in named) return named[entity];
+    const numeric = entity.startsWith('#x')
+        ? Number.parseInt(entity.slice(2), 16)
+        : entity.startsWith('#')
+          ? Number.parseInt(entity.slice(1), 10)
+          : NaN;
+    try {
+        return Number.isInteger(numeric) && numeric > 0 && numeric <= 0x10ffff ? String.fromCodePoint(numeric) : _match;
+    } catch {
+        return _match;
+    }
+};
 const clean = (s: string) =>
     s
         .replace(/<[^>]*>/g, '')
+        .replace(/&(#(?:x[0-9a-f]+|\d+)|amp|lt|gt|quot|apos|nbsp);/giu, decodeEntity)
         .trim()
         .slice(0, 4000);
 /** Spotify may insert spaces between Japanese characters in generated text.
