@@ -244,28 +244,31 @@ export class SaviEncounterReporter {
             this._closeReveal(reveal);
         }
         const message: SaviWatchedLineMessage = {
-                command: 'savi-watched-line',
-                lang: line.lang,
-                text: line.text,
-                episodeId: line.episodeId,
-                lineStartMs: line.lineStartMs,
-                occurredAtMs: line.occurredAtMs,
-                glossedWords: this._deps.glossedEntries(line.text, line.track),
-                // A retracted (mined) reveal sends NO dwell rather than a
-                // zero: absent means "no qualifying dwell claimed", which is
-                // the case we want, while 0 would be a measurement we
-                // deliberately declined to make.
-                hoverGlossedWords: [...line.hovered].map(([word, reveal]) =>
-                    reveal.retracted
-                        ? { word, gloss: reveal.gloss }
-                        : { word, gloss: reveal.gloss, dwellMs: reveal.longestMs }
-                ),
-            };
-        this._deps.send(message).then(response => {
-            if (!(response as {ok?:boolean})?.ok) throw new Error('Heard line was not acknowledged');
-            this._noteDelivered();
-            this._deps.onHeardAcknowledged?.(message);
-        }).catch(e => this._noteFailure(e));
+            command: 'savi-watched-line',
+            lang: line.lang,
+            text: line.text,
+            episodeId: line.episodeId,
+            lineStartMs: line.lineStartMs,
+            occurredAtMs: line.occurredAtMs,
+            glossedWords: this._deps.glossedEntries(line.text, line.track),
+            // A retracted (mined) reveal sends NO dwell rather than a
+            // zero: absent means "no qualifying dwell claimed", which is
+            // the case we want, while 0 would be a measurement we
+            // deliberately declined to make.
+            hoverGlossedWords: [...line.hovered].map(([word, reveal]) =>
+                reveal.retracted
+                    ? { word, gloss: reveal.gloss }
+                    : { word, gloss: reveal.gloss, dwellMs: reveal.longestMs }
+            ),
+        };
+        this._deps
+            .send(message)
+            .then((response) => {
+                if (!(response as { ok?: boolean })?.ok) throw new Error('Heard line was not acknowledged');
+                this._noteDelivered();
+                this._deps.onHeardAcknowledged?.(message);
+            })
+            .catch((e) => this._noteFailure(e));
     }
 
     private _noteDelivered(): void {
