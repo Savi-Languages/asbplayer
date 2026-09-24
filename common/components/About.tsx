@@ -221,15 +221,15 @@ const About = ({ appVersion, extensionVersion }: Props) => {
             <Box style={{ width: '100%', textAlign: 'center' }}>
                 <LogoIcon style={{ width: 48, height: 48 }} />
                 <br />
-                <Link variant="h5" href="https://github.com/asbplayer/asbplayer">
-                    asbplayer
+                <Link variant="h5" href="https://github.com/Savi-Languages/asbplayer">
+                    Savi
                 </Link>
                 <br />
                 {appVersion && (
                     <>
                         <Typography variant="caption">
                             {t('about.appVersion')}{' '}
-                            <Link href={`https://github.com/asbplayer/asbplayer/commit/${appVersion}`}>
+                            <Link href={`https://github.com/Savi-Languages/asbplayer/commit/${appVersion}`}>
                                 {appVersion}
                             </Link>
                         </Typography>
@@ -239,98 +239,118 @@ const About = ({ appVersion, extensionVersion }: Props) => {
                 {extensionVersion && (
                     <Typography variant="caption">
                         {t('about.extensionVersion')}{' '}
-                        <Link href={`https://github.com/asbplayer/asbplayer/releases/tag/v${extensionVersion}`}>
+                        <Link href={`https://github.com/Savi-Languages/asbplayer/releases/tag/v${extensionVersion}`}>
                             {extensionVersion}
                         </Link>
                     </Typography>
                 )}
             </Box>
-            <p />
-            <SettingsSection>{t('about.license')}</SettingsSection>
-            <Paper variant="outlined" style={{ padding: theme.spacing(2), height: 'auto' }}>
-                <Typography variant="body2">
-                    MIT License
-                    <br />
-                    <br />
-                    Copyright (c) 2020-2026 asbplayer authors
-                    <br />
-                    <br />
-                    Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
-                    associated documentation files (the &quot;Software&quot;), to deal in the Software without
-                    restriction, including without limitation the rights to use, copy, modify, merge, publish,
-                    distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the
-                    Software is furnished to do so, subject to the following conditions:
-                    <br />
-                    <br />
-                    The above copyright notice and this permission notice shall be included in all copies or substantial
-                    portions of the Software.
-                    <br />
-                    <br />
-                    THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
-                    INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-                    NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES
-                    OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-                    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+            <Typography variant="body1" color="text.secondary" sx={{ my: 3 }}>
+                Your watching companion for learning with subtitles. Explore words, replay a line, and save useful
+                moments for later.
+            </Typography>
+            <Box component="details" sx={{ border: 1, borderColor: 'divider', borderRadius: 2, p: 2 }}>
+                <Box
+                    component="summary"
+                    sx={{
+                        cursor: 'pointer',
+                        fontWeight: 650,
+                        '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: 4 },
+                    }}
+                >
+                    Open-source licenses
+                </Box>
+                <Typography variant="body2" color="text.secondary" sx={{ my: 3 }}>
+                    Savi is built on the open-source asbplayer project. The original authors and their MIT license are
+                    credited below.
                 </Typography>
-            </Paper>
-            <br />
-            <SettingsSection>{t('about.deps')}</SettingsSection>
-            <TableContainer variant="outlined" component={Paper} style={{ height: 'auto' }}>
-                <Table style={{ margin: 0, padding: 0 }}>
-                    <TableHead>
-                        <TableRow>
-                            <TableCell>{t('about.depName')}</TableCell>
-                            <TableCell>{t('about.license')}</TableCell>
-                            <TableCell>{t('about.purpose')}</TableCell>
-                        </TableRow>
-                    </TableHead>
-                    <TableBody>
-                        {dependencies
-                            .filter((d) => !d.extension || extensionVersion !== undefined)
-                            .map((d, index) => {
-                                let alreadyRenderedPurpose: boolean;
+                <SettingsSection>{t('about.license')}</SettingsSection>
+                <Paper variant="outlined" style={{ padding: theme.spacing(2), height: 'auto' }}>
+                    <Typography variant="body2">
+                        MIT License
+                        <br />
+                        <br />
+                        Copyright (c) 2020-2026 asbplayer authors
+                        <br />
+                        <br />
+                        Permission is hereby granted, free of charge, to any person obtaining a copy of this software
+                        and associated documentation files (the &quot;Software&quot;), to deal in the Software without
+                        restriction, including without limitation the rights to use, copy, modify, merge, publish,
+                        distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the
+                        Software is furnished to do so, subject to the following conditions:
+                        <br />
+                        <br />
+                        The above copyright notice and this permission notice shall be included in all copies or
+                        substantial portions of the Software.
+                        <br />
+                        <br />
+                        THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+                        INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE
+                        AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+                        DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+                        OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+                    </Typography>
+                </Paper>
+                <br />
+                <SettingsSection>{t('about.deps')}</SettingsSection>
+                <TableContainer variant="outlined" component={Paper} style={{ height: 'auto' }}>
+                    <Table style={{ margin: 0, padding: 0 }}>
+                        <TableHead>
+                            <TableRow>
+                                <TableCell>{t('about.depName')}</TableCell>
+                                <TableCell>{t('about.license')}</TableCell>
+                                <TableCell>{t('about.purpose')}</TableCell>
+                            </TableRow>
+                        </TableHead>
+                        <TableBody>
+                            {dependencies
+                                .filter((d) => !d.extension || extensionVersion !== undefined)
+                                .map((d, index) => {
+                                    let alreadyRenderedPurpose: boolean;
 
-                                if (renderedPurpose[d.purpose] === undefined) {
-                                    alreadyRenderedPurpose = false;
-                                    purposeIndex++;
-                                } else {
-                                    alreadyRenderedPurpose = true;
-                                }
+                                    if (renderedPurpose[d.purpose] === undefined) {
+                                        alreadyRenderedPurpose = false;
+                                        purposeIndex++;
+                                    } else {
+                                        alreadyRenderedPurpose = true;
+                                    }
 
-                                renderedPurpose[d.purpose] = true;
+                                    renderedPurpose[d.purpose] = true;
 
-                                let CellComponent = TableCell;
-                                let nextPurpose = dependencies[index + 1]?.purpose;
+                                    let CellComponent = TableCell;
+                                    let nextPurpose = dependencies[index + 1]?.purpose;
 
-                                if (nextPurpose !== undefined && d.purpose !== nextPurpose) {
-                                    CellComponent = BorderedTableCell;
-                                }
+                                    if (nextPurpose !== undefined && d.purpose !== nextPurpose) {
+                                        CellComponent = BorderedTableCell;
+                                    }
 
-                                const isLastPurposeCell = d.purpose === dependencies[dependencies.length - 1].purpose;
+                                    const isLastPurposeCell =
+                                        d.purpose === dependencies[dependencies.length - 1].purpose;
 
-                                return (
-                                    <TableRow key={d.name}>
-                                        <CellComponent>
-                                            {d.projectLink && <Link href={d.projectLink}>{d.name}</Link>}
-                                            {!d.projectLink && d.name}
-                                        </CellComponent>
-                                        <CellComponent>
-                                            <Link href={d.licenseLink}>{d.license}</Link>
-                                        </CellComponent>
-                                        {!alreadyRenderedPurpose && (
-                                            <BorderedTableCell
-                                                style={!isLastPurposeCell ? {} : { borderBottom: 0 }}
-                                                rowSpan={dependencyPurposeCounts[d.purpose]}
-                                            >
-                                                {d.purpose}
-                                            </BorderedTableCell>
-                                        )}
-                                    </TableRow>
-                                );
-                            })}
-                    </TableBody>
-                </Table>
-            </TableContainer>
+                                    return (
+                                        <TableRow key={d.name}>
+                                            <CellComponent>
+                                                {d.projectLink && <Link href={d.projectLink}>{d.name}</Link>}
+                                                {!d.projectLink && d.name}
+                                            </CellComponent>
+                                            <CellComponent>
+                                                <Link href={d.licenseLink}>{d.license}</Link>
+                                            </CellComponent>
+                                            {!alreadyRenderedPurpose && (
+                                                <BorderedTableCell
+                                                    style={!isLastPurposeCell ? {} : { borderBottom: 0 }}
+                                                    rowSpan={dependencyPurposeCounts[d.purpose]}
+                                                >
+                                                    {d.purpose}
+                                                </BorderedTableCell>
+                                            )}
+                                        </TableRow>
+                                    );
+                                })}
+                        </TableBody>
+                    </Table>
+                </TableContainer>
+            </Box>
         </Box>
     );
 };

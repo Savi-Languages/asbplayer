@@ -1,3 +1,5 @@
+import { SaviWatchInterest } from '../savi/watch-interest';
+import { SaviTargetController } from '@/savi/target-controller';
 import {
     AckMessage,
     AnkiUiSavedState,
@@ -100,6 +102,8 @@ import { SaviCaptureController } from '../savi/capture-controller';
 import { SaviHoverDictionary } from '../savi/hover-dict';
 import { SaviGlossController } from '../savi/gloss';
 import { SaviGlossHover } from '../savi/gloss-hover';
+import { SaviHoverPause } from '../savi/hover-pause';
+import { replayFrom } from '../savi/replay';
 import { SaviControlsClearance } from '../savi/controls-clearance';
 import { SaviEncounterReporter } from '../savi/encounter-reporter';
 import { SaviRecordingGuardBanner } from '../savi/recording-guard-banner';
@@ -112,6 +116,7 @@ import { muteSite, siteKeyForUrl } from '../savi/muted-sites';
 import { dismissHushFor, isHushDismissed } from '../savi/hush-dismissed';
 import { getCachedRoamingSettings } from '../savi/cloud-settings';
 import { deriveEpisodeId } from '../savi/episode';
+import { shouldPauseForAsbplayerHover } from './pause-on-hover';
 
 let netflix = false;
 document.addEventListener('asbplayer-netflix-enabled', (e) => {
@@ -189,6 +194,8 @@ export default class Binding {
     private readonly _audioRecorder = new AudioRecorder();
     readonly bulkExportController: BulkExportController;
     readonly saviCaptureController: SaviCaptureController;
+    readonly saviWatchInterest: SaviWatchInterest;
+    readonly saviTargetController: SaviTargetController;
     readonly saviHoverDictionary: SaviHoverDictionary;
     readonly saviGlossController: SaviGlossController;
     readonly saviEncounterReporter: SaviEncounterReporter;
@@ -201,6 +208,7 @@ export default class Binding {
     readonly saviEngagementReporter: SaviEngagementReporter;
     readonly saviInteractionClock: SaviInteractionClock;
     readonly saviGlossHover: SaviGlossHover;
+    readonly saviHoverPause: SaviHoverPause;
     readonly saviControlsClearance: SaviControlsClearance;
     /** Last language verdict applied, so a re-sync that reaches the same
      *  conclusion doesn't restart the cluster (or re-log) on every poll. */
@@ -322,6 +330,28 @@ export default class Binding {
             subtitleFileName: () => this.subtitleFileName(),
             notify: (locKey, replacements) => this.subtitleController.notification(locKey, replacements),
         });
+        this.saviWatchInterest = new SaviWatchInterest({
+            video,
+            replay: (startMs) => replayFrom(this.video, startMs, (seconds) => this.seek(seconds), netflix),
+            onModeChange: (mode, hideText) => {
+                this.saviTargetController?.setImmersionMode(mode);
+                this.subtitleController.immersionHideSubtitles = hideText;
+                this.subtitleController.refreshCurrentSubtitle = true;
+            },
+            metadata: () => this.saviCaptureController.targetMetadata(),
+            subtitles: () => this.subtitleController.subtitles,
+            send: (message) => browser.runtime.sendMessage({ sender: 'savi-video', message }),
+        });
+        this.saviTargetController = new SaviTargetController({
+            video,
+            metadata: () => this.saviCaptureController.targetMetadata(),
+            subtitles: () => this.subtitleController.subtitles,
+            pause: () => this.pause(),
+            play: () => {
+                void this.play();
+            },
+            send: (message) => browser.runtime.sendMessage({ sender: 'savi-video', message }),
+        });
         this.saviHoverDictionary = new SaviHoverDictionary(
             () => this.video,
             () => this.subtitleController.subtitles,
@@ -349,15 +379,10 @@ export default class Binding {
             }
         );
         this.subtitleController.saviGloss = this.saviGlossController;
-        // On-demand hover glossing + the "hold the line at its end while hovering"
-        // pause. Uses the binding's Netflix-aware pause/play, and holds the line
-        // via the subtitle controller's willStopShowing signal below.
+        // Translation labels are mode-dependent; playback ownership is independent.
         this.saviGlossHover = new SaviGlossHover({
             gloss: this.saviGlossController,
             settings: this.settings,
-            video: () => this.video,
-            pause: () => this.pause(),
-            play: () => void this.play(),
             // For telling real subtitle lines from look-alike overlays (the
             // notification banner shares the subtitle DOM shape).
             subtitles: () => this.subtitleController.subtitles,
@@ -374,7 +399,17 @@ export default class Binding {
                 this.saviInteractionClock.note();
             },
         });
-        this.subtitleController.onSaviWillStopShowing = () => this.saviGlossHover.onWillStopShowing();
+        this.saviHoverPause = new SaviHoverPause({
+            video: this.video,
+            subtitles: () => this.subtitleController.subtitles,
+            enabled: () =>
+                this._saviLanguageActive &&
+                this.pauseOnHoverMode !== PauseOnHoverMode.disabled &&
+                !this.subtitleController.immersionHideSubtitles,
+            pause: () => this.pause(),
+            play: () => void this.play(),
+            overPopup: (x, y) => this.saviHoverDictionary.isOverHoverSurface(x, y),
+        });
         // Encounter recording (SV-18): every primary-track line that starts
         // showing is posted to the daemon as watch-time exposure, whether or not
         // audio capture is running.
@@ -397,6 +432,7 @@ export default class Binding {
                 }
             },
             onDeliveryRecovered: () => this.saviDaemonBanner.hide(),
+            onHeardAcknowledged: (message) => this.saviTargetController.onHeardAcknowledged(message),
         });
         this.subtitleController.onSaviStartedShowing = (subtitle) => {
             this.saviEncounterReporter.report(subtitle);
@@ -797,6 +833,8 @@ export default class Binding {
             this.saviGlossHover.stop();
             this.saviEncounterReporter.stop();
             this.saviEngagementReporter.stop();
+            this.saviWatchInterest.stop();
+            this.saviTargetController.stop();
             this.saviHoverDictionary.stop();
             this.saviControlsClearance.stop();
             this.saviCaptureController.unbind();
@@ -804,13 +842,28 @@ export default class Binding {
         }
 
         console.info(`[savi language-gate] savi on for this video (${verdict.reason})`);
+        this.saviTargetController.start(lang);
+        this.saviWatchInterest.start(lang);
         this.saviCaptureController.bind();
         this.saviHoverDictionary.start();
-        void this.saviGlossController.start();
-        void this.saviGlossHover.start();
+        this.syncImmersionGloss();
         void this.saviEncounterReporter.start();
         void this.saviEngagementReporter.start();
         this.saviControlsClearance.start();
+    }
+
+    private syncImmersionGloss() {
+        if (this._saviLanguageActive) {
+            void Promise.all([this.saviGlossController.start(), this.saviGlossHover.start()]).then(() => {
+                if (!this._saviLanguageActive) {
+                    this.saviGlossController.stop();
+                    this.saviGlossHover.stop();
+                }
+            });
+        } else {
+            this.saviGlossController.stop();
+            this.saviGlossHover.stop();
+        }
     }
 
     _bind() {
@@ -820,13 +873,13 @@ export default class Binding {
             this.videoDataSyncController.requestSubtitles();
         });
         this.subtitleController.bind();
+        this.saviHoverPause.start();
         this.dragController.bind(this);
         this.mobileGestureController.bind();
         this.bulkExportController.bind();
         this.saviCaptureController.bind();
         this.saviHoverDictionary.start();
-        void this.saviGlossController.start();
-        void this.saviGlossHover.start();
+        this.syncImmersionGloss();
         void this.saviEncounterReporter.start();
         this.saviInteractionClock.bind();
         void this.saviEngagementReporter.start();
@@ -965,14 +1018,15 @@ export default class Binding {
             // space of the subtitle container (hovering the blank area beside
             // the text should not pause).
             const overText = mouseEvent.target instanceof Element && mouseEvent.target.closest('[data-track]') !== null;
-            // When savi's on-demand hover feature is active it owns the hover-pause
-            // (holds the line at its END instead), so suppress asbplayer's IMMEDIATE
-            // pause-on-hover to avoid pausing the moment the cursor lands on a word.
+            // When Savi handles the hover, let playback reach the subtitle boundary
+            // before holding. asbplayer's immediate hover-pause remains the fallback.
             if (
-                overText &&
-                this.pauseOnHoverMode !== PauseOnHoverMode.disabled &&
-                !this.saviGlossHover.isActive() &&
-                !this.video.paused
+                shouldPauseForAsbplayerHover({
+                    overSubtitleText: overText,
+                    pauseOnHoverEnabled: this.pauseOnHoverMode !== PauseOnHoverMode.disabled,
+                    videoPaused: this.video.paused,
+                    saviGlossHoverActive: this.saviGlossHover.isActive(),
+                })
             ) {
                 this.video.pause();
                 this.pausedDueToHover = true;
@@ -1490,8 +1544,7 @@ export default class Binding {
         // others.
         void this.saviEncounterReporter.start();
         void this.saviEngagementReporter.start();
-        void this.saviGlossController.start();
-        void this.saviGlossHover.start();
+        this.syncImmersionGloss();
 
         if (convertNetflixRubyChanged || subtitleHtmlChanged) {
             this.subtitleController.cacheHtml();
@@ -1584,6 +1637,9 @@ export default class Binding {
         }
 
         this.saviCaptureController.unbind();
+        this.saviWatchInterest.stop();
+        this.saviHoverPause.stop();
+        this.saviTargetController.stop();
         this.saviHoverDictionary.stop();
         this.saviGlossController.stop();
         this.saviGlossHover.stop();

@@ -9,14 +9,19 @@ in the `savi` repo; this doc covers the _watching_ side.
 Most of what people want from Language Reactor is already in asbplayer — it's
 just behind keybinds. This is the map.
 
-## Hover dictionary (Yomitan) — the LR pop-up, but better
+## Hover dictionary — built-in Japanese lookup and optional Yomitan
 
-asbplayer renders its subtitle overlay as **selectable text**, which
+Savi's built-in Japanese hover dictionary uses the Savi daemon's tokenizer and
+dictionary through `savi-tokenize` and `savi-dict`. It does not require Yomitan
+or the optional Yomitan API configured in Annotation settings. Previously cached
+tokens and entries can remain available when the daemon is offline.
+
+The subtitle overlay also renders **selectable text**, which
 [Yomitan](https://yomitan.wiki) (the successor to Yomichan) scans for hover
-definitions — readings, meanings, pitch accent, frequency, one-tap Anki. It's
-strictly more capable than LR's built-in dictionary.
+definitions using dictionaries you install. Yomitan is an optional alternative
+for additional dictionaries, languages, pitch accent, frequency, and Anki tools.
 
-**Setup (once):**
+**Optional Yomitan setup:**
 
 1. Install **Yomitan** from your browser's add-on store — [Chrome Web
    Store](https://chromewebstore.google.com/detail/yomitan/likgccmbimhjbgkjambclfkhldnlhbnn),
@@ -38,7 +43,7 @@ strictly more capable than LR's built-in dictionary.
 3. Yomitan → Settings → **Scanning**: confirm hover/scan is enabled (default:
    hold no key, or Shift — your preference).
 
-**Use:** with asbplayer subtitles showing on the video, **hover a word in the
+**Yomitan use:** with Savi subtitles showing on the video, **hover a word in the
 subtitle** → Yomitan pops the definition. Works the same on Netflix and YouTube.
 
 > savi's native-subtitle-hider only hides the _streaming site's own_ captions
@@ -48,7 +53,7 @@ subtitle** → Yomitan pops the definition. Works the same on Netflix and YouTub
 
 ## Keybinds — the Language Reactor workflow
 
-All customizable in **asbplayer → Settings → Keyboard shortcuts**. Defaults:
+All customizable in **Savi → Settings → Keyboard shortcuts**. Defaults:
 
 savi rebinds the subtitle controls to a **WASD-style** layout (defaults below;
 all editable in **Settings → Keyboard shortcuts**):
@@ -69,10 +74,10 @@ all editable in **Settings → Keyboard shortcuts**):
 
 > Q is now a clean auto-pause toggle, so asbplayer's `Q+0`…`Q+5` hover
 > word-marking is unbound by default — savi tracks word status in its own
-> buckets (+ Yomitan for lookups). Rebind it in Settings if you want it.
+> buckets. Rebind it in Settings if you want it.
 
 So the study loop you showed from LR is: **`Q`** to arm auto-pause →
-watch → it pauses at each line → hover words (Yomitan) / **`S`** to replay /
+watch → it pauses at each line → hover words / **`S`** to replay /
 **`Ctrl+Shift+X`** to mine → **`Space`** to continue. **`A`**/**`D`** step
 between lines.
 
@@ -113,8 +118,18 @@ fine — the condensed audio comes back at normal speed.
 ## Bilingual (dual) subtitles
 
 Load a second subtitle track (your native language) alongside the target track
-— asbplayer Settings → Subtitle appearance, and the track toggles (`1`/`2`).
+— Savi Settings → Subtitle appearance, and the track toggles (`1`/`2`).
 This gives the LR-style target + native view.
+
+## Optional companion player and licenses
+
+**Settings → Misc → Advanced integrations** contains the optional asbplayer
+companion-player toggle and URL. This opens a separate compatible subtitle/player
+app; it is not the Savi account or web-app connection. Existing preferences and
+custom player URLs are retained.
+
+**About Savi → Open-source licenses** contains the complete upstream MIT notice,
+author acknowledgements, and dependency credits.
 
 ## Furigana + word coloring (savi player)
 
@@ -122,7 +137,8 @@ The savi player (served by the daemon at `http://localhost:4030`) shows the
 **condensed transcript with furigana over kanji** and **words colored by your
 learning bucket** (new = highlight, learning = amber, known = dimmed). Toggle
 **Furigana** / **Colors** above the transcript. This is for _review /
-re-listening_; Yomitan above is for _live watching_.
+re-listening_; the built-in hover dictionary and optional Yomitan integration
+above support _live watching_.
 
 ## Subtitle styling (Language Reactor look)
 
@@ -131,8 +147,12 @@ savi ships Language Reactor-style subtitle defaults (in
 **no black outline/shadow**, on a **dark rounded box** (the box fill is
 `subtitleBackgroundOpacity`; `video.content/video.css` rounds it). Hovering a
 word draws a **gray box** around it and shows a **pointer** cursor, and
-`pauseOnHoverMode` defaults to **inAndOut** so the video **pauses while you
-hover a word** and resumes when you move away.
+`pauseOnHoverMode` defaults to **inAndOut**. With an active learning language
+and visible subtitles, hovering a word lets its subtitle line finish, then
+pauses at the line's end. Moving away from the subtitle and dictionary popup
+resumes playback only if the hover feature paused it. Leaving before the end
+cancels the pending pause; a manual pause stays paused. This behavior works
+across Watch, Explore, and Listen when text is revealed.
 
 These are _defaults_ — if you've already customized subtitle appearance in
 Settings, your saved values win. To get the savi look back, reset Subtitle
@@ -140,3 +160,78 @@ appearance (or clear those fields). To make the **native (English) line
 smaller than the target line**, give it its own size under Settings → Subtitle
 appearance → the second track's tab (per-track styling); savi can't guess which
 track is your native one.
+
+## Target words (0.57)
+
+With the matching Savi cloud and daemon, episode preparation selects a small list
+from public subtitle profiles and your current vocabulary. Resolved episodes can
+show a pre-watch card on the next play gesture. A late response never pauses an
+already playing video. Unresolved/provider failures leave capture running; failed
+preparation can retry after a 30-second cooldown.
+
+The primary subtitle track gets a soft purple target underline. Hover and targets
+share one local tokenizer request/cache: hover uses dictionary compounds, targets
+use the raw analyzer lemmas that also generate heard evidence. No AI call runs on
+the decoration path. Text and ruby labels remain intact.
+
+“I know this” and “Not for this show” persist account-bound feedback offline;
+“Start watching” records acceptance and resumes. Savi Settings controls the card
+(default on) and automatic Anki export (default off). Saved player episode
+corrections are honored through both platform and filesystem-safe capture IDs.
+
+A target enters Savi review only after an acknowledged heard event and 90% audible
+forward playback of its actual primary-track cue. Paused time, seeks and repeated
+fragments cannot manufacture coverage. Mining uses a durable account/language/
+episode/cue-start/lemma identity in browser storage and daemon SQLite. It checks
+fresh known/suppressed state before creating an action. Optional audio and JPEG
+frames stay local and are best effort; protected video may have no screenshot.
+Anki export requires opt-in in both the prepared request and current cloud setting,
+uses the `savi` deck, reconciles lost replies and retries without duplicate actions.
+The built-in reviewer continues to use the captured encounter context.
+
+Validation: 615 extension tests, TypeScript compile, Chrome production build, and
+local browser fixtures at desktop/390px. A real Netflix playback with the matching
+cloud/daemon and AnkiConnect is still an integration check in the user's environment.
+
+### Immersion modes (0.58)
+
+The small “Savi modes” control opens Watch / Explore / Listen and explicit Bookmark / Replay / Reveal actions. Explicit mode choices save locally on this browser, scoped to the current account and backend (with a separate signed-out preference), and take effect immediately. They do not require a cloud connection or overwrite the account's cloud preference; the cloud mode is used as an initial default only when no local choice exists. Watch disables automatic target cards and hover mining; Explore permits them subject to existing consent/settings. Hover end-of-line pausing works independently of study mode. Listen hides the Savi subtitle layer with a reversible Reveal button. Replay uses the current subtitle, the previous subtitle during a gap, or the first subtitle before playback reaches it, through the platform-aware player controls. Unavailable actions are dimmed with explanatory text; bookmarking requires sign-in and a current identified subtitle.
+
+A bookmark is saved locally before upload even when hover mining is disabled. A paused hover must last 1.5 seconds, match an exact current primary cue, and be in Explore with consent. Strong AI selections become candidates; admission budgets are enforced in Savi. Playback alone never grades an item. The local outbox remains account/backend scoped; unavailable AI retries later.
+
+
+## Spotify Web (0.60)
+
+Open Spotify Web in the extension-enabled browser. The Savi panel follows the
+Now Playing item, independently of the page you browse. Open Spotify's Lyrics or
+Read along view to let the adapter observe text already delivered to that page.
+Availability varies by item and Spotify build. The adapter never calls private
+Spotify endpoints or reads Spotify credentials.
+
+- Select a line, then hover/tap its words for dictionary lookup. Save selected
+  line creates a bookmark in the same account's Savi review library. Explore
+  mode plus paused-hover consent enables the existing 1.5-second interest signal,
+  knowledge-aware selection and admission limits. AI card details remain manual.
+- Missing text: import SRT/VTT/LRC or paste publisher/user-supplied plain text.
+  The panel also offers an explicit import of visible Spotify text. Untimed text
+  stays untimed, has no exact replay or heard-word evidence, and saves as text.
+- Record audio requires timed text and a verified local native media clock.
+  Pause, seek, rate/volume/media changes close segments; changing item finishes
+  the previous capture. A different audible browser tab blocks the process tap.
+  Missing or ambiguous clocks, remote playback and crossfade disable capture.
+  Stop and retry after an audio failure; the panel reports the daemon's result.
+- Savi cards use canonical song/episode links. Spotify episode links include a
+  timestamp only for timed text. Spotify song links open the song; saved local
+  line audio uses the existing source-to-recording map.
+
+Listening is measured from actual local advancement, uses stable UUIDs for
+retries, and does not grade vocabulary. Imported text is scoped to the current
+item in the tab; saving selected lines persists them. Language-matched timed
+lines alone can contribute heard evidence. An imported file should match the
+learning language selected in Savi.
+
+QA: `node extension/qa/spotify/build.mjs`, then serve `extension/qa/spotify/` on
+localhost. It uses the production panel with a synthetic media clock and fake
+API responses, never the personal account, database, or real audio. This fixture
+is not evidence of live Spotify capture. Live verification needs Spotify sign-in
+and a reload of the installed extension.

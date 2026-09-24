@@ -45,3 +45,21 @@ describe('SaviSpeedControl', () => {
         expect(removeSpy).toHaveBeenCalledWith('ratechange', expect.any(Function));
     });
 });
+
+describe('Savi speed control accessibility', () => {
+    afterEach(() => {
+        document.body.innerHTML = '';
+    });
+    it('exposes the selected speed to assistive technology and follows external rate changes', () => {
+        const video = document.createElement('video');
+        const control = new SaviSpeedControl(() => video);
+        control.show();
+        const group = document.querySelector('[role="group"][aria-label="Playback speed"]');
+        expect(group).not.toBeNull();
+        expect(group?.querySelector('[aria-pressed="true"]')?.textContent).toBe('1×');
+        video.playbackRate = 1.5;
+        video.dispatchEvent(new Event('ratechange'));
+        expect(group?.querySelector('[aria-pressed="true"]')?.textContent).toBe('1.5×');
+        control.destroy();
+    });
+});

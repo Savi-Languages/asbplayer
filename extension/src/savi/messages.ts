@@ -74,6 +74,7 @@ export interface SaviStopCaptureResponse {
 // are low-frequency, so waking a sleeping service worker per batch is fine.
 export interface SaviPlaybackStateMessage {
     readonly command: 'savi-playback-state';
+    readonly episodeId?: string;
     readonly ops: SaviSegmentOp[];
 }
 
@@ -204,6 +205,7 @@ export interface SaviKanjiResponse {
 }
 
 export interface SaviTokenizeResponse {
+    readonly rawTokens?: SaviToken[];
     readonly tokens: SaviToken[];
 }
 
@@ -329,6 +331,7 @@ export interface SaviEngagementSessionMessage {
 
 export interface SaviWatchedLineResponse {
     readonly ok: boolean;
+    readonly reason?: 'not-configured' | 'unreachable' | 'rejected';
 }
 
 // Search OpenSubtitles.com for a subtitle in the target language and return its
@@ -489,6 +492,15 @@ export interface SaviGlossTranslateMessage {
     readonly context?: string;
 }
 
+/** A whole subtitle translated into the learner's native language, separate from word glosses. */
+export interface SaviSubtitleTranslateMessage {
+    readonly command: 'savi-subtitle-translate';
+    readonly text: string;
+    readonly sourceLang: string;
+    readonly targetLang: string;
+    readonly context?: string;
+}
+
 export interface SaviGlossTranslateResponse {
     /** The gloss, or undefined when signed out / every provider failed. */
     readonly text?: string;
@@ -582,4 +594,24 @@ export interface SaviRequestStartToVideoMessage {
 export interface SaviCommand<M> {
     readonly sender: 'savi-video' | 'savi-popup' | 'savi-extension-to-video';
     readonly message: M;
+}
+
+// Target attention features are independent of capture success and never delay it.
+export interface SaviEpisodeTargetsMessage {
+    command: 'savi-episode-targets';
+    episodeId: string;
+    title: string;
+    show?: string;
+    lang: string;
+}
+export interface SaviTargetFeedbackMessage {
+    command: 'savi-target-feedback';
+    account: string;
+    actions: import('./target-types').TargetFeedback[];
+}
+
+export interface SaviMineTargetsMessage {
+    command: 'savi-mine-targets';
+    account: string;
+    mines: import('./target-types').HeardTargetMine[];
 }

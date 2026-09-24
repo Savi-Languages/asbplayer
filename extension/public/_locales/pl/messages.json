@@ -1,6 +1,6 @@
 {
     "extensionDescription": {
-        "message": "Zsynchronizuj asbplayer ze strumieniowanym wideo"
+        "message": "Zsynchronizuj Savi ze strumieniowanym wideo"
     },
     "shortcutMineSubtitleAndOpenDialogDescription": {
         "message": "Wykop bieżące napisy i otwórz okno eksportu Anki. Jeśli wideo jest zsynchronizowane bez pliku z napisami"
@@ -18,7 +18,7 @@
         "message": "Manualnie rozpocznij/zatrzymaj nagrywanie audio"
     },
     "shortcutUpdateLastCardDescription": {
-        "message": "Zaktualizuj ostatnio utworzoną kartę Anki o media przechwycone przez asbplayer. Jeśli wideo jest zsynchronizowane bez pliku z napisami"
+        "message": "Zaktualizuj ostatnio utworzoną kartę Anki o media przechwycone przez Savi. Jeśli wideo jest zsynchronizowane bez pliku z napisami"
     },
     "contextMenuMineSubtitle": {
         "message": "Wykop napisy"

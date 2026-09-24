@@ -1,3 +1,5 @@
+import { bindWatchInterestDrain } from '@/savi/watch-interest-service';
+import { bindTargetFeedbackDrain } from '@/savi/target-service';
 import TabRegistry, { Asbplayer } from '@/services/tab-registry';
 import ImageCapturer from '@/services/image-capturer';
 import VideoHeartbeatHandler from '@/handlers/video/video-heartbeat-handler';
@@ -117,6 +119,13 @@ export default defineBackground(() => {
     bindSaviAccountRefresh();
 
     const settings = new SettingsProvider(new ExtensionSettingsStorage());
+    bindWatchInterestDrain(async () => (await settings.get(['saviCloudUrl'])).saviCloudUrl);
+    bindTargetFeedbackDrain(async () => (await settings.get(['saviCloudUrl'])).saviCloudUrl);
+    const saviCommands = new SaviCommandHandler(settings);
+    browser.alarms.onAlarm.addListener((alarm) => {
+        if (alarm.name === 'savi-target-feedback') void saviCommands.drainTargetMines().catch(() => {});
+    });
+    void saviCommands.drainTargetMines().catch(() => {});
 
     // Re-arm the content scripts when credentials APPEAR without a sign-in —
     // a session coming back after expiry, an offline lapse, or an alarm
@@ -269,7 +278,7 @@ export default defineBackground(() => {
         new CurrentTabHandler(),
         new MobileOverlayForwarderHandler(),
         new StatisticsOverlayForwarderHandler(),
-        new SaviCommandHandler(settings),
+        saviCommands,
     ];
 
     browser.runtime.onMessage.addListener((request: Command<Message>, sender, sendResponse) => {

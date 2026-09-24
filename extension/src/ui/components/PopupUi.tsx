@@ -59,8 +59,8 @@ export function PopupUi({ commands }: Props) {
     }, []);
 
     const handleOpenApp = useCallback(async () => {
-        if (settings?.streamingAppUrl) {
-            browser.tabs.create({ active: true, url: settings.streamingAppUrl });
+        if (settings?.saviCloudUrl) {
+            browser.tabs.create({ active: true, url: settings.saviCloudUrl });
         }
     }, [settings]);
 
@@ -75,7 +75,7 @@ export function PopupUi({ commands }: Props) {
     }, []);
 
     const handleOpenUserGuide = useCallback(() => {
-        browser.tabs.create({ active: true, url: 'https://docs.asbplayer.dev/docs/intro' });
+        browser.tabs.create({ active: true, url: 'https://github.com/Savi-Languages/asbplayer/blob/main/SAVI.md' });
     }, []);
 
     const { requestingActiveTabPermission, tabRequestingActiveTabPermission } = useRequestingActiveTabPermission();
@@ -118,11 +118,9 @@ export function PopupUi({ commands }: Props) {
                 <Paper
                     square
                     style={{
-                        backgroundImage:
-                            settings.themeType === 'dark'
-                                ? 'linear-gradient(rgba(255, 255, 255, 0.165), rgba(255, 255, 255, 0.165))'
-                                : 'none',
-                        width: isMobile ? '100%' : 600,
+                        width: isMobile ? '100%' : 380,
+                        maxHeight: isMobile ? undefined : 600,
+                        overflowY: 'auto',
                     }}
                 >
                     <Box>
