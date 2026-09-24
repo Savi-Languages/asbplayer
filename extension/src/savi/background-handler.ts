@@ -1,3 +1,5 @@
+import { watchInterestConfig, queueWatchInterest, setImmersionMode } from './watch-interest-service';
+import { prepareTargets, queueTargetFeedback, queueTargetMines, drainTargetMines } from './target-service';
 // Background-side orchestration for savi capture, registered as one
 // extra CommandHandler in asbplayer's background handler list.
 //
@@ -92,8 +94,9 @@ import {
     segmentLine,
     explainWord,
     lookupKanji,
+    isDaemonResponseError,
     startCapture,
-    tokenize,
+    tokenizeWithAnalysis,
 } from './daemon-client';
 import {
     getCachedDict,
@@ -126,6 +129,61 @@ export default class SaviCommandHandler implements CommandHandler {
 
     handle(command: any, sender: Browser.runtime.MessageSender, sendResponse: (response?: any) => void) {
         switch (command.message.command) {
+            case 'savi-set-immersion-mode':
+                this._settings
+                    .get(['saviCloudUrl'])
+                    .then(({ saviCloudUrl }) => setImmersionMode(saviCloudUrl, command.message.mode))
+                    .then(sendResponse)
+                    .catch(() => sendResponse({ ok: false }));
+                return true;
+            case 'savi-watch-interest-config':
+                this._settings
+                    .get(['saviCloudUrl'])
+                    .then(({ saviCloudUrl }) => watchInterestConfig(saviCloudUrl))
+                    .then(sendResponse)
+                    .catch(() => sendResponse({ enabled: false }));
+                return true;
+            case 'savi-save-watch-interest':
+                this._settings
+                    .get(['saviCloudUrl'])
+                    .then(({ saviCloudUrl }) =>
+                        queueWatchInterest(saviCloudUrl, command.message.account, command.message.item)
+                    )
+                    .then(sendResponse)
+                    .catch(() => sendResponse({ ok: false }));
+                return true;
+            case 'savi-mine-targets':
+                this._settings
+                    .get(['saviCloudUrl'])
+                    .then(({ saviCloudUrl }) =>
+                        queueTargetMines(saviCloudUrl, command.message.account, command.message.mines)
+                    )
+                    .then(() => {
+                        sendResponse({ ok: true });
+                        void this.drainTargetMines().catch(() => {});
+                    })
+                    .catch(() => sendResponse({ ok: false }));
+                return true;
+            case 'savi-episode-targets':
+                this._settings
+                    .get(['saviCloudUrl'])
+                    .then(({ saviCloudUrl }) => prepareTargets(saviCloudUrl, command.message))
+                    .then(sendResponse)
+                    // `null` is reserved for a title that was definitively not
+                    // resolved. Transport/auth/server failures must keep their
+                    // retry semantics in the content-side controller.
+                    .catch(() => sendResponse({ unavailable: true }));
+                return true;
+            case 'savi-target-feedback':
+                this._settings
+                    .get(['saviCloudUrl'])
+                    .then(({ saviCloudUrl }) =>
+                        queueTargetFeedback(saviCloudUrl, command.message.account, command.message.actions)
+                    )
+                    .then(() => sendResponse({ ok: true }))
+                    .catch(() => sendResponse({ ok: false }));
+                return true;
+
             case 'savi-start-capture':
                 this._startCapture(command.message as SaviStartCaptureMessage, sender)
                     .then(sendResponse)
@@ -274,6 +332,11 @@ export default class SaviCommandHandler implements CommandHandler {
     // The credential split: the LAN token is the bearer (capability), the
     // account JWT rides X-Savi-Account (identity). Resolved per request —
     // JWTs expire ~hourly.
+    async drainTargetMines(): Promise<void> {
+        const { saviCloudUrl } = await this._settings.get(['saviCloudUrl']);
+        return drainTargetMines(saviCloudUrl, () => this._daemonConfig());
+    }
+
     private async _daemonConfig(): Promise<SaviDaemonConfig | null> {
         const { saviDaemonUrl, saviDaemonToken } = await this._settings.get(['saviDaemonUrl', 'saviDaemonToken']);
         const { bearer, accountJwt } = await daemonCredentials(saviDaemonToken);
@@ -496,11 +559,11 @@ export default class SaviCommandHandler implements CommandHandler {
             return { tokens: (await getCachedTokens(message.lang, message.text)) ?? [] };
         }
         try {
-            const tokens = await tokenize(config, message.lang, message.text);
+            const { tokens, rawTokens } = await tokenizeWithAnalysis(config, message.lang, message.text);
             if (tokens.length > 0) {
                 await putCachedTokens(message.lang, message.text, tokens);
             }
-            return { tokens };
+            return { tokens, rawTokens };
         } catch (e) {
             // Daemon unreachable — fall back to the persistent cache so a
             // previously-seen line still hovers offline.
@@ -651,7 +714,7 @@ export default class SaviCommandHandler implements CommandHandler {
     private async _watchedLine(message: SaviWatchedLineMessage): Promise<SaviWatchedLineResponse> {
         const config = await this._daemonConfig();
         if (!config) {
-            return { ok: false };
+            return { ok: false, reason: 'not-configured' };
         }
         try {
             await postWatchedLine(config, {
@@ -665,7 +728,7 @@ export default class SaviCommandHandler implements CommandHandler {
             return { ok: true };
         } catch (e) {
             // Fire-and-forget contract: a dropped line loses one line's exposure.
-            return { ok: false };
+            return { ok: false, reason: isDaemonResponseError(e) ? 'rejected' : 'unreachable' };
         }
     }
 
@@ -733,7 +796,13 @@ export default class SaviCommandHandler implements CommandHandler {
             return {};
         }
         try {
-            return { dataUrl: await captureVisibleTab(tabId) };
+            const tab = await browser.tabs.get(tabId);
+            if (!tab.active || !(await browser.windows.get(tab.windowId)).focused) return {};
+            const dataUrl = await captureVisibleTab(tabId);
+            // captureVisibleTab targets the active tab in a window, not the id.
+            // Recheck to avoid returning another tab if the learner switched.
+            const [active] = await browser.tabs.query({ windowId: tab.windowId, active: true });
+            return active?.id === tabId ? { dataUrl } : {};
         } catch (e) {
             return {};
         }
