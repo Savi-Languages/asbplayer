@@ -1,10 +1,4 @@
-import {
-    isEpisodeMuted,
-    muteEpisode,
-    mutedEpisodes,
-    resetMutedEpisodesMemo,
-    unmuteEpisode,
-} from './muted-episodes';
+import { isEpisodeMuted, muteEpisode, mutedEpisodes, resetMutedEpisodesMemo, unmuteEpisode } from './muted-episodes';
 
 // In-memory browser.storage.local, following cloud-settings.test.ts.
 describe('savi muted episodes', () => {

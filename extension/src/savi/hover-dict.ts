@@ -1,4 +1,4 @@
-import { subtitleTokens } from "./token-cache";
+import { subtitleTokens } from './token-cache';
 // Live-subtitle hover dictionary: hover a word on the video's asbplayer
 // subtitle overlay and see (a) the word boxed under the cursor, Language
 // Reactor-style, and (b) its dictionary entry in a popup.
