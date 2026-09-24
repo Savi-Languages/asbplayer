@@ -1,4 +1,4 @@
-import { canHostChildren, needsTopLayer, neutralizePopoverChrome, overlayParent } from './top-layer';
+import { canHostChildren, hostOverlay, needsTopLayer, neutralizePopoverChrome, overlayParent } from './top-layer';
 
 // SV-44. The browser half of this (showPopover, actual painting) is not
 // unit-testable — jsdom implements neither fullscreen nor a top layer — so the
@@ -101,5 +101,132 @@ describe('neutralizePopoverChrome', () => {
         neutralizePopoverChrome(el);
         expect(el.style.background).toBe('rgba(0, 0, 0, 0.72)');
         expect(el.style.padding).toBe('1px 7px');
+    });
+});
+
+describe('hostOverlay', () => {
+    // The pieces above, composed. jsdom has neither fullscreen nor a top layer,
+    // so both are faked at the seams hostOverlay reads them from: a
+    // `document.fullscreenElement` getter, and showPopover/hidePopover that keep
+    // the open state and throw on a double call, like the real ones.
+    let fullscreen: Element | null = null;
+    let calls: string[] = [];
+
+    beforeEach(() => {
+        fullscreen = null;
+        calls = [];
+        document.body.innerHTML = '';
+        Object.defineProperty(document, 'fullscreenElement', { configurable: true, get: () => fullscreen });
+        (HTMLElement.prototype as any).showPopover = function (this: HTMLElement) {
+            if (this.dataset.popoverOpen === '1') throw new Error('InvalidStateError');
+            this.dataset.popoverOpen = '1';
+            calls.push(`show:${this.parentElement?.tagName ?? 'detached'}`);
+        };
+        (HTMLElement.prototype as any).hidePopover = function (this: HTMLElement) {
+            if (this.dataset.popoverOpen !== '1') throw new Error('InvalidStateError');
+            delete this.dataset.popoverOpen;
+            calls.push(`hide:${this.parentElement?.tagName ?? 'detached'}`);
+        };
+    });
+
+    afterEach(() => {
+        delete (document as any).fullscreenElement;
+        delete (HTMLElement.prototype as any).showPopover;
+        delete (HTMLElement.prototype as any).hidePopover;
+    });
+
+    const KEEP = { border: '1px solid red', maxHeight: '72vh' };
+    const overlay = () => {
+        const el = document.createElement('div');
+        Object.assign(el.style, { position: 'fixed', left: '10px', top: '20px', ...KEEP });
+        return el;
+    };
+
+    it('windowed: lives on body, not promoted', () => {
+        const el = overlay();
+        expect(hostOverlay(el, false, KEEP)).toBe(false);
+        expect(el.parentElement).toBe(document.body);
+        expect(el.hasAttribute('popover')).toBe(false);
+    });
+
+    it('streaming-site fullscreen: moves into the fullscreen container, still not promoted', () => {
+        const player = document.createElement('div');
+        document.body.appendChild(player);
+        const el = overlay();
+        hostOverlay(el, false, KEEP); // created windowed
+        fullscreen = player;
+        expect(hostOverlay(el, false, KEEP)).toBe(false);
+        expect(el.parentElement).toBe(player);
+        expect(calls).toEqual([]);
+    });
+
+    it('bare-video fullscreen: stays on body, lifted into the top layer, with its own chrome kept', () => {
+        const video = document.createElement('video');
+        document.body.appendChild(video);
+        fullscreen = video;
+        const el = overlay();
+        expect(hostOverlay(el, false, KEEP)).toBe(true);
+        expect(el.parentElement).toBe(document.body);
+        expect(el.getAttribute('popover')).toBe('manual');
+        expect(calls).toEqual(['show:BODY']);
+        // neutralizePopoverChrome reset these to 0 / none; `keep` put them back…
+        expect(el.style.border).toBe('1px solid red');
+        expect(el.style.maxHeight).toBe('72vh');
+        // …and a computed edge is left alone. (The `right`/`bottom: auto` half
+        // of the inset reset is neutralizePopoverChrome's, tested there as far
+        // as jsdom allows — its cssstyle has no `right`/`bottom` at all.)
+        expect(el.style.left).toBe('10px');
+    });
+
+    it('leaving fullscreen demotes and restores the chrome again', () => {
+        const video = document.createElement('video');
+        document.body.appendChild(video);
+        fullscreen = video;
+        const el = overlay();
+        const promoted = hostOverlay(el, false, KEEP);
+        el.style.border = '0'; // what a stray reset would leave behind
+        fullscreen = null;
+        expect(hostOverlay(el, promoted, KEEP)).toBe(false);
+        expect(el.hasAttribute('popover')).toBe(false);
+        expect(calls).toEqual(['show:BODY', 'hide:BODY']);
+        expect(el.style.border).toBe('1px solid red');
+    });
+
+    it('demotes a shown popover BEFORE moving it into a new parent', () => {
+        // Promoted over a bare video, then a container goes fullscreen instead.
+        // Moving an open popover closes it behind our back; demoting first is
+        // what keeps the bookkeeping (and the attribute) honest.
+        const video = document.createElement('video');
+        const player = document.createElement('div');
+        document.body.append(video, player);
+        fullscreen = video;
+        const el = overlay();
+        const promoted = hostOverlay(el, false, KEEP);
+        fullscreen = player;
+        expect(hostOverlay(el, promoted, KEEP)).toBe(false);
+        expect(calls).toEqual(['show:BODY', 'hide:BODY']); // hidden while still on body
+        expect(el.parentElement).toBe(player);
+        expect(el.hasAttribute('popover')).toBe(false);
+    });
+
+    it('re-attaches an overlay a page wipe removed', () => {
+        const el = overlay();
+        hostOverlay(el, false, KEEP);
+        el.remove();
+        hostOverlay(el, false, KEEP);
+        expect(el.isConnected).toBe(true);
+        expect(el.parentElement).toBe(document.body);
+    });
+
+    it('is a no-op when nothing changed', () => {
+        const player = document.createElement('div');
+        document.body.appendChild(player);
+        fullscreen = player;
+        const el = overlay();
+        hostOverlay(el, false, KEEP);
+        const before = Array.from(player.childNodes);
+        hostOverlay(el, false, KEEP);
+        expect(Array.from(player.childNodes)).toEqual(before);
+        expect(calls).toEqual([]);
     });
 });
