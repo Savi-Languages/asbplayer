@@ -63,8 +63,13 @@ it('deduplicates enqueue and lets later lines progress past a retryable failure'
     (mineHeardTarget as jest.Mock)
         .mockRejectedValueOnce(new Error('heard event not yet available'))
         .mockResolvedValueOnce({ ok: true });
-    await drainTargetMines(async () => ({}) as any);
+    (global as any).fetch = jest.fn(async (url: string) => ({
+        ok: true,
+        json: async () => ({ account: 'alice', eligible: [url && '証拠'], autoMineToAnki: true }),
+    }));
+    await drainTargetMines('', async () => ({}) as any);
     expect(mineHeardTarget).toHaveBeenCalledTimes(2);
+    expect(mineHeardTarget).toHaveBeenCalledWith({}, expect.objectContaining({ eligible: true, autoMineToAnki: true }));
     expect(Object.values(data).filter((v) => v.done)).toHaveLength(1);
     expect(Object.values(data).filter((v) => v.payload)).toHaveLength(1);
 });
@@ -75,9 +80,24 @@ it('checks new local dismissals for each queued line and never delivers another 
         data['saviTargetFeedback:dismissal'] = { account: 'alice', action };
         return { ok: true };
     });
-    await drainTargetMines(async () => ({}) as any);
+    (global as any).fetch = jest.fn(async () => ({
+        ok: true,
+        json: async () => ({ account: 'alice', eligible: ['証拠', '関与'], autoMineToAnki: false }),
+    }));
+    await drainTargetMines('', async () => ({}) as any);
     expect(mineHeardTarget).toHaveBeenCalledTimes(1);
     expect(data['saviTargetMine:other'].payload.account).toBe('bob');
+});
+
+it('keeps a mine queued when the cloud eligibility response belongs to another account', async () => {
+    await queueTargetMines('alice', [mine('関与')]);
+    (global as any).fetch = jest.fn(async () => ({
+        ok: true,
+        json: async () => ({ account: 'bob', eligible: ['関与'], autoMineToAnki: true }),
+    }));
+    await drainTargetMines('', async () => ({}) as any);
+    expect(mineHeardTarget).not.toHaveBeenCalled();
+    expect(Object.values(data).filter((v) => v.payload)).toHaveLength(1);
 });
 
 it('uses the UI filesystem-safe capture mapping before attempting metadata resolution', async () => {

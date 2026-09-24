@@ -16,6 +16,8 @@ interface Sources {
 /** Episode attention state. Preparation is detached from capture and playback;
  *  only a subsequent play gesture can open/pause for the already-ready card. */
 export class SaviTargetController {
+    private static readonly negativeCacheMs = 15 * 60_000;
+    private static readonly maximumRetryMs = 10 * 60_000;
     private readonly decorator: SaviTargetDecorator;
     private readonly coverage = new TargetHeardCoverage();
     private readonly frames = new Map<number, string>();
@@ -26,18 +28,13 @@ export class SaviTargetController {
         if (this.immersionMode === mode) return;
         this.immersionMode = mode;
         if (mode !== 'explore') {
-            this.host?.remove();
-            this.host = undefined;
-            this.decorator.stop();
-        } else if (this.prepared)
-            this.decorator.setTargets(
-                this.lang,
-                this.prepared.targets.map((t) => t.lemma)
-            );
+            this.clearEpisode();
+        } else {
+            this.checkEpisode();
+        }
     }
     private generation = 0;
-    private attempted = '';
-    private retryAt = 0;
+    private readonly retries = new Map<string, { failures: number; nextAt: number }>();
     private episode = '';
     private prepared: TargetPreparation | null = null;
     private cardShown = false;
@@ -64,6 +61,7 @@ export class SaviTargetController {
     };
     private readonly onAccount = (changes: Record<string, any>) => {
         if ('saviAccount' in changes && changes.saviAccount.oldValue?.userId !== changes.saviAccount.newValue?.userId) {
+            this.retries.clear();
             this.clearEpisode();
             this.checkEpisode();
         }
@@ -100,8 +98,6 @@ export class SaviTargetController {
         this.frames.clear();
         this.sampledFrames.clear();
         this.generation++;
-        this.attempted = '';
-        this.retryAt = 0;
         this.episode = '';
         this.prepared = null;
         this.cardShown = false;
@@ -110,7 +106,7 @@ export class SaviTargetController {
         this.decorator.stop();
     }
     private checkEpisode(): void {
-        if (!this.bound) return;
+        if (!this.bound || this.immersionMode !== 'explore') return;
         const meta = this.deps.metadata();
         if (!meta.episodeId) {
             if (this.episode) this.clearEpisode();
@@ -118,9 +114,9 @@ export class SaviTargetController {
         }
         if (this.episode && meta.episodeId !== this.episode) this.clearEpisode();
         const key = JSON.stringify([meta.episodeId, meta.show, meta.title, this.lang]);
-        if ((key === this.attempted && Date.now() < this.retryAt) || this.prepared) return;
-        this.attempted = key;
-        this.retryAt = Infinity;
+        const retry = this.retries.get(key);
+        if ((retry && Date.now() < retry.nextAt) || this.prepared) return;
+        this.retries.set(key, { failures: retry?.failures ?? 0, nextAt: Infinity });
         this.episode = meta.episodeId;
         const generation = ++this.generation;
         void this.deps
@@ -128,9 +124,10 @@ export class SaviTargetController {
             .then((result: TargetPreparation | null) => {
                 if (generation !== this.generation || this.deps.metadata().episodeId !== this.episode) return;
                 if (!result) {
-                    this.retryAt = Date.now() + 30_000;
+                    this.retries.set(key, { failures: 0, nextAt: Date.now() + SaviTargetController.negativeCacheMs });
                     return;
                 }
+                this.retries.delete(key);
                 this.prepared = result;
                 if (this.immersionMode === 'explore')
                     this.decorator.setTargets(
@@ -140,11 +137,14 @@ export class SaviTargetController {
                 // A slow request never pauses playback after the user's gesture.
             })
             .catch(() => {
-                if (generation === this.generation) this.retryAt = Date.now() + 30_000;
+                if (generation !== this.generation) return;
+                const failures = (retry?.failures ?? 0) + 1;
+                const delay = Math.min(30_000 * 2 ** (failures - 1), SaviTargetController.maximumRetryMs);
+                this.retries.set(key, { failures, nextAt: Date.now() + delay });
             });
     }
     private sample(): void {
-        if (!this.bound) return;
+        if (!this.bound || this.immersionMode !== 'explore') return;
         const video = this.deps.video,
             position = video.currentTime * 1000;
         const lines = this.deps.subtitles();
@@ -194,6 +194,7 @@ export class SaviTargetController {
         }
     }
     onHeardAcknowledged(message: SaviWatchedLineMessage): void {
+        if (this.immersionMode !== 'explore') return;
         // The acknowledgement can precede the next timeupdate at a cue boundary.
         this.checkEpisode();
         this.sample();

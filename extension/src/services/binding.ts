@@ -329,24 +329,28 @@ export default class Binding {
         });
         this.saviWatchInterest = new SaviWatchInterest({
             video,
-            onModeChange: (mode,hideText) => {
-                if(this._saviImmersionMode !== mode) {
-                    this._saviImmersionMode=mode;
+            onModeChange: (mode, hideText) => {
+                if (this._saviImmersionMode !== mode) {
+                    this._saviImmersionMode = mode;
                     this.syncImmersionGloss();
                 }
                 this.saviTargetController?.setImmersionMode(mode);
-                this.subtitleController.immersionHideSubtitles=hideText;
-                this.subtitleController.refreshCurrentSubtitle=true;
+                this.subtitleController.immersionHideSubtitles = hideText;
+                this.subtitleController.refreshCurrentSubtitle = true;
             },
             metadata: () => this.saviCaptureController.targetMetadata(),
             subtitles: () => this.subtitleController.subtitles,
-            send: message => browser.runtime.sendMessage({sender:'savi-video',message}),
+            send: (message) => browser.runtime.sendMessage({ sender: 'savi-video', message }),
         });
         this.saviTargetController = new SaviTargetController({
-            video, metadata: () => this.saviCaptureController.targetMetadata(),
+            video,
+            metadata: () => this.saviCaptureController.targetMetadata(),
             subtitles: () => this.subtitleController.subtitles,
-            pause: () => this.pause(), play: () => { void this.play(); },
-            send: message => browser.runtime.sendMessage({sender:'savi-video',message}),
+            pause: () => this.pause(),
+            play: () => {
+                void this.play();
+            },
+            send: (message) => browser.runtime.sendMessage({ sender: 'savi-video', message }),
         });
         this.saviHoverDictionary = new SaviHoverDictionary(
             () => this.video,
@@ -423,7 +427,7 @@ export default class Binding {
                 }
             },
             onDeliveryRecovered: () => this.saviDaemonBanner.hide(),
-            onHeardAcknowledged: message => this.saviTargetController.onHeardAcknowledged(message),
+            onHeardAcknowledged: (message) => this.saviTargetController.onHeardAcknowledged(message),
         });
         this.subtitleController.onSaviStartedShowing = (subtitle) => {
             this.saviEncounterReporter.report(subtitle);
@@ -844,11 +848,17 @@ export default class Binding {
     }
 
     private syncImmersionGloss() {
-        if(this._saviImmersionMode === 'explore' && this._saviLanguageActive) {
-            void Promise.all([this.saviGlossController.start(),this.saviGlossHover.start()]).then(()=>{
-                if(this._saviImmersionMode !== 'explore' || !this._saviLanguageActive){this.saviGlossController.stop();this.saviGlossHover.stop();}
+        if (this._saviLanguageActive) {
+            void Promise.all([this.saviGlossController.start(), this.saviGlossHover.start()]).then(() => {
+                if (!this._saviLanguageActive) {
+                    this.saviGlossController.stop();
+                    this.saviGlossHover.stop();
+                }
             });
-        } else {this.saviGlossController.stop();this.saviGlossHover.stop();}
+        } else {
+            this.saviGlossController.stop();
+            this.saviGlossHover.stop();
+        }
     }
 
     _bind() {
@@ -1007,7 +1017,6 @@ export default class Binding {
             // pause-on-hover to avoid pausing the moment the cursor lands on a word.
             if (
                 overText &&
-                (!this._saviLanguageActive || this._saviImmersionMode === 'explore') &&
                 this.pauseOnHoverMode !== PauseOnHoverMode.disabled &&
                 !this.saviGlossHover.isActive() &&
                 !this.video.paused

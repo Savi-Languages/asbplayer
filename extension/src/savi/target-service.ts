@@ -5,6 +5,11 @@ import { resolveTargetEpisode } from './episode-resolver';
 import type { TargetEpisode, TargetFeedback, TargetPreparation, TargetWord } from './target-types';
 
 const OUTBOX = 'saviTargetFeedback:';
+export class TargetCloudHttpError extends Error {
+    constructor(readonly status: number) {
+        super(`Target words unavailable (${status})`);
+    }
+}
 export async function targetCloud(cloudUrl: string) {
     const token = await currentAccessToken();
     const account = await storedAccount();
@@ -24,7 +29,7 @@ export async function targetCloud(cloudUrl: string) {
                 headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
                 ...(body === undefined ? {} : { body: JSON.stringify(body) }),
             });
-            if (!res.ok) throw new Error(`Target words unavailable (${res.status})`);
+            if (!res.ok) throw new TargetCloudHttpError(res.status);
             const value = await res.json();
             await check();
             return value;
@@ -173,12 +178,14 @@ export function queueTargetMines(account: string, mines: import('./target-types'
 }
 let mining: Promise<void> | undefined;
 export function drainTargetMines(
+    cloudUrl: string,
     getConfig: () => Promise<import('./daemon-client').SaviDaemonConfig | null>
 ): Promise<void> {
     if (mining) return mining;
     mining = (async () => {
         const account = (await storedAccount())?.userId;
         if (!account) return;
+        let cloud: Awaited<ReturnType<typeof targetCloud>> | undefined;
         const entries = Object.entries(await browser.storage.local.get(null)).filter(
             ([key, value]) => key.startsWith(MINES) && (value as any)?.account === account && !(value as any)?.done
         );
@@ -198,9 +205,20 @@ export function drainTargetMines(
                 const config = await getConfig();
                 if (!config) return;
                 if ((await storedAccount())?.userId !== account) return;
-                const { mineHeardTarget } = await import('./daemon-client');
                 try {
-                    const result = await mineHeardTarget(config, mine);
+                    cloud ??= await targetCloud(cloudUrl);
+                    const eligibility = await cloud.request('/v2/targets/check', 'POST', {
+                        lang: mine.lang,
+                        tmdb: mine.tmdb,
+                        lemmas: [mine.lemma],
+                    });
+                    if (eligibility.account !== account) continue;
+                    const { mineHeardTarget } = await import('./daemon-client');
+                    const result = await mineHeardTarget(config, {
+                        ...mine,
+                        eligible: Array.isArray(eligibility.eligible) && eligibility.eligible.includes(mine.lemma),
+                        autoMineToAnki: eligibility.autoMineToAnki === true,
+                    });
                     if (!result.ok || result.ankiPending) continue;
                 } catch {
                     continue;

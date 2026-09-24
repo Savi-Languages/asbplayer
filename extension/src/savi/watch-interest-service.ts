@@ -48,7 +48,10 @@ export async function queueWatchInterest(url: string, account: string, item: any
         item.lineEndMs <= item.lineStartMs ||
         typeof item.episodeId !== 'string' ||
         typeof item.lang !== 'string' ||
-        (item.screenshotDataUrl !== undefined && (typeof item.screenshotDataUrl !== 'string' || item.screenshotDataUrl.length > 240000 || !/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(item.screenshotDataUrl)))
+        (item.screenshotDataUrl !== undefined &&
+            (typeof item.screenshotDataUrl !== 'string' ||
+                item.screenshotDataUrl.length > 240000 ||
+                !/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(item.screenshotDataUrl)))
     )
         return { ok: false };
     const base = resolveCloudBase(url);
@@ -75,9 +78,17 @@ export function drainWatchInterest(url: string): Promise<void> {
             try {
                 if (enabled || row.item.kind === 'bookmark') await cloud.request('/v2/watch-review', 'POST', row.item);
                 await browser.storage.local.remove(key);
-            } catch {
-                // Retain uncertain or unavailable assessments, with a bounded retry rate.
-                await browser.storage.local.set({ [key]: { ...row, retryAt: Date.now() + 15 * 60000 } });
+            } catch (error) {
+                const status = (error as { status?: unknown })?.status;
+                if (status === 400 || status === 413 || status === 422) {
+                    // These are validation-shaped permanent failures: retrying
+                    // the same immutable outbox row can never make it valid.
+                    await browser.storage.local.remove(key);
+                } else {
+                    // Auth expiry, throttling, timeouts, server faults, and
+                    // network uncertainty may all recover; keep the evidence.
+                    await browser.storage.local.set({ [key]: { ...row, retryAt: Date.now() + 15 * 60000 } });
+                }
             }
         }
     })().finally(() => {

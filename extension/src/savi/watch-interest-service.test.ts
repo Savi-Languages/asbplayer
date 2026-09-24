@@ -74,3 +74,41 @@ test('Watch blocks automatic hover mining but permits deliberate bookmarks', asy
     expect(await queueWatchInterest('local', 'a', item)).toEqual({ ok: false });
     expect(await queueWatchInterest('local', 'a', { ...item, kind: 'bookmark' })).toEqual({ ok: true });
 });
+
+test.each([400, 413, 422])('drops a permanently invalid watch-review job after HTTP %s', async (status) => {
+    const item = {
+        lang: 'ja',
+        episodeId: 'netflix:3',
+        kind: 'bookmark',
+        lineText: 'invalid',
+        lineStartMs: 1000,
+        lineEndMs: 2000,
+    };
+    expect(await queueWatchInterest('local', 'a', item)).toEqual({ ok: true });
+    request.mockImplementation(async (path: string) => {
+        if (path === '/v2/settings') return { settings: { saviSavePausedHovers: { value: true } } };
+        throw Object.assign(new Error(`HTTP ${status}`), { status });
+    });
+    await drainWatchInterest('local');
+    expect(Object.keys(pending).filter((key) => key.startsWith('saviWatchInterest:'))).toHaveLength(0);
+});
+
+test.each([401, 403, 408, 429, 500])('retains a retryable watch-review job after HTTP %s', async (status) => {
+    const item = {
+        lang: 'ja',
+        episodeId: 'netflix:4',
+        kind: 'bookmark',
+        lineText: 'retry',
+        lineStartMs: 1000,
+        lineEndMs: 2000,
+    };
+    expect(await queueWatchInterest('local', 'a', item)).toEqual({ ok: true });
+    request.mockImplementation(async (path: string) => {
+        if (path === '/v2/settings') return { settings: { saviSavePausedHovers: { value: true } } };
+        throw Object.assign(new Error(`HTTP ${status}`), { status });
+    });
+    await drainWatchInterest('local');
+    const jobs = Object.entries(pending).filter(([key]) => key.startsWith('saviWatchInterest:'));
+    expect(jobs).toHaveLength(1);
+    expect((jobs[0][1] as any).retryAt).toBeGreaterThan(Date.now());
+});
