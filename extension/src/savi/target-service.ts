@@ -174,6 +174,46 @@ export function bindTargetFeedbackDrain(cloudUrl: () => Promise<string>): void {
 
 const MINES = 'saviTargetMine:';
 const MAX_COMPLETED_MINES = 2048;
+const MAX_MINE_ATTEMPTS = 5;
+const MINE_RETRY_BASE_MS = 60_000;
+const MINE_RETRY_MAX_MS = 6 * 60 * 60_000;
+type MineDecision = { eligible: boolean; autoMineToAnki: boolean };
+
+const retryDelay = (attempts: number) =>
+    Math.min(MINE_RETRY_MAX_MS, MINE_RETRY_BASE_MS * 2 ** Math.max(0, attempts - 1));
+
+async function deferTargetMine(
+    key: string,
+    row: any,
+    reason: 'transient' | 'anki-pending',
+    decision?: MineDecision
+): Promise<void> {
+    const attempts = Number.isSafeInteger(row.attempts) ? row.attempts + 1 : 1;
+    if (attempts >= MAX_MINE_ATTEMPTS) {
+        // Stop durable retries without retaining subtitle/frame payloads. The
+        // bounded marker also prevents the same cue from being re-enqueued.
+        await browser.storage.local.set({
+            [key]: {
+                base: row.base,
+                account: row.account,
+                exhausted: true,
+                exhaustedAt: Date.now(),
+                reason,
+            },
+        });
+        return;
+    }
+    await browser.storage.local.set({
+        [key]: {
+            ...row,
+            attempts,
+            retryAt: Date.now() + retryDelay(attempts),
+            reason,
+            ...(decision ? { decision } : {}),
+        },
+    });
+}
+
 let mineWrites: Promise<void> = Promise.resolve();
 export function queueTargetMines(
     cloudUrl: string,
@@ -193,7 +233,7 @@ export function queueTargetMines(
                         JSON.stringify([base, account, mine.lang, mine.episodeId, mine.lineStartMs, mine.lemma])
                     ));
                 if ((await browser.storage.local.get(key))[key]) continue;
-                await browser.storage.local.set({ [key]: { base, account, payload: mine } });
+                await browser.storage.local.set({ [key]: { base, account, payload: mine, attempts: 0 } });
             }
         });
     mineWrites = write;
@@ -215,7 +255,8 @@ export function drainTargetMines(
                 key.startsWith(MINES) &&
                 (value as any)?.base === base &&
                 (value as any)?.account === account &&
-                !(value as any)?.done
+                !(value as any)?.done &&
+                !(value as any)?.exhausted
         );
         let pending = await pendingFeedback(account, base);
         let feedbackDirty = false;
@@ -225,8 +266,10 @@ export function drainTargetMines(
         browser.storage.onChanged.addListener(onStorageChanged);
         try {
             for (const [key, raw] of entries) {
-                const mine = (raw as any).payload as import('./target-types').HeardTargetMine;
+                const row = raw as any;
+                const mine = row.payload as import('./target-types').HeardTargetMine;
                 if (!mine || mine.account !== account) continue;
+                if (row.retryAt && row.retryAt > Date.now()) continue;
                 if ((await storedAccount())?.userId !== account) return;
                 if (feedbackDirty) {
                     pending = await pendingFeedback(account, base);
@@ -244,21 +287,49 @@ export function drainTargetMines(
                     if (!config) return;
                     if ((await storedAccount())?.userId !== account) return;
                     try {
-                        cloud ??= await targetCloud(cloudUrl);
-                        const eligibility = await cloud.request('/v2/targets/check', 'POST', {
-                            lang: mine.lang,
-                            tmdb: mine.tmdb,
-                            lemmas: [mine.lemma],
-                        });
-                        if (eligibility.account !== account) continue;
+                        let decision = row.decision as MineDecision | undefined;
+                        if (!decision) {
+                            cloud ??= await targetCloud(cloudUrl);
+                            const eligibility = await cloud.request('/v2/targets/check', 'POST', {
+                                lang: mine.lang,
+                                tmdb: mine.tmdb,
+                                lemmas: [mine.lemma],
+                            });
+                            if (eligibility.account !== account) {
+                                await deferTargetMine(key, row, 'transient');
+                                continue;
+                            }
+                            decision = {
+                                eligible:
+                                    Array.isArray(eligibility.eligible) && eligibility.eligible.includes(mine.lemma),
+                                autoMineToAnki: eligibility.autoMineToAnki === true,
+                            };
+                        }
                         const { mineHeardTarget } = await import('./daemon-client');
                         const result = await mineHeardTarget(config, {
                             ...mine,
-                            eligible: Array.isArray(eligibility.eligible) && eligibility.eligible.includes(mine.lemma),
-                            autoMineToAnki: eligibility.autoMineToAnki === true,
+                            ...decision,
                         });
-                        if (!result.ok || result.ankiPending) continue;
-                    } catch {
+                        if (result.ankiPending) {
+                            // The learning action already exists. Reuse the
+                            // authenticated decision while retrying only Anki,
+                            // rather than calling the cloud on every alarm.
+                            await deferTargetMine(key, row, 'anki-pending', decision);
+                            continue;
+                        }
+                        if (!result.ok) {
+                            await deferTargetMine(key, row, 'transient');
+                            continue;
+                        }
+                    } catch (error) {
+                        const status = (error as { status?: unknown })?.status;
+                        if (status === 400 || status === 409) {
+                            // The immutable heard-line request cannot become
+                            // valid later, so do not poison the durable queue.
+                            await browser.storage.local.remove(key);
+                        } else {
+                            await deferTargetMine(key, row, 'transient');
+                        }
                         continue;
                     } // Keep this job, but let independent lines progress.
                 }
@@ -274,9 +345,13 @@ export function drainTargetMines(
                     key.startsWith(MINES) &&
                     (value as any)?.base === base &&
                     (value as any)?.account === account &&
-                    (value as any)?.done
+                    ((value as any)?.done || (value as any)?.exhausted)
             )
-            .sort(([, a], [, b]) => ((b as any).doneAt ?? 0) - ((a as any).doneAt ?? 0));
+            .sort(
+                ([, a], [, b]) =>
+                    ((b as any).doneAt ?? (b as any).exhaustedAt ?? 0) -
+                    ((a as any).doneAt ?? (a as any).exhaustedAt ?? 0)
+            );
         for (const [key] of completed.slice(MAX_COMPLETED_MINES)) {
             await browser.storage.local.remove(key);
         }

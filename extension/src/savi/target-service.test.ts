@@ -118,6 +118,83 @@ it('deduplicates enqueue and lets later lines progress past a retryable failure'
     expect(mineHeardTarget).toHaveBeenCalledWith({}, expect.objectContaining({ eligible: true, autoMineToAnki: true }));
     expect(Object.values(data).filter((v) => v.done)).toHaveLength(1);
     expect(Object.values(data).filter((v) => v.payload)).toHaveLength(1);
+    const retry = Object.values(data).find((v) => v.payload) as any;
+    expect(retry.attempts).toBe(1);
+    expect(retry.retryAt).toBeGreaterThan(Date.now());
+});
+
+it('honors target-mine backoff before making another cloud eligibility request', async () => {
+    await queueTargetMines('', 'alice', [mine('関与')]);
+    const key = Object.keys(data).find((candidate) => candidate.startsWith('saviTargetMine:'))!;
+    data[key].attempts = 1;
+    data[key].retryAt = Date.now() + 60_000;
+    (global as any).fetch = jest.fn(async () => {
+        throw new Error('must not retry during backoff');
+    });
+
+    await drainTargetMines('', async () => ({}) as any);
+
+    expect((global as any).fetch).not.toHaveBeenCalled();
+    expect(mineHeardTarget).not.toHaveBeenCalled();
+    expect(data[key].payload).toBeDefined();
+});
+
+it.each([400, 409])('drops a permanently invalid target mine after daemon HTTP %s', async (status) => {
+    await queueTargetMines('', 'alice', [mine('関与')]);
+    (global as any).fetch = jest.fn(async () => ({
+        ok: true,
+        json: async () => ({ account: 'alice', eligible: ['関与'], autoMineToAnki: false }),
+    }));
+    (mineHeardTarget as jest.Mock).mockRejectedValue(Object.assign(new Error(`daemon ${status}`), { status }));
+
+    await drainTargetMines('', async () => ({}) as any);
+
+    expect(Object.keys(data).filter((key) => key.startsWith('saviTargetMine:'))).toHaveLength(0);
+});
+
+it('backs off Anki retries without repeating the cloud eligibility request', async () => {
+    await queueTargetMines('', 'alice', [{ ...mine('関与'), exportToAnki: true }]);
+    (global as any).fetch = jest.fn(async () => ({
+        ok: true,
+        json: async () => ({ account: 'alice', eligible: ['関与'], autoMineToAnki: true }),
+    }));
+    (mineHeardTarget as jest.Mock).mockResolvedValueOnce({ ok: true, ankiPending: true });
+
+    await drainTargetMines('', async () => ({}) as any);
+    const key = Object.keys(data).find((candidate) => candidate.startsWith('saviTargetMine:'))!;
+    expect(data[key].decision).toEqual({ eligible: true, autoMineToAnki: true });
+    expect(data[key].retryAt).toBeGreaterThan(Date.now());
+
+    data[key].retryAt = Date.now() - 1;
+    (global as any).fetch.mockClear();
+    (mineHeardTarget as jest.Mock).mockResolvedValueOnce({ ok: true });
+    await drainTargetMines('', async () => ({}) as any);
+
+    expect((global as any).fetch).not.toHaveBeenCalled();
+    expect(Object.values(data).filter((value) => value.done)).toHaveLength(1);
+});
+
+it('caps repeated transient mine attempts and discards the sensitive payload', async () => {
+    await queueTargetMines('', 'alice', [mine('関与')]);
+    (global as any).fetch = jest.fn(async () => ({
+        ok: true,
+        json: async () => ({ account: 'alice', eligible: ['関与'], autoMineToAnki: false }),
+    }));
+    (mineHeardTarget as jest.Mock).mockRejectedValue(new Error('daemon offline'));
+    const key = Object.keys(data).find((candidate) => candidate.startsWith('saviTargetMine:'))!;
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+        if (data[key]?.retryAt) data[key].retryAt = Date.now() - 1;
+        await drainTargetMines('', async () => ({}) as any);
+    }
+
+    expect(data[key]).toEqual(
+        expect.objectContaining({ base: 'https://test.invalid', account: 'alice', exhausted: true })
+    );
+    expect(data[key].payload).toBeUndefined();
+    const calls = (global as any).fetch.mock.calls.length;
+    await drainTargetMines('', async () => ({}) as any);
+    expect((global as any).fetch).toHaveBeenCalledTimes(calls);
 });
 it('checks new local dismissals for each queued line and never delivers another account', async () => {
     await queueTargetMines('', 'alice', [mine('証拠'), mine('関与')]);

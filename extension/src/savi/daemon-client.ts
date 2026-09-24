@@ -131,14 +131,23 @@ const doFetch = async (base: string, config: SaviDaemonConfig, path: string, ini
             // Not JSON - status alone will have to do
         }
 
-        throw new Error(`savi daemon: ${message}`);
+        throw new SaviDaemonHttpError(response.status, message);
     }
 
     return await response.json();
 };
 
-export const isDaemonResponseError = (error: unknown): boolean =>
-    error instanceof Error && error.message.startsWith('savi daemon:');
+export class SaviDaemonHttpError extends Error {
+    constructor(
+        readonly status: number,
+        message: string
+    ) {
+        super(`savi daemon: ${message}`);
+        this.name = 'SaviDaemonHttpError';
+    }
+}
+
+export const isDaemonResponseError = (error: unknown): boolean => error instanceof SaviDaemonHttpError;
 
 const request = async (config: SaviDaemonConfig, path: string, init: RequestInit) => {
     const configured = normalizedBaseUrl(config.baseUrl);
@@ -596,10 +605,9 @@ export async function mineHeardTarget(
     body: import('./target-types').HeardTargetMine & { eligible: boolean; autoMineToAnki: boolean }
 ): Promise<{ ok: boolean; ankiPending?: boolean }> {
     // Eligibility was already checked by the authenticated extension cloud
-    // client. The local daemon needs only its LAN capability and the decision,
-    // never the user's cloud credential.
-    if (!config.token || config.token === config.accountJwt) {
-        throw new Error('A Savi daemon LAN token is required for target mining');
-    }
+    // client. Only the daemon bearer and the decision cross this boundary. In
+    // the documented no-LAN-token setup the owner's JWT doubles as that bearer;
+    // it is never forwarded again as a separate identity credential.
+    if (!config.token) throw new Error('A Savi daemon bearer is required for target mining');
     return request({ baseUrl: config.baseUrl, token: config.token }, '/v2/targets/mine', jsonInit(body));
 }
