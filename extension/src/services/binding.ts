@@ -274,7 +274,6 @@ export default class Binding {
     private fastForwardPlaybackMinimumGapMs = 600;
     private fastForwardModePlaybackRate = 2.7;
     private imageDelay = 0;
-    private _saviImmersionMode = 'watch';
     private pauseOnHoverMode: PauseOnHoverMode = PauseOnHoverMode.disabled;
     hoveredToken: HoveredToken;
     recordMedia: boolean;
@@ -334,10 +333,6 @@ export default class Binding {
             video,
             replay: (startMs) => replayFrom(this.video, startMs, (seconds) => this.seek(seconds), netflix),
             onModeChange: (mode, hideText) => {
-                if (this._saviImmersionMode !== mode) {
-                    this._saviImmersionMode = mode;
-                    this.syncImmersionGloss();
-                }
                 this.saviTargetController?.setImmersionMode(mode);
                 this.subtitleController.immersionHideSubtitles = hideText;
                 this.subtitleController.refreshCurrentSubtitle = true;
@@ -1022,14 +1017,9 @@ export default class Binding {
             // space of the subtitle container (hovering the blank area beside
             // the text should not pause).
             const overText = mouseEvent.target instanceof Element && mouseEvent.target.closest('[data-track]') !== null;
-            // Savi owns end-of-line pausing in every study mode and language.
-            // Keep legacy immediate hover only outside the active learning language.
-            if (
-                overText &&
-                this.pauseOnHoverMode !== PauseOnHoverMode.disabled &&
-                !this.saviGlossHover.isActive() &&
-                !this.video.paused
-            ) {
+            // The user's explicit asbplayer Pause-on-hover choice takes precedence
+            // over Savi's optional end-of-line hover hold.
+            if (overText && this.pauseOnHoverMode !== PauseOnHoverMode.disabled && !this.video.paused) {
                 this.video.pause();
                 this.pausedDueToHover = true;
 

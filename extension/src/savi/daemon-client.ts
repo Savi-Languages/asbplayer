@@ -598,5 +598,8 @@ export async function mineHeardTarget(
     // Eligibility was already checked by the authenticated extension cloud
     // client. The local daemon needs only its LAN capability and the decision,
     // never the user's cloud credential.
+    if (!config.token || config.token === config.accountJwt) {
+        throw new Error('A Savi daemon LAN token is required for target mining');
+    }
     return request({ baseUrl: config.baseUrl, token: config.token }, '/v2/targets/mine', jsonInit(body));
 }

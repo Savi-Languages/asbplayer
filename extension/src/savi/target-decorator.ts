@@ -59,7 +59,7 @@ export class SaviTargetDecorator {
     private targets = new Set<string>();
     private lang = '';
     private generation = 0;
-    private scheduled = false;
+    private scheduled?: number;
     private pending = new WeakSet<HTMLElement>();
     private failedUntil = new WeakMap<HTMLElement, number>();
     private decorated = new WeakMap<HTMLElement, { text: string; spans: HTMLElement[] }>();
@@ -82,6 +82,8 @@ export class SaviTargetDecorator {
     }
     stop(): void {
         this.generation++;
+        if (this.scheduled !== undefined) cancelAnimationFrame(this.scheduled);
+        this.scheduled = undefined;
         this.observer?.disconnect();
         this.observer = undefined;
         this.targets.clear();
@@ -90,10 +92,12 @@ export class SaviTargetDecorator {
         unwrap(document);
     }
     private schedule(): void {
-        if (this.scheduled) return;
-        this.scheduled = true;
-        queueMicrotask(() => {
-            this.scheduled = false;
+        if (this.scheduled !== undefined) return;
+        // Streaming pages mutate controls and timelines continuously. One scan
+        // per paint is enough to catch subtitle changes without rescanning the
+        // full document for every unrelated SPA mutation.
+        this.scheduled = requestAnimationFrame(() => {
+            this.scheduled = undefined;
             this.scan();
         });
     }

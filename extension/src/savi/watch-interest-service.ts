@@ -75,6 +75,10 @@ async function refreshAccountConfig(url: string, userId: string) {
         await browser.storage.local.set({ [key]: { enabled, mode, modeAt, at: Date.now() } });
         return { account: cloud.user, enabled, mode };
     } catch {
+        const current = await storedAccount();
+        if (current?.userId !== userId) {
+            return { account: current?.userId, mode: 'watch', enabled: false };
+        }
         // Offline continuation is allowed only after explicit opt-in on this backend/account.
         const cached = (await browser.storage.local.get(key))[key] as
             | { enabled?: boolean; mode?: string; at: number }
@@ -125,6 +129,7 @@ export async function queueWatchInterest(url: string, account: string, item: any
             item.lang,
             item.episodeId,
             item.lineStartMs,
+            item.kind,
             ...(item.textTiming === 'untimed' ? [item.lineText.trim()] : []),
         ]);
     if (!(await browser.storage.local.get(key))[key])
@@ -145,7 +150,7 @@ export function drainWatchInterest(url: string): Promise<void> {
             const row = raw as any;
             if (!key.startsWith(PREFIX) || row.account !== cloud.user || row.base !== base) continue;
             await cloud.check();
-            if (row.retryAt && row.retryAt > Date.now() && enabled) continue;
+            if (row.retryAt && row.retryAt > Date.now() && (enabled || row.item.kind === 'bookmark')) continue;
             try {
                 if (enabled || row.item.kind === 'bookmark') await cloud.request('/v2/watch-review', 'POST', row.item);
                 await browser.storage.local.remove(key);

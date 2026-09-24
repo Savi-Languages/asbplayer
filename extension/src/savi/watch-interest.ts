@@ -91,6 +91,7 @@ export class SaviWatchInterest {
         document.removeEventListener('fullscreenchange', this.fullscreen);
         this.deps.onModeChange?.('watch', false);
         this.generation++;
+        this.modeRevision++;
         this.enabled = false;
         this.account = '';
         this.saved.clear();
@@ -126,6 +127,7 @@ export class SaviWatchInterest {
             this.showControls();
             if (!this.enabled) this.clear();
         } catch {
+            if (revision !== this.modeRevision) return;
             this.enabled = false;
             this.showControls();
             this.clear();

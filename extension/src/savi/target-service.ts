@@ -38,7 +38,7 @@ export async function targetCloud(cloudUrl: string) {
             clearTimeout(timer);
         }
     };
-    return { user, check, request };
+    return { user, base: resolveCloudBase(cloudUrl), check, request };
 }
 const validIdentity = (raw: any): raw is TargetEpisode =>
     raw?.mediaType === 'tv' &&
@@ -82,11 +82,11 @@ export async function prepareTargets(
     if (!identity) return null;
     await cloud.check();
     await browser.storage.session.set({ [cacheKey]: { account: cloud.user, identity } });
-    const before = await pendingFeedback(cloud.user);
+    const before = await pendingFeedback(cloud.user, cloud.base);
     const result = await cloud.request(
         `/v2/episodes/${identity.tmdbId}/${identity.season}/${identity.episode}/targets?lang=${encodeURIComponent(message.lang)}`
     );
-    const pending = [...before, ...(await pendingFeedback(cloud.user))];
+    const pending = [...before, ...(await pendingFeedback(cloud.user, cloud.base))];
     const hidden = new Set(
         pending
             .filter(
@@ -107,12 +107,15 @@ export async function prepareTargets(
         autoMineToAnki: settings.saviAutoMineToAnki?.value === true,
     };
 }
-async function pendingFeedback(account: string): Promise<TargetFeedback[]> {
+async function pendingFeedback(account: string, base: string): Promise<TargetFeedback[]> {
     const stored = await browser.storage.local.get(null);
     return Object.entries(stored)
         .filter(
             ([key, value]) =>
-                key.startsWith(OUTBOX) && (value as any)?.account === account && (value as any)?.action?.id
+                key.startsWith(OUTBOX) &&
+                (value as any)?.base === base &&
+                (value as any)?.account === account &&
+                (value as any)?.action?.id
         )
         .map(([, value]) => (value as any).action);
 }
@@ -121,12 +124,22 @@ export function drainTargetFeedback(cloudUrl: string): Promise<void> {
     if (draining) return draining;
     draining = (async () => {
         const cloud = await targetCloud(cloudUrl);
-        const actions = (await pendingFeedback(cloud.user)).sort(
+        const actions = (await pendingFeedback(cloud.user, cloud.base)).sort(
             (a, b) => a.occurredAtMs - b.occurredAtMs || a.id.localeCompare(b.id)
         );
         for (const action of actions) {
-            await cloud.request('/v2/events', 'POST', { actions: [action] });
-            await browser.storage.local.remove(`${OUTBOX}${action.id}`);
+            try {
+                await cloud.request('/v2/events', 'POST', { actions: [action] });
+                await browser.storage.local.remove(`${OUTBOX}${action.id}`);
+            } catch (error) {
+                const status = (error as { status?: unknown })?.status;
+                if (status === 400 || status === 413 || status === 422) {
+                    // The immutable action can never become valid by retrying.
+                    await browser.storage.local.remove(`${OUTBOX}${action.id}`);
+                }
+                // A bad or temporarily unavailable row must not starve later,
+                // independent feedback events in the same account outbox.
+            }
         }
     })().finally(() => {
         draining = undefined;
@@ -142,7 +155,9 @@ export async function queueTargetFeedback(cloudUrl: string, account: string, act
         )
     )
         throw new Error('Invalid target feedback');
-    for (const action of actions) await browser.storage.local.set({ [`${OUTBOX}${action.id}`]: { account, action } });
+    const base = resolveCloudBase(cloudUrl);
+    for (const action of actions)
+        await browser.storage.local.set({ [`${OUTBOX}${action.id}`]: { base, account, action } });
     void drainTargetFeedback(cloudUrl).catch(() => {});
 }
 export function bindTargetFeedbackDrain(cloudUrl: () => Promise<string>): void {
@@ -159,19 +174,27 @@ export function bindTargetFeedbackDrain(cloudUrl: () => Promise<string>): void {
 }
 
 const MINES = 'saviTargetMine:';
+const MAX_COMPLETED_MINES = 2048;
 let mineWrites: Promise<void> = Promise.resolve();
-export function queueTargetMines(account: string, mines: import('./target-types').HeardTargetMine[]): Promise<void> {
+export function queueTargetMines(
+    cloudUrl: string,
+    account: string,
+    mines: import('./target-types').HeardTargetMine[]
+): Promise<void> {
     const write = mineWrites
         .catch(() => {})
         .then(async () => {
             if ((await storedAccount())?.userId !== account || mines.length > 15) throw new Error('Account changed');
+            const base = resolveCloudBase(cloudUrl);
             for (const mine of mines) {
                 if (mine.account !== account) throw new Error('Account mismatch');
                 const key =
                     MINES +
-                    (await hash(JSON.stringify([account, mine.lang, mine.episodeId, mine.lineStartMs, mine.lemma])));
+                    (await hash(
+                        JSON.stringify([base, account, mine.lang, mine.episodeId, mine.lineStartMs, mine.lemma])
+                    ));
                 if ((await browser.storage.local.get(key))[key]) continue;
-                await browser.storage.local.set({ [key]: { account, payload: mine } });
+                await browser.storage.local.set({ [key]: { base, account, payload: mine } });
             }
         });
     mineWrites = write;
@@ -186,47 +209,77 @@ export function drainTargetMines(
     mining = (async () => {
         const account = (await storedAccount())?.userId;
         if (!account) return;
+        const base = resolveCloudBase(cloudUrl);
         let cloud: Awaited<ReturnType<typeof targetCloud>> | undefined;
         const entries = Object.entries(await browser.storage.local.get(null)).filter(
-            ([key, value]) => key.startsWith(MINES) && (value as any)?.account === account && !(value as any)?.done
+            ([key, value]) =>
+                key.startsWith(MINES) &&
+                (value as any)?.base === base &&
+                (value as any)?.account === account &&
+                !(value as any)?.done
         );
-        for (const [key, raw] of entries) {
-            const mine = (raw as any).payload as import('./target-types').HeardTargetMine;
-            if (!mine || mine.account !== account) continue;
-            if ((await storedAccount())?.userId !== account) return;
-            const pending = await pendingFeedback(account);
-            const dismissed = pending.some(
-                (a) =>
-                    a.lang === mine.lang &&
-                    a.lemma === mine.lemma &&
-                    (a.kind === 'target_dismissed_known' ||
-                        (a.kind === 'target_dismissed_not_this' && a.source.startsWith(`episode:${mine.tmdb}:S`)))
-            );
-            if (!dismissed) {
-                const config = await getConfig();
-                if (!config) return;
+        let pending = await pendingFeedback(account, base);
+        let feedbackDirty = false;
+        const onStorageChanged = (changes: Record<string, unknown>, area: string) => {
+            if (area === 'local' && Object.keys(changes).some((key) => key.startsWith(OUTBOX))) feedbackDirty = true;
+        };
+        browser.storage.onChanged.addListener(onStorageChanged);
+        try {
+            for (const [key, raw] of entries) {
+                const mine = (raw as any).payload as import('./target-types').HeardTargetMine;
+                if (!mine || mine.account !== account) continue;
                 if ((await storedAccount())?.userId !== account) return;
-                try {
-                    cloud ??= await targetCloud(cloudUrl);
-                    const eligibility = await cloud.request('/v2/targets/check', 'POST', {
-                        lang: mine.lang,
-                        tmdb: mine.tmdb,
-                        lemmas: [mine.lemma],
-                    });
-                    if (eligibility.account !== account) continue;
-                    const { mineHeardTarget } = await import('./daemon-client');
-                    const result = await mineHeardTarget(config, {
-                        ...mine,
-                        eligible: Array.isArray(eligibility.eligible) && eligibility.eligible.includes(mine.lemma),
-                        autoMineToAnki: eligibility.autoMineToAnki === true,
-                    });
-                    if (!result.ok || result.ankiPending) continue;
-                } catch {
-                    continue;
-                } // Keep this job, but let independent lines progress.
+                if (feedbackDirty) {
+                    pending = await pendingFeedback(account, base);
+                    feedbackDirty = false;
+                }
+                const dismissed = pending.some(
+                    (a) =>
+                        a.lang === mine.lang &&
+                        a.lemma === mine.lemma &&
+                        (a.kind === 'target_dismissed_known' ||
+                            (a.kind === 'target_dismissed_not_this' && a.source.startsWith(`episode:${mine.tmdb}:S`)))
+                );
+                if (!dismissed) {
+                    const config = await getConfig();
+                    if (!config) return;
+                    if ((await storedAccount())?.userId !== account) return;
+                    try {
+                        cloud ??= await targetCloud(cloudUrl);
+                        const eligibility = await cloud.request('/v2/targets/check', 'POST', {
+                            lang: mine.lang,
+                            tmdb: mine.tmdb,
+                            lemmas: [mine.lemma],
+                        });
+                        if (eligibility.account !== account) continue;
+                        const { mineHeardTarget } = await import('./daemon-client');
+                        const result = await mineHeardTarget(config, {
+                            ...mine,
+                            eligible: Array.isArray(eligibility.eligible) && eligibility.eligible.includes(mine.lemma),
+                            autoMineToAnki: eligibility.autoMineToAnki === true,
+                        });
+                        if (!result.ok || result.ankiPending) continue;
+                    } catch {
+                        continue;
+                    } // Keep this job, but let independent lines progress.
+                }
+                // Keep a bounded dedupe marker once delivered; discard line/frame data.
+                await browser.storage.local.set({ [key]: { base, account, done: true, doneAt: Date.now() } });
             }
-            // Keep only a small dedupe marker once delivered; discard line/frame data.
-            await browser.storage.local.set({ [key]: { account, done: true } });
+        } finally {
+            browser.storage.onChanged.removeListener(onStorageChanged);
+        }
+        const completed = Object.entries(await browser.storage.local.get(null))
+            .filter(
+                ([key, value]) =>
+                    key.startsWith(MINES) &&
+                    (value as any)?.base === base &&
+                    (value as any)?.account === account &&
+                    (value as any)?.done
+            )
+            .sort(([, a], [, b]) => ((b as any).doneAt ?? 0) - ((a as any).doneAt ?? 0));
+        for (const [key] of completed.slice(MAX_COMPLETED_MINES)) {
+            await browser.storage.local.remove(key);
         }
     })().finally(() => {
         mining = undefined;

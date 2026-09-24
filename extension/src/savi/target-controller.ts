@@ -116,13 +116,18 @@ export class SaviTargetController {
         const key = JSON.stringify([meta.episodeId, meta.show, meta.title, this.lang]);
         const retry = this.retries.get(key);
         if ((retry && Date.now() < retry.nextAt) || this.prepared) return;
-        this.retries.set(key, { failures: retry?.failures ?? 0, nextAt: Infinity });
+        const attempt = { failures: retry?.failures ?? 0, nextAt: Infinity };
+        this.retries.set(key, attempt);
         this.episode = meta.episodeId;
         const generation = ++this.generation;
         void this.deps
             .send({ command: 'savi-episode-targets', ...meta, lang: this.lang })
-            .then((result: TargetPreparation | null) => {
-                if (generation !== this.generation || this.deps.metadata().episodeId !== this.episode) return;
+            .then((result: TargetPreparation | { unavailable: true } | null) => {
+                if (generation !== this.generation || this.deps.metadata().episodeId !== this.episode) {
+                    if (this.retries.get(key) === attempt) this.retries.delete(key);
+                    return;
+                }
+                if (result && 'unavailable' in result) throw new Error('Target preparation unavailable');
                 if (!result) {
                     this.retries.set(key, { failures: 0, nextAt: Date.now() + SaviTargetController.negativeCacheMs });
                     return;
@@ -137,7 +142,10 @@ export class SaviTargetController {
                 // A slow request never pauses playback after the user's gesture.
             })
             .catch(() => {
-                if (generation !== this.generation) return;
+                if (generation !== this.generation) {
+                    if (this.retries.get(key) === attempt) this.retries.delete(key);
+                    return;
+                }
                 const failures = (retry?.failures ?? 0) + 1;
                 const delay = Math.min(30_000 * 2 ** (failures - 1), SaviTargetController.maximumRetryMs);
                 this.retries.set(key, { failures, nextAt: Date.now() + delay });

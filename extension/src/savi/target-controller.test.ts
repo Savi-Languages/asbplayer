@@ -138,8 +138,8 @@ it('retries transient preparation failures with exponential backoff without paus
     const pause = jest.fn();
     const send = jest
         .fn()
-        .mockRejectedValueOnce(new Error('offline'))
-        .mockRejectedValueOnce(new Error('still offline'))
+        .mockResolvedValueOnce({ unavailable: true })
+        .mockResolvedValueOnce({ unavailable: true })
         .mockResolvedValue(prep());
     const controller = new SaviTargetController({
         video,
@@ -226,6 +226,8 @@ it('starts preparation on Explore and cancels it when returning to Watch', async
     await settle();
     video.dispatchEvent(new Event('play'));
     expect(document.querySelector('[data-savi-target-card]')).toBeNull();
+    controller.setImmersionMode('explore');
+    expect(send).toHaveBeenCalledTimes(2);
     controller.stop();
 });
 
