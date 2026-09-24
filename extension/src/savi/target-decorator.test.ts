@@ -42,7 +42,7 @@ it('decorates only the primary track in ordinary and fullscreen containers', asy
     const mock = jest.spyOn(subtitleTokens, 'getRaw').mockResolvedValue([{ text: '関与', lemma: '関与' }]);
     const decorator = new SaviTargetDecorator(() => [{ text: '関与', track: 0 }]);
     decorator.setTargets('ja', ['関与']);
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));
     expect(document.querySelectorAll('[data-track="0"] .savi-target')).toHaveLength(2);
     expect(document.querySelector('[data-track="1"] .savi-target')).toBeNull();
     decorator.stop();

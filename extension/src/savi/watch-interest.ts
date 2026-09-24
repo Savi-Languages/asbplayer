@@ -41,6 +41,10 @@ export class SaviWatchInterest {
     private timer?: ReturnType<typeof setTimeout>;
     private refresh?: ReturnType<typeof setInterval>;
     private saved = new Set<string>();
+    private configRevision = 0;
+    private modeRevision = 0;
+    private modeWritesInFlight = 0;
+    private modeWriteQueue: Promise<void> = Promise.resolve();
     constructor(private readonly deps: Sources) {}
     start(lang: string) {
         if (this.bound && this.lang === lang) return;
@@ -67,6 +71,8 @@ export class SaviWatchInterest {
         document.removeEventListener('fullscreenchange', this.fullscreen);
         this.deps.onModeChange?.('watch', false);
         this.generation++;
+        this.configRevision++;
+        this.modeRevision++;
         this.enabled = false;
         this.account = '';
         this.saved.clear();
@@ -80,9 +86,19 @@ export class SaviWatchInterest {
     }
     private async config() {
         const generation = this.generation;
+        const revision = ++this.configRevision;
+        const modeRevision = this.modeRevision;
+        const startedDuringModeWrite = this.modeWritesInFlight > 0;
         try {
             const result = await this.deps.send({ command: 'savi-watch-interest-config' });
-            if (!this.bound || generation !== this.generation) return;
+            if (
+                !this.bound ||
+                generation !== this.generation ||
+                revision !== this.configRevision ||
+                modeRevision !== this.modeRevision ||
+                startedDuringModeWrite
+            )
+                return;
             if (this.account !== result?.account) {
                 this.clear();
                 this.saved.clear();
@@ -95,6 +111,7 @@ export class SaviWatchInterest {
             this.updateMode();
             if (!this.enabled) this.clear();
         } catch {
+            if (revision !== this.configRevision || modeRevision !== this.modeRevision) return;
             this.enabled = false;
             this.clear();
         }
@@ -154,10 +171,15 @@ export class SaviWatchInterest {
         };
         for (const mode of ['watch', 'explore', 'listen']) {
             const b = button(mode[0].toUpperCase() + mode.slice(1), () => {
-                void this.deps
-                    .send({ command: 'savi-set-immersion-mode', mode })
-                    .then((r) => {
-                        if (!this.bound) return;
+                const revision = ++this.modeRevision;
+                const generation = this.generation;
+                this.modeWritesInFlight++;
+                this.modeWriteQueue = this.modeWriteQueue
+                    .catch(() => {})
+                    .then(async () => {
+                        if (!this.bound || generation !== this.generation) return;
+                        const r = await this.deps.send({ command: 'savi-set-immersion-mode', mode });
+                        if (!this.bound || generation !== this.generation || revision !== this.modeRevision) return;
                         if (!r?.ok) {
                             if (this.status) this.status.textContent = 'Could not save mode. Try again.';
                             return;
@@ -167,7 +189,16 @@ export class SaviWatchInterest {
                         this.updateMode();
                     })
                     .catch(() => {
-                        if (this.status) this.status.textContent = 'Mode unavailable.';
+                        if (
+                            this.bound &&
+                            generation === this.generation &&
+                            revision === this.modeRevision &&
+                            this.status
+                        )
+                            this.status.textContent = 'Mode unavailable.';
+                    })
+                    .finally(() => {
+                        this.modeWritesInFlight--;
                     });
             });
             b.dataset.mode = mode;

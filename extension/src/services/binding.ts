@@ -271,7 +271,6 @@ export default class Binding {
     private fastForwardPlaybackMinimumGapMs = 600;
     private fastForwardModePlaybackRate = 2.7;
     private imageDelay = 0;
-    private _saviImmersionMode = 'watch';
     private pauseOnHoverMode: PauseOnHoverMode = PauseOnHoverMode.disabled;
     hoveredToken: HoveredToken;
     recordMedia: boolean;
@@ -330,10 +329,6 @@ export default class Binding {
         this.saviWatchInterest = new SaviWatchInterest({
             video,
             onModeChange: (mode, hideText) => {
-                if (this._saviImmersionMode !== mode) {
-                    this._saviImmersionMode = mode;
-                    this.syncImmersionGloss();
-                }
                 this.saviTargetController?.setImmersionMode(mode);
                 this.subtitleController.immersionHideSubtitles = hideText;
                 this.subtitleController.refreshCurrentSubtitle = true;
@@ -1012,15 +1007,9 @@ export default class Binding {
             // space of the subtitle container (hovering the blank area beside
             // the text should not pause).
             const overText = mouseEvent.target instanceof Element && mouseEvent.target.closest('[data-track]') !== null;
-            // When savi's on-demand hover feature is active it owns the hover-pause
-            // (holds the line at its END instead), so suppress asbplayer's IMMEDIATE
-            // pause-on-hover to avoid pausing the moment the cursor lands on a word.
-            if (
-                overText &&
-                this.pauseOnHoverMode !== PauseOnHoverMode.disabled &&
-                !this.saviGlossHover.isActive() &&
-                !this.video.paused
-            ) {
+            // The user's explicit asbplayer Pause-on-hover choice takes precedence
+            // over Savi's optional end-of-line hover hold.
+            if (overText && this.pauseOnHoverMode !== PauseOnHoverMode.disabled && !this.video.paused) {
                 this.video.pause();
                 this.pausedDueToHover = true;
 

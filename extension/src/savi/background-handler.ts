@@ -153,7 +153,11 @@ export default class SaviCommandHandler implements CommandHandler {
                     .catch(() => sendResponse({ ok: false }));
                 return true;
             case 'savi-mine-targets':
-                queueTargetMines(command.message.account, command.message.mines)
+                this._settings
+                    .get(['saviCloudUrl'])
+                    .then(({ saviCloudUrl }) =>
+                        queueTargetMines(saviCloudUrl, command.message.account, command.message.mines)
+                    )
                     .then(() => {
                         sendResponse({ ok: true });
                         void this.drainTargetMines().catch(() => {});
@@ -165,7 +169,10 @@ export default class SaviCommandHandler implements CommandHandler {
                     .get(['saviCloudUrl'])
                     .then(({ saviCloudUrl }) => prepareTargets(saviCloudUrl, command.message))
                     .then(sendResponse)
-                    .catch(() => sendResponse(null));
+                    // `null` is reserved for a title that was definitively not
+                    // resolved. Transport/auth/server failures must keep their
+                    // retry semantics in the content-side controller.
+                    .catch(() => sendResponse({ unavailable: true }));
                 return true;
             case 'savi-target-feedback':
                 this._settings

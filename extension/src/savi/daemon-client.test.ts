@@ -106,6 +106,30 @@ describe('the credential split on the wire', () => {
         expect(lastFetchHeaders()['Authorization']).toBe('Bearer lan-token');
         expect('X-Savi-Account' in lastFetchHeaders()).toBe(false);
     });
+
+    it('refuses the JWT-as-bearer fallback for target mining', async () => {
+        global.fetch = jest.fn() as any;
+        await expect(
+            mineHeardTarget(
+                { baseUrl: 'http://127.0.0.1:4030', token: 'cloud-jwt', accountJwt: 'cloud-jwt' },
+                {
+                    account: 'alice',
+                    episodeId: 'netflix:1',
+                    tmdb: 1,
+                    lineStartMs: 1000,
+                    occurredAtMs: 2000,
+                    lang: 'ja',
+                    lineText: '関与',
+                    surface: '関与',
+                    lemma: '関与',
+                    exportToAnki: false,
+                    eligible: true,
+                    autoMineToAnki: false,
+                }
+            )
+        ).rejects.toThrow('LAN token');
+        expect(global.fetch).not.toHaveBeenCalled();
+    });
 });
 
 describe('typed unavailable passthrough', () => {

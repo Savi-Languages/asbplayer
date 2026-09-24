@@ -103,3 +103,34 @@ test('Listen has a reversible text reveal and teardown restores subtitles', asyn
     expect(onModeChange).toHaveBeenLastCalledWith('watch', false);
     expect(document.querySelector('[data-savi-immersion]')).toBeNull();
 });
+
+test('a mode choice wins over an older config request', async () => {
+    const video = document.createElement('video');
+    const onModeChange = jest.fn();
+    let resolveConfig!: (value: unknown) => void;
+    const send = jest.fn((message: any) => {
+        if (message.command === 'savi-watch-interest-config') {
+            return new Promise((resolve) => {
+                resolveConfig = resolve;
+            });
+        }
+        return Promise.resolve({ ok: true });
+    });
+    const controller = new SaviWatchInterest({
+        video,
+        subtitles: () => cues,
+        metadata: () => ({ episodeId: 'netflix:1', title: 'Episode' }),
+        onModeChange,
+        send,
+    });
+    controller.start('ja');
+    const shadow = document.querySelector('[data-savi-immersion]')!.shadowRoot!;
+    const explore = Array.from(shadow.querySelectorAll('button')).find((b) => b.textContent === 'Explore')!;
+    explore.click();
+    await flush();
+    resolveConfig({ account: 'u', enabled: true, mode: 'listen' });
+    await flush();
+
+    expect(onModeChange).toHaveBeenLastCalledWith('explore', false);
+    controller.stop();
+});

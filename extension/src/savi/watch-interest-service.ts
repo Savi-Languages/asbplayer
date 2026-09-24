@@ -10,6 +10,7 @@ export async function watchInterestConfig(url: string) {
     const key = cacheKey(base, account.userId);
     try {
         const cloud = await targetCloud(url);
+        if (cloud.user !== account.userId) throw new Error('Account changed');
         const settings = (await cloud.request('/v2/settings')).settings;
         const mode = ['watch', 'explore', 'listen'].includes(settings?.saviImmersionMode?.value)
             ? settings.saviImmersionMode.value
@@ -19,6 +20,10 @@ export async function watchInterestConfig(url: string) {
         await browser.storage.local.set({ [key]: { enabled, mode, at: Date.now() } });
         return { account: cloud.user, enabled, mode };
     } catch {
+        const current = await storedAccount();
+        if (current?.userId !== account.userId) {
+            return { account: current?.userId, mode: 'watch', enabled: false };
+        }
         // Offline continuation is allowed only after explicit opt-in on this backend/account.
         const cached = (await browser.storage.local.get(key))[key] as
             | { enabled?: boolean; mode?: string; at: number }
@@ -55,7 +60,7 @@ export async function queueWatchInterest(url: string, account: string, item: any
     )
         return { ok: false };
     const base = resolveCloudBase(url);
-    const key = PREFIX + JSON.stringify([base, account, item.lang, item.episodeId, item.lineStartMs]);
+    const key = PREFIX + JSON.stringify([base, account, item.lang, item.episodeId, item.lineStartMs, item.kind]);
     if (!(await browser.storage.local.get(key))[key])
         await browser.storage.local.set({ [key]: { base, account, item } });
     void drainWatchInterest(url).catch(() => {});
@@ -74,7 +79,7 @@ export function drainWatchInterest(url: string): Promise<void> {
             const row = raw as any;
             if (!key.startsWith(PREFIX) || row.account !== cloud.user || row.base !== base) continue;
             await cloud.check();
-            if (row.retryAt && row.retryAt > Date.now() && enabled) continue;
+            if (row.retryAt && row.retryAt > Date.now() && (enabled || row.item.kind === 'bookmark')) continue;
             try {
                 if (enabled || row.item.kind === 'bookmark') await cloud.request('/v2/watch-review', 'POST', row.item);
                 await browser.storage.local.remove(key);

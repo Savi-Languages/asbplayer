@@ -3,7 +3,7 @@ jest.mock('./cloud-client', () => ({ resolveCloudBase: (url: string) => url }));
 jest.mock('./target-service', () => ({ targetCloud: jest.fn() }));
 import { storedAccount } from './account';
 import { targetCloud } from './target-service';
-import { queueWatchInterest, drainWatchInterest } from './watch-interest-service';
+import { queueWatchInterest, drainWatchInterest, watchInterestConfig } from './watch-interest-service';
 const pending: Record<string, any> = {};
 const request = jest.fn();
 beforeEach(() => {
@@ -56,6 +56,20 @@ test('queue survives offline and drains only to its account and backend', async 
     expect(keys()).toHaveLength(0);
 });
 
+test("never caches a switched account's consent under the previous account", async () => {
+    (storedAccount as jest.Mock).mockResolvedValueOnce({ userId: 'a' }).mockResolvedValueOnce({ userId: 'b' });
+    (targetCloud as jest.Mock).mockResolvedValue({
+        user: 'b',
+        check: async () => {},
+        request: async () => ({
+            settings: { saviSavePausedHovers: { value: true }, saviImmersionMode: { value: 'explore' } },
+        }),
+    });
+
+    await expect(watchInterestConfig('local')).resolves.toEqual({ account: 'b', mode: 'watch', enabled: false });
+    expect(browser.storage.local.set).not.toHaveBeenCalled();
+});
+
 test('Watch blocks automatic hover mining but permits deliberate bookmarks', async () => {
     request.mockImplementation(async (path: string) =>
         path === '/v2/settings'
@@ -73,6 +87,21 @@ test('Watch blocks automatic hover mining but permits deliberate bookmarks', asy
     };
     expect(await queueWatchInterest('local', 'a', item)).toEqual({ ok: false });
     expect(await queueWatchInterest('local', 'a', { ...item, kind: 'bookmark' })).toEqual({ ok: true });
+});
+
+test('keeps an explicit bookmark when the same line already has a hover job', async () => {
+    const item = {
+        lang: 'ja',
+        episodeId: 'netflix:2',
+        kind: 'hover',
+        dwellMs: 1500,
+        lineText: 'そうなんだ',
+        lineStartMs: 1000,
+        lineEndMs: 2000,
+    };
+    expect(await queueWatchInterest('local', 'a', item)).toEqual({ ok: true });
+    expect(await queueWatchInterest('local', 'a', { ...item, kind: 'bookmark' })).toEqual({ ok: true });
+    expect(Object.keys(pending).filter((key) => key.startsWith('saviWatchInterest:'))).toHaveLength(2);
 });
 
 test.each([400, 413, 422])('drops a permanently invalid watch-review job after HTTP %s', async (status) => {
@@ -111,4 +140,29 @@ test.each([401, 403, 408, 429, 500])('retains a retryable watch-review job after
     const jobs = Object.entries(pending).filter(([key]) => key.startsWith('saviWatchInterest:'));
     expect(jobs).toHaveLength(1);
     expect((jobs[0][1] as any).retryAt).toBeGreaterThan(Date.now());
+});
+
+test('honors bookmark retry backoff even when automatic hover saving is disabled', async () => {
+    const item = {
+        lang: 'ja',
+        episodeId: 'netflix:5',
+        kind: 'bookmark',
+        lineText: 'retry later',
+        lineStartMs: 1000,
+        lineEndMs: 2000,
+    };
+    expect(await queueWatchInterest('local', 'a', item)).toEqual({ ok: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const key = Object.keys(pending).find((candidate) => candidate.startsWith('saviWatchInterest:'))!;
+    pending[key].retryAt = Date.now() + 60_000;
+    request.mockClear();
+    request.mockImplementation(async (path: string) => {
+        if (path === '/v2/settings') return { settings: { saviSavePausedHovers: { value: false } } };
+        throw new Error('must not retry during backoff');
+    });
+
+    await drainWatchInterest('local');
+
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(pending[key]).toBeDefined();
 });
