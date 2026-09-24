@@ -911,6 +911,11 @@ export class SpotifyPanel {
             this.captureFinishing = false;
         }
     }
+    /** Whether this panel is feeding a capture right now — its answer to the
+     *  background's 'savi-capture-ping' (capture-staleness.ts). */
+    isCapturing(): boolean {
+        return !this.disposed && this.captureId !== '';
+    }
     captureEnded(message: any) {
         if (message.command === 'savi-capture-ended' && spotifyIdentity(message.src)) {
             this.notice(
