@@ -212,6 +212,14 @@ export interface VideoData {
     basename: string;
     error?: string;
     subtitles?: VideoDataSubtitleTrack[];
+    /** Stable identity of the media session that produced this response.
+     *
+     * Netflix is a single-page app and an asynchronous response from the
+     * previous player can arrive after `/watch/<id>` has changed. Consumers
+     * must discard an identified response when it no longer matches the page.
+     * Other page integrations may omit this until they can provide an equally
+     * stable identity. */
+    episodeId?: string;
     /** BCP-47 tag of the language actually SPOKEN, when the page can tell
      *  (YouTube: the `kind:"asr"` caption track, which is derived FROM the
      *  audio). Distinct from `subtitles`, which merely lists what is on offer —

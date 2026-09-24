@@ -36,7 +36,7 @@ jest.mock('@/services/tutorial', () => ({ isOnTutorialPage: () => false }));
 jest.mock('@/pages/util', () => ({ extractExtension: (_u: string, e: string) => e }));
 jest.mock('@/savi/cloud-settings', () => ({ getCachedRoamingSettings: jest.fn() }));
 
-import VideoDataSyncController from './video-data-sync-controller';
+import VideoDataSyncController, { videoDataMatchesEpisode } from './video-data-sync-controller';
 import { getCachedRoamingSettings } from '@/savi/cloud-settings';
 import { resetMutedEpisodesMemo } from '@/savi/muted-episodes';
 
@@ -48,6 +48,18 @@ const track = (id: string, language: string, label: string) => ({
     label,
     url: `https://sub/${id}.vtt`,
     extension: 'nfimsc',
+});
+
+describe('videoDataMatchesEpisode', () => {
+    it('rejects an identified Netflix response after the page changes', () => {
+        expect(videoDataMatchesEpisode('netflix:111', 'netflix:222')).toBe(false);
+        expect(videoDataMatchesEpisode('netflix:111', undefined)).toBe(false);
+    });
+
+    it('accepts the current episode and unidentified legacy integrations', () => {
+        expect(videoDataMatchesEpisode('netflix:111', 'netflix:111')).toBe(true);
+        expect(videoDataMatchesEpisode(undefined, 'netflix:111')).toBe(true);
+    });
 });
 
 describe('VideoDataSyncController savi auto-load (SV-8)', () => {
@@ -352,5 +364,57 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
 
         expect(await controller._trySaviAutoLoad()).toBe(true);
         expect(loadSubtitles).toHaveBeenCalledTimes(1);
+    });
+
+    describe('episode-safe controller wiring', () => {
+        it('threads the selected episode through the picker confirm download path', async () => {
+            controller._syncedData = { episodeId: 'netflix:111', subtitles: [] };
+            controller._subtitlesForUrl = jest.fn().mockResolvedValue([]);
+
+            await controller._syncDataArray([
+                {
+                    name: 'Spanish',
+                    language: 'es',
+                    extension: 'vtt',
+                    url: 'lazy',
+                },
+            ]);
+
+            expect(controller._subtitlesForUrl).toHaveBeenCalledWith(
+                'Spanish',
+                'es',
+                'vtt',
+                'lazy',
+                undefined,
+                'netflix:111'
+            );
+        });
+
+        it('re-requests page data after a mismatched identified response, with a bounded retry count', async () => {
+            jest.useFakeTimers();
+            controller._dispatchSyncedDataRequest = jest.fn().mockResolvedValue(undefined);
+
+            try {
+                for (let attempt = 0; attempt < 4; attempt++) {
+                    await controller._setSyncedData({ episodeId: 'netflix:stale' });
+                    await jest.advanceTimersByTimeAsync(500);
+                }
+
+                expect(controller._dispatchSyncedDataRequest).toHaveBeenCalledTimes(3);
+            } finally {
+                jest.useRealTimers();
+            }
+        });
+
+        it('does not remember an auto-loaded language when the page changed during download', async () => {
+            controller._syncedData = {
+                basename: 'Show',
+                subtitles: [track('2', 'es', 'Spanish')],
+            };
+            controller._syncData = jest.fn().mockResolvedValue(false);
+
+            expect(await controller._trySaviAutoLoad()).toBe(false);
+            expect(settingsSet).not.toHaveBeenCalled();
+        });
     });
 });
