@@ -25,7 +25,7 @@ import {
     youtubeShowAndTitle,
     youtubeShowId,
 } from './episode';
-import { isTopLevelFrame } from './capture-context';
+import { allowsAutomaticCapture } from './capture-context';
 import { NativeSubtitleHider, nativeSubtitleSelectorForHost } from './native-subtitle-hider';
 import { SaviRecordButton } from './record-button';
 import { SaviReplayButton } from './replay-button';
@@ -245,7 +245,7 @@ export class SaviCaptureController {
                         // stays stopped.
                         const { episodeId } = this._pageMetadata();
                         if (
-                            isTopLevelFrame() &&
+                            allowsAutomaticCapture() &&
                             episodeId !== undefined &&
                             !this._starting &&
                             !this._deliberatelyStopped.has(episodeId)
@@ -322,7 +322,7 @@ export class SaviCaptureController {
                     // throwaway id and split the episode's takes in two.
                     if (
                         episodeId !== undefined &&
-                        isTopLevelFrame() &&
+                        allowsAutomaticCapture() &&
                         !this._active &&
                         !this._starting &&
                         !this._deliberatelyStopped.has(episodeId)
