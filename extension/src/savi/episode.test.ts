@@ -8,6 +8,7 @@ import {
     stripSiteSuffix,
     youtubeShowAndTitle,
     youtubeShowId,
+    captureTitle,
 } from './episode';
 
 describe('slugify', () => {
@@ -97,12 +98,81 @@ describe('deriveEpisodeId — YouTube', () => {
         expect(deriveEpisodeId('https://music.youtube.com/watch?v=abc123', 'Song')).toBe('youtube:abc123');
     });
 
+    it('uses the path segment on Shorts and Live pages', () => {
+        expect(deriveEpisodeId('https://www.youtube.com/shorts/dQw4w9WgXcQ', 'A short - YouTube')).toBe(
+            'youtube:dQw4w9WgXcQ'
+        );
+        expect(deriveEpisodeId('https://www.youtube.com/live/abc123?feature=share', 'A stream - YouTube')).toBe(
+            'youtube:abc123'
+        );
+    });
+
     it('yields NO id on a YouTube page with no video id', () => {
         // Same rule as Netflix: a known platform never falls back to a title
         // slug, because the daemon keys its episode store on this id.
         expect(
             deriveEpisodeId('https://www.youtube.com/feed/subscriptions', 'Subscriptions - YouTube')
         ).toBeUndefined();
+    });
+
+    it('uses the /embed/<id> path segment of an embedded player', () => {
+        expect(deriveEpisodeId('https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=1', 'YouTube')).toBe(
+            'youtube:dQw4w9WgXcQ'
+        );
+    });
+
+    it('resolves an embed on youtube.googleapis.com to the same id as its watch page', () => {
+        // Seen live on 2026-09-20: this host was unknown, so the embed fell
+        // through to the generic fallback and came out
+        // `youtube.googleapis.com:youtube`.
+        expect(deriveEpisodeId('https://youtube.googleapis.com/embed/dQw4w9WgXcQ?rel=0', 'YouTube')).toBe(
+            'youtube:dQw4w9WgXcQ'
+        );
+        expect(deriveEpisodeId('https://youtube.googleapis.com/v/dQw4w9WgXcQ', 'YouTube')).toBe('youtube:dQw4w9WgXcQ');
+    });
+
+    it('yields NO id on a youtube.googleapis.com embed with no video id', () => {
+        // The document title of every embed is a bare "YouTube", so a title
+        // slug here is ONE bucket shared by every embedded video anywhere.
+        expect(deriveEpisodeId('https://youtube.googleapis.com/embed/', 'YouTube')).toBeUndefined();
+        expect(deriveEpisodeId('https://youtube.googleapis.com/', 'YouTube')).toBeUndefined();
+    });
+
+    it('resolves the other embed-only hosts too', () => {
+        expect(deriveEpisodeId('https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ', 'YouTube')).toBe(
+            'youtube:dQw4w9WgXcQ'
+        );
+        expect(deriveEpisodeId('https://www.youtubeeducation.com/embed/dQw4w9WgXcQ', 'YouTube')).toBe(
+            'youtube:dQw4w9WgXcQ'
+        );
+        expect(deriveEpisodeId('https://www.youtube-nocookie.com/embed/', 'YouTube')).toBeUndefined();
+    });
+
+    it('does not mistake an embed MODE for a video id', () => {
+        // Both are 11 characters, exactly like a real id. The video they play
+        // comes from ?list= / ?channel= and is not in the URL.
+        expect(deriveEpisodeId('https://www.youtube.com/embed/videoseries?list=PLabc', 'YouTube')).toBeUndefined();
+        expect(
+            deriveEpisodeId('https://www.youtube-nocookie.com/embed/live_stream?channel=UCabc', 'YouTube')
+        ).toBeUndefined();
+    });
+
+    it('does not treat a lookalike host as YouTube', () => {
+        expect(deriveEpisodeId('https://notyoutube-nocookie.com/embed/dQw4w9WgXcQ', 'Some Talk')).toBe(
+            'notyoutube-nocookie.com:some-talk'
+        );
+    });
+});
+
+describe('captureTitle', () => {
+    it('omits the generic YouTube title so an embed cannot overwrite real metadata', () => {
+        expect(captureTitle('https://www.youtube.com/embed/dQw4w9WgXcQ', 'YouTube')).toBeUndefined();
+        expect(captureTitle('https://youtube.googleapis.com/v/dQw4w9WgXcQ', ' YouTube ')).toBeUndefined();
+    });
+
+    it('keeps a real YouTube title and generic-site titles', () => {
+        expect(captureTitle('https://www.youtube.com/watch?v=abc', 'A real video')).toBe('A real video');
+        expect(captureTitle('https://example.com/video', 'YouTube')).toBe('YouTube');
     });
 });
 
