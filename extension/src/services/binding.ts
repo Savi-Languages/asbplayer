@@ -114,6 +114,7 @@ import { muteSite, siteKeyForUrl } from '../savi/muted-sites';
 import { dismissHushFor, isHushDismissed } from '../savi/hush-dismissed';
 import { getCachedRoamingSettings } from '../savi/cloud-settings';
 import { deriveEpisodeId } from '../savi/episode';
+import { shouldPauseForAsbplayerHover } from './pause-on-hover';
 
 let netflix = false;
 document.addEventListener('asbplayer-netflix-enabled', (e) => {
@@ -1007,9 +1008,16 @@ export default class Binding {
             // space of the subtitle container (hovering the blank area beside
             // the text should not pause).
             const overText = mouseEvent.target instanceof Element && mouseEvent.target.closest('[data-track]') !== null;
-            // The user's explicit asbplayer Pause-on-hover choice takes precedence
-            // over Savi's optional end-of-line hover hold.
-            if (overText && this.pauseOnHoverMode !== PauseOnHoverMode.disabled && !this.video.paused) {
+            // When Savi handles the hover, let playback reach the subtitle boundary
+            // before holding. asbplayer's immediate hover-pause remains the fallback.
+            if (
+                shouldPauseForAsbplayerHover({
+                    overSubtitleText: overText,
+                    pauseOnHoverEnabled: this.pauseOnHoverMode !== PauseOnHoverMode.disabled,
+                    videoPaused: this.video.paused,
+                    saviGlossHoverActive: this.saviGlossHover.isActive(),
+                })
+            ) {
                 this.video.pause();
                 this.pausedDueToHover = true;
 
