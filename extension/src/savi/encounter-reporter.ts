@@ -264,9 +264,18 @@ export class SaviEncounterReporter {
         this._deps
             .send(message)
             .then((response) => {
-                if (!(response as { ok?: boolean })?.ok) throw new Error('Heard line was not acknowledged');
-                this._noteDelivered();
-                this._deps.onHeardAcknowledged?.(message);
+                const result = response as { ok?: boolean; reason?: string };
+                if (result?.ok) {
+                    this._noteDelivered();
+                    this._deps.onHeardAcknowledged?.(message);
+                } else if (result?.reason === 'unreachable') {
+                    this._noteFailure(new Error('Savi daemon is unreachable'));
+                } else {
+                    // Missing configuration and HTTP rejection both prove nothing
+                    // about reachability. Neither may raise the "daemon is off"
+                    // alarm, and neither acknowledges the heard line for mining.
+                    this._noteDelivered();
+                }
             })
             .catch((e) => this._noteFailure(e));
     }

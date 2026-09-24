@@ -131,12 +131,16 @@ it('samples the cue end when its acknowledgement arrives before the next timeupd
     clock.mockRestore();
 });
 
-it('retries a transient preparation failure after a bounded cooldown without pausing playback', async () => {
+it('retries transient preparation failures with exponential backoff without pausing playback', async () => {
     let now = 0;
     const clock = jest.spyOn(Date, 'now').mockImplementation(() => now);
     const video = document.createElement('video');
     const pause = jest.fn();
-    const send = jest.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue(prep());
+    const send = jest
+        .fn()
+        .mockRejectedValueOnce(new Error('offline'))
+        .mockRejectedValueOnce(new Error('still offline'))
+        .mockResolvedValue(prep());
     const controller = new SaviTargetController({
         video,
         metadata: () => ({ episodeId: 'netflix:1', title: 'S1:E1', show: 'Dark' }),
@@ -155,26 +159,99 @@ it('retries a transient preparation failure after a bounded cooldown without pau
     video.dispatchEvent(new Event('timeupdate'));
     await settle();
     expect(send).toHaveBeenCalledTimes(2);
+    now = 89999;
+    video.dispatchEvent(new Event('timeupdate'));
+    expect(send).toHaveBeenCalledTimes(2);
+    now = 90001;
+    video.dispatchEvent(new Event('timeupdate'));
+    await settle();
+    expect(send).toHaveBeenCalledTimes(3);
     expect(pause).not.toHaveBeenCalled();
     controller.stop();
     clock.mockRestore();
 });
 
-it('Watch mode never auto-pauses for a prepared target card', async () => {
+it('Watch mode never prepares, samples, mines, or auto-pauses target words', async () => {
     const video = document.createElement('video');
     const pause = jest.fn();
-    const c = new SaviTargetController({
+    const send = jest.fn(async () => prep());
+    const controller = new SaviTargetController({
+        video,
+        metadata: () => ({ episodeId: 'netflix:1', title: 'S1', show: 'Show' }),
+        subtitles: () => [{ text: '関与', start: 0, end: 1000, track: 0 }],
+        pause,
+        play: jest.fn(),
+        send,
+    });
+    controller.start('ja');
+    await settle();
+    video.dispatchEvent(new Event('play'));
+    video.dispatchEvent(new Event('timeupdate'));
+    controller.onHeardAcknowledged({
+        episodeId: 'netflix:1',
+        lang: 'ja',
+        lineStartMs: 0,
+        text: '関与',
+        occurredAtMs: 1000,
+    } as any);
+    await settle();
+    expect(send).not.toHaveBeenCalled();
+    expect(pause).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-savi-target-card]')).toBeNull();
+    controller.stop();
+});
+
+it('starts preparation on Explore and cancels it when returning to Watch', async () => {
+    const video = document.createElement('video');
+    let resolve!: (value: any) => void;
+    const send = jest.fn(
+        () =>
+            new Promise((r) => {
+                resolve = r;
+            })
+    );
+    const controller = new SaviTargetController({
         video,
         metadata: () => ({ episodeId: 'netflix:1', title: 'S1', show: 'Show' }),
         subtitles: () => [],
-        pause,
+        pause: jest.fn(),
         play: jest.fn(),
-        send: jest.fn(async () => prep()),
+        send,
     });
-    c.start('ja');
+    controller.start('ja');
+    controller.setImmersionMode('explore');
+    expect(send).toHaveBeenCalledTimes(1);
+    controller.setImmersionMode('watch');
+    resolve(prep());
     await settle();
     video.dispatchEvent(new Event('play'));
-    expect(pause).not.toHaveBeenCalled();
     expect(document.querySelector('[data-savi-target-card]')).toBeNull();
-    c.stop();
+    controller.stop();
+});
+
+it('negative-caches an unresolved title instead of retrying every event', async () => {
+    let now = 0;
+    const clock = jest.spyOn(Date, 'now').mockImplementation(() => now);
+    const video = document.createElement('video');
+    const send = jest.fn().mockResolvedValue(null);
+    const controller = new SaviTargetController({
+        video,
+        metadata: () => ({ episodeId: 'netflix:1', title: 'Unknown title', show: 'Unknown' }),
+        subtitles: () => [],
+        pause: jest.fn(),
+        play: jest.fn(),
+        send,
+    });
+    controller.setImmersionMode('explore');
+    controller.start('ja');
+    await settle();
+    now = 10 * 60_000;
+    video.dispatchEvent(new Event('timeupdate'));
+    expect(send).toHaveBeenCalledTimes(1);
+    now = 15 * 60_000 + 1;
+    video.dispatchEvent(new Event('timeupdate'));
+    await settle();
+    expect(send).toHaveBeenCalledTimes(2);
+    controller.stop();
+    clock.mockRestore();
 });

@@ -95,6 +95,7 @@ import {
     segmentLine,
     explainWord,
     lookupKanji,
+    isDaemonResponseError,
     startCapture,
     tokenizeWithAnalysis,
 } from './daemon-client';
@@ -330,8 +331,9 @@ export default class SaviCommandHandler implements CommandHandler {
     // The credential split: the LAN token is the bearer (capability), the
     // account JWT rides X-Savi-Account (identity). Resolved per request —
     // JWTs expire ~hourly.
-    drainTargetMines(): Promise<void> {
-        return drainTargetMines(() => this._daemonConfig());
+    async drainTargetMines(): Promise<void> {
+        const { saviCloudUrl } = await this._settings.get(['saviCloudUrl']);
+        return drainTargetMines(saviCloudUrl, () => this._daemonConfig());
     }
 
     private async _daemonConfig(): Promise<SaviDaemonConfig | null> {
@@ -733,7 +735,7 @@ export default class SaviCommandHandler implements CommandHandler {
     private async _watchedLine(message: SaviWatchedLineMessage): Promise<SaviWatchedLineResponse> {
         const config = await this._daemonConfig();
         if (!config) {
-            return { ok: false };
+            return { ok: false, reason: 'not-configured' };
         }
         try {
             await postWatchedLine(config, {
@@ -747,7 +749,7 @@ export default class SaviCommandHandler implements CommandHandler {
             return { ok: true };
         } catch (e) {
             // Fire-and-forget contract: a dropped line loses one line's exposure.
-            return { ok: false };
+            return { ok: false, reason: isDaemonResponseError(e) ? 'rejected' : 'unreachable' };
         }
     }
 

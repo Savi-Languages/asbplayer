@@ -331,6 +331,7 @@ export interface SaviEngagementSessionMessage {
 
 export interface SaviWatchedLineResponse {
     readonly ok: boolean;
+    readonly reason?: 'not-configured' | 'unreachable' | 'rejected';
 }
 
 // Search OpenSubtitles.com for a subtitle in the target language and return its

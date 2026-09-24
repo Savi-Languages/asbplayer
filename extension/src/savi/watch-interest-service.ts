@@ -21,7 +21,7 @@ const PREFIX = 'saviWatchInterest:';
 const cacheKey = (base: string, user: string) => `saviWatchInterestPreference:${base}:${user}`;
 const definitiveClientError = (error: unknown) => {
     const status = (error as { status?: unknown } | null)?.status;
-    return typeof status === 'number' && status >= 400 && status < 500;
+    return status === 400 || status === 413 || status === 422;
 };
 export async function watchInterestConfig(url: string) {
     const account = await storedAccount();
@@ -151,11 +151,12 @@ export function drainWatchInterest(url: string): Promise<void> {
                 await browser.storage.local.remove(key);
             } catch (error) {
                 if (definitiveClientError(error)) {
-                    // Retrying a request the server has definitively rejected can never
-                    // succeed and otherwise poisons the outbox forever.
+                    // These are validation-shaped permanent failures: retrying
+                    // the same immutable outbox row can never make it valid.
                     await browser.storage.local.remove(key);
                 } else {
-                    // Retain uncertain or unavailable assessments, with a bounded retry rate.
+                    // Auth expiry, throttling, timeouts, server faults, and
+                    // network uncertainty may all recover; keep the evidence.
                     await browser.storage.local.set({ [key]: { ...row, retryAt: Date.now() + 15 * 60000 } });
                 }
             }

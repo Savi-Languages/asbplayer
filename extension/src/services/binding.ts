@@ -857,9 +857,9 @@ export default class Binding {
     }
 
     private syncImmersionGloss() {
-        if (this._saviImmersionMode === 'explore' && this._saviLanguageActive) {
+        if (this._saviLanguageActive) {
             void Promise.all([this.saviGlossController.start(), this.saviGlossHover.start()]).then(() => {
-                if (this._saviImmersionMode !== 'explore' || !this._saviLanguageActive) {
+                if (!this._saviLanguageActive) {
                     this.saviGlossController.stop();
                     this.saviGlossHover.stop();
                 }
@@ -1026,8 +1026,8 @@ export default class Binding {
             // Keep legacy immediate hover only outside the active learning language.
             if (
                 overText &&
-                !this._saviLanguageActive &&
                 this.pauseOnHoverMode !== PauseOnHoverMode.disabled &&
+                !this.saviGlossHover.isActive() &&
                 !this.video.paused
             ) {
                 this.video.pause();

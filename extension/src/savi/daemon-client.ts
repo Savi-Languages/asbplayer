@@ -137,6 +137,9 @@ const doFetch = async (base: string, config: SaviDaemonConfig, path: string, ini
     return await response.json();
 };
 
+export const isDaemonResponseError = (error: unknown): boolean =>
+    error instanceof Error && error.message.startsWith('savi daemon:');
+
 const request = async (config: SaviDaemonConfig, path: string, init: RequestInit) => {
     const configured = normalizedBaseUrl(config.baseUrl);
     const base = discoveredBaseUrl ?? configured;
@@ -147,7 +150,7 @@ const request = async (config: SaviDaemonConfig, path: string, init: RequestInit
         // HTTP-level errors (auth, 4xx/5xx) come back as our Error above and
         // mean the daemon WAS reached — rethrow. Only a network-level failure
         // (fetch rejection: nothing listening / port moved) triggers discovery.
-        if (e instanceof Error && e.message.startsWith('savi daemon:')) {
+        if (isDaemonResponseError(e)) {
             throw e;
         }
 
@@ -590,7 +593,10 @@ export const finishCapture = async (config: SaviDaemonConfig, captureId: string)
 /** Own-review collection; Anki export is independently opted in and retryable. */
 export async function mineHeardTarget(
     config: SaviDaemonConfig,
-    body: import('./target-types').HeardTargetMine
+    body: import('./target-types').HeardTargetMine & { eligible: boolean; autoMineToAnki: boolean }
 ): Promise<{ ok: boolean; ankiPending?: boolean }> {
-    return request(config, '/v2/targets/mine', jsonInit(body));
+    // Eligibility was already checked by the authenticated extension cloud
+    // client. The local daemon needs only its LAN capability and the decision,
+    // never the user's cloud credential.
+    return request({ baseUrl: config.baseUrl, token: config.token }, '/v2/targets/mine', jsonInit(body));
 }

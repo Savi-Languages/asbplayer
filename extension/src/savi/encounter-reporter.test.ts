@@ -315,6 +315,37 @@ describe('SaviEncounterReporter (delivery failure)', () => {
 
         expect(events).toEqual(['fail', 'ok']);
     });
+
+    it('does not claim the daemon is unreachable when it is merely not configured', async () => {
+        const failures: number[] = [];
+        const acknowledged = jest.fn();
+        const { d } = deps({ send: async () => ({ ok: false, reason: 'not-configured' }) });
+        const reporter = new SaviEncounterReporter({
+            ...d,
+            onDeliveryFailure: (consecutive) => failures.push(consecutive),
+            onHeardAcknowledged: acknowledged,
+        });
+        await reporter.start();
+        reporter.report(line('Uno'));
+        reporter.flush();
+        await flush();
+        expect(failures).toEqual([]);
+        expect(acknowledged).not.toHaveBeenCalled();
+    });
+
+    it('counts only an explicit unreachable response toward the daemon alarm', async () => {
+        const failures: number[] = [];
+        const { d } = deps({ send: async () => ({ ok: false, reason: 'unreachable' }) });
+        const reporter = new SaviEncounterReporter({
+            ...d,
+            onDeliveryFailure: (consecutive) => failures.push(consecutive),
+        });
+        await reporter.start();
+        reporter.report(line('Uno'));
+        reporter.flush();
+        await flush();
+        expect(failures).toEqual([1]);
+    });
 });
 
 it('invokes mining only after an explicit successful heard acknowledgement', async () => {

@@ -1,4 +1,10 @@
-import { browserHintFromUserAgent, explainWord, postPlaybackState, segmentLine } from './daemon-client';
+import {
+    browserHintFromUserAgent,
+    explainWord,
+    mineHeardTarget,
+    postPlaybackState,
+    segmentLine,
+} from './daemon-client';
 
 describe('postPlaybackState openSegment', () => {
     const replyWith = (body: Record<string, unknown>) => {
@@ -73,6 +79,29 @@ describe('the credential split on the wire', () => {
         await postPlaybackState(
             { baseUrl: 'http://127.0.0.1:4030', token: 'lan-token' },
             { captureId: 'c', seq: 1, ops: [] }
+        );
+        expect(lastFetchHeaders()['Authorization']).toBe('Bearer lan-token');
+        expect('X-Savi-Account' in lastFetchHeaders()).toBe(false);
+    });
+
+    it('never relays the cloud account credential to local target mining', async () => {
+        global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) }) as any;
+        await mineHeardTarget(
+            { baseUrl: 'http://127.0.0.1:4030', token: 'lan-token', accountJwt: 'cloud-jwt' },
+            {
+                account: 'alice',
+                episodeId: 'netflix:1',
+                tmdb: 1,
+                lineStartMs: 1000,
+                occurredAtMs: 2000,
+                lang: 'ja',
+                lineText: '関与',
+                surface: '関与',
+                lemma: '関与',
+                exportToAnki: false,
+                eligible: true,
+                autoMineToAnki: false,
+            }
         );
         expect(lastFetchHeaders()['Authorization']).toBe('Bearer lan-token');
         expect('X-Savi-Account' in lastFetchHeaders()).toBe(false);

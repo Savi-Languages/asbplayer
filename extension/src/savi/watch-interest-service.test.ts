@@ -94,7 +94,33 @@ test('rejects untimed interests that the cloud contract cannot store', async () 
     expect(await queueWatchInterest('local', 'a', { ...base, lineEndMs: 1000 })).toEqual({ ok: false });
 });
 
-test('drops a queued row after a definitive client error instead of retrying forever', async () => {
+test.each([400, 413, 422])(
+    'drops a queued row after validation HTTP %s instead of retrying forever',
+    async (status) => {
+        const item = {
+            lang: 'ja',
+            episodeId: 'spotify:track:1234567890123456789012',
+            kind: 'bookmark',
+            lineText: '時間のある行',
+            textTiming: 'timed',
+            lineStartMs: 1000,
+            lineEndMs: 2000,
+        };
+        expect(await queueWatchInterest('local', 'a', item)).toEqual({ ok: true });
+        await drainWatchInterest('local').catch(() => {});
+        request.mockImplementation(async (path: string) => {
+            if (path === '/v2/settings')
+                return { settings: { saviSavePausedHovers: { value: true }, saviImmersionMode: { value: 'explore' } } };
+            throw { status };
+        });
+        const key = Object.keys(pending).find((candidate) => candidate.startsWith('saviWatchInterest:'))!;
+        pending[key].retryAt = Date.now() - 1;
+        await drainWatchInterest('local');
+        expect(pending[key]).toBeUndefined();
+    }
+);
+
+test.each([401, 403, 408, 429, 500])('retains a queued row after retryable HTTP %s', async (status) => {
     const item = {
         lang: 'ja',
         episodeId: 'spotify:track:1234567890123456789012',
@@ -109,12 +135,12 @@ test('drops a queued row after a definitive client error instead of retrying for
     request.mockImplementation(async (path: string) => {
         if (path === '/v2/settings')
             return { settings: { saviSavePausedHovers: { value: true }, saviImmersionMode: { value: 'explore' } } };
-        throw { status: 400 };
+        throw { status };
     });
     const key = Object.keys(pending).find((candidate) => candidate.startsWith('saviWatchInterest:'))!;
     pending[key].retryAt = Date.now() - 1;
     await drainWatchInterest('local');
-    expect(pending[key]).toBeUndefined();
+    expect(pending[key].retryAt).toBeGreaterThan(Date.now());
 });
 
 describe('local immersion modes', () => {
