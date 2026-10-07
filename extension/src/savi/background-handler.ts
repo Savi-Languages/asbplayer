@@ -111,7 +111,7 @@ import { captureVisibleTab } from '@/services/capture-visible-tab';
 import { OpenSubtitlesClient } from '@/services/subtitle-sources';
 import { getCachedRoamingSettings, loadRoamingSettings, putRoamingSetting } from './cloud-settings';
 import { mutedSites, resetMutedSitesMemo } from './muted-sites';
-import { isStaleCaptureSession } from './capture-staleness';
+import { isStaleCaptureSession, ownerIsCapturing } from './capture-staleness';
 
 export default class SaviCommandHandler implements CommandHandler {
     private readonly _settings: SettingsProvider;
@@ -861,12 +861,24 @@ export default class SaviCommandHandler implements CommandHandler {
         if (existing !== undefined) {
             if (await isStaleCaptureSession(existing, message.episodeId, tabId, config)) {
                 await clearCaptureSession();
+
+                if (existing.episodeId !== message.episodeId) {
+                    // Nobody is feeding it and this start will not resume it, so
+                    // finish it now rather than leave it open on the daemon (and
+                    // on its one tap) until the orphan sweep. Best-effort: the
+                    // daemon may have finished it already. The SAME episode needs
+                    // nothing — the start below resumes that session.
+                    void finishCapture(config, existing.captureId).catch(() => {});
+                }
             } else {
-                // One session at a time (the daemon has one tap).
+                // One session at a time (the daemon has one tap). Say WHERE it
+                // is: the bare message left no way to find the capture to stop.
+                const where = existing.tabId === tabId ? 'in this tab' : 'in another tab';
+                const what = existing.title ? ` (${existing.title})` : '';
                 return {
                     started: false,
                     errorCode: 'already-capturing',
-                    errorMessage: 'a savi capture is already running',
+                    errorMessage: `a savi capture is already running ${where}${what}`,
                 };
             }
         }
@@ -1081,6 +1093,14 @@ export default class SaviCommandHandler implements CommandHandler {
                 await clearCaptureSession();
                 return { active: false };
             }
+        }
+
+        // The daemon keeps listing a capture whose page reloaded until its
+        // orphan sweep, so it alone cannot vouch for the record — the owning
+        // tab can. Report an unfed capture as not recording, but leave the
+        // record for the next start to reconcile (it resumes or finishes it).
+        if (!(await ownerIsCapturing(session.tabId))) {
+            return { active: false };
         }
 
         return { active: true, episodeId: session.episodeId, title: session.title, tabId: session.tabId };
