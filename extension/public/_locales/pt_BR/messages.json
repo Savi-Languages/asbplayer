@@ -18,7 +18,7 @@
         "message": "Inicia/para manualmente a gravação de áudio, mesmo quando legendas estão carregadas."
     },
     "shortcutUpdateLastCardDescription": {
-        "message": "Atualiza o último cartão criado no Anki com a mídia capturada pelo asbplayer. Quando o vídeo está sincronizado sem um arquivo de legenda, inicia/para a gravação de áudio."
+        "message": "Atualiza o último cartão criado no Anki com a mídia capturada pelo Savi. Quando o vídeo está sincronizado sem um arquivo de legenda, inicia/para a gravação de áudio."
     },
     "contextMenuLoadSubtitles": {
         "message": "Carregar legenda"

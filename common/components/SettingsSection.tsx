@@ -11,7 +11,7 @@ interface Props {
 
 const SettingsSection = React.forwardRef<HTMLSpanElement, Props>(function SettingsSection({ children, docs }, ref) {
     return (
-        <Typography ref={ref} variant="h5" sx={{ fontWeight: 'bold', pb: 0.5, pt: 1 }}>
+        <Typography ref={ref} variant="h6" sx={{ fontWeight: 650, pb: 1.5, pt: 2 }}>
             {children}
             {docs && (
                 <Link href={`https://docs.asbplayer.dev/${docs}`} target="_blank">

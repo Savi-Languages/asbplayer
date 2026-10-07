@@ -26,7 +26,7 @@ export interface Rect {
     height: number;
 }
 
-export type Corner = 'top-right' | 'top-center';
+export type Corner = 'top-left' | 'top-right' | 'top-center';
 
 /** Backstop re-measure cadence for position-only moves (see VideoAnchor). */
 const POLL_MS = 500;
@@ -53,9 +53,11 @@ export function placeInVideo(
 ): Placement {
     const top = video.y + margin;
     const left =
-        corner === 'top-right'
-            ? video.x + video.width - control.width - margin
-            : video.x + (video.width - control.width) / 2;
+        corner === 'top-left'
+            ? video.x + margin
+            : corner === 'top-right'
+              ? video.x + video.width - control.width - margin
+              : video.x + (video.width - control.width) / 2;
 
     return {
         left: clamp(left, 0, Math.max(0, viewport.width - control.width)),

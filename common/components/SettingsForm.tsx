@@ -61,13 +61,16 @@ const useStyles = makeStyles<Theme, StylesProps>((theme) => ({
         let styles: CreateCSSProperties<StylesProps> = {
             '& .MuiButtonBase-root': buttonStyles,
             '& .MuiTab-root': {
-                minWidth: 120,
-                height: '100%',
+                minWidth: 176,
+                justifyContent: 'flex-start',
+                alignItems: 'flex-start',
+                textAlign: 'left',
+                padding: '12px 14px',
             },
         };
 
         if (!smallScreen) {
-            styles = { ...styles, minWidth: 120, width: 120 };
+            styles = { ...styles, minWidth: 176, width: 176 };
         }
 
         return styles;
@@ -125,7 +128,8 @@ const usePanelStyles = makeStyles<Theme, PanelStyleProps>((theme: Theme) => ({
         paddingLeft: tabsOrientation === 'horizontal' ? theme.spacing(1) : theme.spacing(2),
         paddingRight: theme.spacing(1),
         paddingTop: tabsOrientation === 'horizontal' ? theme.spacing(1) : 0,
-        overflowY: 'scroll',
+        overflowY: 'auto',
+        minWidth: 0,
         maxHeight: '100%',
         height: '100%',
         width: '100%',
@@ -137,6 +141,8 @@ interface TabPanelProps {
     index: any;
     value: any;
     tabsOrientation: TabsOrientation;
+    id?: string;
+    'aria-labelledby'?: string;
 }
 
 const TabPanel = React.forwardRef<HTMLDivElement, TabPanelProps>(function TabPanel(
@@ -145,7 +151,7 @@ const TabPanel = React.forwardRef<HTMLDivElement, TabPanelProps>(function TabPan
 ) {
     const classes = usePanelStyles({ tabsOrientation });
     return (
-        <Box ref={ref} className={classes.panel} hidden={value !== index} {...other}>
+        <Box ref={ref} role="tabpanel" className={classes.panel} hidden={value !== index} {...other}>
             {value === index && children}
         </Box>
     );
@@ -327,14 +333,14 @@ export default function SettingsForm({
     const { noteType } = settings;
     const tabIndicesById = useMemo(() => {
         const tabs = [
-            'anki-settings',
-            'mining-settings',
-            'subtitle-appearance',
-            'keyboard-shortcuts',
-            'annotation',
-            'streaming-video',
-            'misc-settings',
             'savi-settings',
+            'subtitle-appearance',
+            'streaming-video',
+            'annotation',
+            'keyboard-shortcuts',
+            'mining-settings',
+            'anki-settings',
+            'misc-settings',
             'about',
         ];
 
@@ -354,7 +360,7 @@ export default function SettingsForm({
         }
     }, [scrollToId, tabIndicesById]);
 
-    const [tabIndex, setTabIndex] = useState<number>(0);
+    const [tabIndex, setTabIndex] = useState<number>(inTutorial ? tabIndicesById['anki-settings'] : 0);
     const tabsOrientation = smallScreen ? 'horizontal' : 'vertical';
     const [tutorialStep, setTutorialStep] = useState<TutorialStep>(TutorialStep.ankiConnect);
 
@@ -455,7 +461,7 @@ export default function SettingsForm({
                     scrollButtons={false}
                     onChange={(event, index) => {
                         setTabIndex(index);
-                        if (supportsDictionary && inAnnotationTutorial && index === 4) {
+                        if (supportsDictionary && inAnnotationTutorial && index === tabIndicesById['annotation']) {
                             onAnnotationTutorialSeen?.();
                         }
                     }}
@@ -465,45 +471,41 @@ export default function SettingsForm({
                         marginRight: smallScreen ? 'auto' : 0,
                     }}
                 >
-                    <Tab tabIndex={0} label={t('settings.anki')} id="anki-settings" />
-                    <Tab tabIndex={1} label={t('settings.mining')} id="mining-settings" />
-                    <Tab tabIndex={2} label={t('settings.subtitleAppearance')} id="subtitle-appearance" />
-                    <Tab tabIndex={3} label={t('settings.keyboardShortcuts')} id="keyboard-shortcuts" />
-                    {supportsDictionary && (
+                    {Object.entries(tabIndicesById).map(([id, index]) => (
                         <Tab
-                            ref={handleAnnotationTabRef}
-                            tabIndex={4}
-                            label={t('settings.annotation')}
-                            id="annotation"
+                            key={id}
+                            value={index}
+                            id={id}
+                            aria-controls={`${id}-panel`}
+                            ref={id === 'annotation' ? handleAnnotationTabRef : undefined}
+                            label={
+                                id === 'savi-settings'
+                                    ? t('saviUi.accountAndLanguages')
+                                    : id === 'subtitle-appearance'
+                                      ? t('settings.subtitleAppearance')
+                                      : id === 'streaming-video'
+                                        ? t('settings.streamingVideo')
+                                        : id === 'annotation'
+                                          ? t('settings.annotation')
+                                          : id === 'keyboard-shortcuts'
+                                            ? t('settings.keyboardShortcuts')
+                                            : id === 'mining-settings'
+                                              ? t('settings.mining')
+                                              : id === 'anki-settings'
+                                                ? t('settings.anki')
+                                                : id === 'misc-settings'
+                                                  ? t('settings.misc')
+                                                  : t('about.title')
+                            }
                         />
-                    )}
-                    {extensionSupportsAppIntegration && (
-                        <Tab
-                            tabIndex={4 + Number(supportsDictionary)}
-                            label={t('settings.streamingVideo')}
-                            id="streaming-video"
-                        />
-                    )}
-                    <Tab
-                        tabIndex={4 + Number(supportsDictionary) + Number(extensionSupportsAppIntegration)}
-                        label={t('settings.misc')}
-                        id="misc-settings"
-                    />
-                    <Tab
-                        tabIndex={5 + Number(supportsDictionary) + Number(extensionSupportsAppIntegration)}
-                        label={'Savi'}
-                        id="savi-settings"
-                    />
-                    <Tab
-                        tabIndex={6 + Number(supportsDictionary) + Number(extensionSupportsAppIntegration)}
-                        label={t('about.title')}
-                        id="about"
-                    />
+                    ))}
                 </Tabs>
                 <TabPanel
                     ref={ankiPanelRef}
                     value={tabIndex}
                     index={tabIndicesById['anki-settings']}
+                    id="anki-settings-panel"
+                    aria-labelledby="anki-settings"
                     tabsOrientation={tabsOrientation}
                 >
                     <AnkiSettingsTab
@@ -521,14 +523,26 @@ export default function SettingsForm({
                         testCard={testCard}
                     />
                 </TabPanel>
-                <TabPanel value={tabIndex} index={tabIndicesById['mining-settings']} tabsOrientation={tabsOrientation}>
+                <TabPanel
+                    value={tabIndex}
+                    index={tabIndicesById['mining-settings']}
+                    id="mining-settings-panel"
+                    aria-labelledby="mining-settings"
+                    tabsOrientation={tabsOrientation}
+                >
                     <MiningSettingsTab
                         settings={settings}
                         onSettingChanged={handleSettingChanged}
                         showWebmMediaFragmentSettings={Boolean(insideApp)}
                     />
                 </TabPanel>
-                <TabPanel value={tabIndex} index={tabIndicesById['annotation']} tabsOrientation={tabsOrientation}>
+                <TabPanel
+                    value={tabIndex}
+                    index={tabIndicesById['annotation']}
+                    id="annotation-panel"
+                    aria-labelledby="annotation"
+                    tabsOrientation={tabsOrientation}
+                >
                     <DictionarySettingsTab
                         anki={anki}
                         dictionaryProvider={dictionaryProvider}
@@ -555,6 +569,8 @@ export default function SettingsForm({
                 <TabPanel
                     value={tabIndex}
                     index={tabIndicesById['subtitle-appearance']}
+                    id="subtitle-appearance-panel"
+                    aria-labelledby="subtitle-appearance"
                     tabsOrientation={tabsOrientation}
                 >
                     <SubtitleAppearanceSettingsTab
@@ -574,6 +590,8 @@ export default function SettingsForm({
                     ref={keyboardShortcutsPanelRef}
                     value={tabIndex}
                     index={tabIndicesById['keyboard-shortcuts']}
+                    id="keyboard-shortcuts-panel"
+                    aria-labelledby="keyboard-shortcuts"
                     tabsOrientation={tabsOrientation}
                 >
                     <KeyboardShortcutsSettingsTab
@@ -586,7 +604,13 @@ export default function SettingsForm({
                         onOpenChromeExtensionShortcuts={onOpenChromeExtensionShortcuts}
                     />
                 </TabPanel>
-                <TabPanel value={tabIndex} index={tabIndicesById['streaming-video']} tabsOrientation={tabsOrientation}>
+                <TabPanel
+                    value={tabIndex}
+                    index={tabIndicesById['streaming-video']}
+                    id="streaming-video-panel"
+                    aria-labelledby="streaming-video"
+                    tabsOrientation={tabsOrientation}
+                >
                     <StreamingVideoSettingsTab
                         settings={settings}
                         onSettingChanged={handleSettingChanged}
@@ -597,7 +621,13 @@ export default function SettingsForm({
                         pageConfigs={pageConfigs}
                     />
                 </TabPanel>
-                <TabPanel value={tabIndex} index={tabIndicesById['misc-settings']} tabsOrientation={tabsOrientation}>
+                <TabPanel
+                    value={tabIndex}
+                    index={tabIndicesById['misc-settings']}
+                    id="misc-settings-panel"
+                    aria-labelledby="misc-settings"
+                    tabsOrientation={tabsOrientation}
+                >
                     <MiscSettingsTab
                         settings={settings}
                         onSettingChanged={handleSettingChanged}
@@ -610,7 +640,13 @@ export default function SettingsForm({
                         extensionSupportsAutoCopyableTrackSetting={extensionSupportsAutoCopyableTrackSetting}
                     />
                 </TabPanel>
-                <TabPanel value={tabIndex} index={tabIndicesById['savi-settings']} tabsOrientation={tabsOrientation}>
+                <TabPanel
+                    value={tabIndex}
+                    index={tabIndicesById['savi-settings']}
+                    id="savi-settings-panel"
+                    aria-labelledby="savi-settings"
+                    tabsOrientation={tabsOrientation}
+                >
                     <SaviSettingsTab
                         settings={settings}
                         onSettingChanged={handleSettingChanged}
@@ -626,7 +662,13 @@ export default function SettingsForm({
                         onSaviNativeLanguageChange={onSaviNativeLanguageChange}
                     />
                 </TabPanel>
-                <TabPanel value={tabIndex} index={tabIndicesById['about']} tabsOrientation={tabsOrientation}>
+                <TabPanel
+                    value={tabIndex}
+                    index={tabIndicesById['about']}
+                    id="about-panel"
+                    aria-labelledby="about"
+                    tabsOrientation={tabsOrientation}
+                >
                     <About
                         appVersion={insideApp ? appVersion : undefined}
                         extensionVersion={extensionInstalled ? extensionVersion : undefined}

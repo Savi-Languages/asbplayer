@@ -37,3 +37,6 @@ yarn-error.log*
 /scripts/web-socket-server/asbplayer-ws
 
 .vscode/
+
+# Generated standalone Spotify QA bundle
+extension/qa/spotify/fixture.js

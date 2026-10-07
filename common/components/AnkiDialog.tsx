@@ -1,3 +1,4 @@
+import LogoIcon from '@project/common/components/LogoIcon';
 import React, { useCallback, useState, useEffect, useMemo, useRef, RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
 import makeStyles from '@mui/styles/makeStyles';
@@ -819,7 +820,8 @@ const AnkiDialog = ({
     return (
         <>
             <Dialog open={open} disableRestoreFocus disableEnforceFocus fullWidth maxWidth="sm" onClose={onCancel}>
-                <Toolbar>
+                <Toolbar sx={{ gap: 1.5, py: 1, borderBottom: 1, borderColor: 'divider', mb: 2 }}>
+                    <LogoIcon sx={{ width: 28, height: 28 }} />
                     <AnkiDialogTutorialBubble
                         disabled={!effectiveInTutorial}
                         onConfirm={() => setTutorialStep(TutorialStep.wordField)}
@@ -861,7 +863,7 @@ const AnkiDialog = ({
                         </TutorialBubble>
                     )}
                     {onCancel && (
-                        <IconButton edge="end" onClick={onCancel}>
+                        <IconButton aria-label={t('action.close')} edge="end" onClick={onCancel}>
                             <CloseIcon />
                         </IconButton>
                     )}

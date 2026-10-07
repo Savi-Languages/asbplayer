@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+    <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>
+        Savi Spotify adapter · synthetic QA</title
+    ><style>
+        body {
+            margin: 24px;
+            background: #191b23;
+            color: white;
+            font: 16px system-ui;
+        }
+        main {
+            max-width: 500px;
+        }
+        button {
+            padding: 12px;
+            margin: 6px;
+        }
+        audio {
+            width: 90%;
+        }
+        #events {
+            max-width: 600px;
+            white-space: pre-wrap;
+        }
+        footer {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: #111;
+            padding: 16px;
+            height: 64px;
+        }
+    </style>
+    <main>
+        <h1>Spotify adapter · synthetic fixture</h1>
+        <p>No Spotify login or real Savi data. UI uses the production adapter with isolated fake API responses.</p>
+        <button id="next">Change to podcast</button><button id="missing">Remove supplied text</button
+        ><button id="failed">Fail next save</button><button id="offline">Simulate audio unavailable</button>
+        <footer data-testid="now-playing-bar">
+            <div data-testid="now-playing-widget">
+                <a data-testid="context-item-link" href="https://open.spotify.com/track/1234567890123456789012"
+                    >Synthetic Japanese song</a
+                >
+            </div>
+            <div data-testid="context-item-info-subtitles">Synthetic artist</div>
+            <button data-testid="control-button-playpause" aria-label="Play">Play / Pause</button
+            ><span data-testid="playback-position">0:00</span> / <span data-testid="playback-duration">1:00</span>
+        </footer>
+        <audio controls></audio
+        ><label
+            >Speed
+            <select id="speed">
+                <option>0.5</option>
+                <option selected>1</option>
+                <option>1.5</option>
+                <option>2</option>
+            </select></label
+        >
+        <h2>Fixture events</h2>
+        <pre id="events"></pre>
+    </main>
+    <script src="fixture.js"></script>
+</html>

@@ -285,6 +285,7 @@ export const defaultSettings: AsbplayerSettings = {
     saviLanguageHushButton: true,
     saviAutoLoadSubtitles: true,
     saviGlossing: true,
+    saviSpotifyTranslations: false,
     saviHoldSubtitleMs: 2000,
     saviHoverGloss: true,
     saviCloudUrl: 'https://savi.tianxiaocao.com',

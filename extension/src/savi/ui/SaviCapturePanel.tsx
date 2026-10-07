@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 // Popup panel for savi capture: shows whether an episode capture is
 // running and offers explicit start/stop. Auto-capture (the
 // saviCaptureEnabled setting) makes this optional in the common case,
@@ -33,6 +34,7 @@ const queryCaptureState = async (): Promise<SaviCaptureState> => {
 };
 
 const SaviCapturePanel = ({ settings }: Props) => {
+    const { t } = useTranslation();
     const [captureState, setCaptureState] = useState<SaviCaptureState>({ active: false });
     const [lastResult, setLastResult] = useState<string>();
     const [signedIn, setSignedIn] = useState<boolean>(false);
@@ -97,21 +99,24 @@ const SaviCapturePanel = ({ settings }: Props) => {
     }
 
     return (
-        <Paper variant="outlined" sx={{ padding: 1 }}>
+        <Paper variant="outlined" sx={{ padding: 1.5, borderColor: captureState.active ? 'error.main' : 'divider' }}>
+            <Typography variant="overline" color="text.secondary" sx={{ fontSize: 10, letterSpacing: '0.12em' }}>
+                {t('saviUi.relistenLater')}
+            </Typography>
             <Stack direction="row" spacing={1} alignItems="center">
                 <FiberManualRecordIcon color={captureState.active ? 'error' : 'disabled'} fontSize="small" />
-                <Typography variant="body2" sx={{ flexGrow: 1, overflow: 'hidden', textOverflow: 'ellipsis' }} noWrap>
+                <Typography role="status" variant="body2" sx={{ flexGrow: 1, overflowWrap: 'anywhere' }}>
                     {captureState.active
-                        ? `Capturing: ${captureState.title ?? ''}`
-                        : (lastResult ?? 'Savi capture idle')}
+                        ? `${t('saviUi.recording')} ${captureState.title ?? ''}`
+                        : (lastResult ?? t('saviUi.captureIdle'))}
                 </Typography>
                 {captureState.active ? (
                     <Button size="small" variant="contained" startIcon={<StopIcon />} onClick={handleStop}>
-                        {'Stop'}
+                        {t('saviUi.stop')}
                     </Button>
                 ) : (
                     <Button size="small" variant="outlined" startIcon={<FiberManualRecordIcon />} onClick={handleStart}>
-                        {'Capture'}
+                        {t('saviUi.record')}
                     </Button>
                 )}
             </Stack>

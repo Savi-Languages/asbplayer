@@ -107,44 +107,8 @@ export const sendWithRetry = async (
  *  had been asked to record and recorded nothing. The second is not a save —
  *  no episode entered the library — and calling it one is how a whole watched
  *  episode went missing without anyone noticing. */
-export interface FinishNotice {
-    readonly text: string;
-    /** Loud, in the tab console where the person watching is — the treatment
-     *  `condenseWarning` already gets. */
-    readonly consoleError?: string;
-}
-
-export const finishNotice = (info: {
-    totalLines?: number;
-    keptDurationMs?: number;
-    transcriptOnly?: boolean;
-    audioRequested?: boolean;
-    audioLost?: string | null;
-    condenseWarning?: string | null;
-}): FinishNotice => {
-    const lines = String(info.totalLines ?? 0);
-
-    if (info.transcriptOnly === true) {
-        if (info.audioRequested !== true) {
-            // Audio was deliberately off: subtitles ARE the deliverable.
-            return { text: `Savi: episode saved (subtitles only) — ${lines} lines` };
-        }
-        const why = info.audioLost ?? 'nothing was recorded';
-        return {
-            text: `Savi: NO AUDIO recorded — kept ${lines} subtitle lines, but this episode is not in your library`,
-            consoleError: `savi: capture finished with no audio though recording was on — ${why}`,
-        };
-    }
-
-    const minutes = ((info.keptDurationMs ?? 0) / 60000).toFixed(1);
-    const text = `Savi: episode saved — ${lines} lines, ${minutes} min of dialogue`;
-    return typeof info.condenseWarning === 'string'
-        ? {
-              text: `${text}, but ${info.condenseWarning}`,
-              consoleError: `savi: SUSPICIOUS CAPTURE — ${info.condenseWarning}`,
-          }
-        : { text };
-};
+export { finishNotice } from './capture-notice';
+import { finishNotice } from './capture-notice';
 
 /** What the capture-start toast should say, including WHAT the tap attached
  *  to. The daemon has always returned `sourceApp`; nothing showed it, so
@@ -530,6 +494,10 @@ export class SaviCaptureController {
     // start. All DOM reading lives here (content-script context); the
     // parsing/derivation is delegated to the pure helpers in episode.ts so
     // it stays unit-tested. Fully defensive — never throws.
+    targetMetadata() {
+        return this._pageMetadata();
+    }
+
     private _pageMetadata(): { episodeId: string | undefined; show?: string; title: string } {
         const url = this._safeLocationHref();
         const documentTitle = this._safeDocumentTitle();

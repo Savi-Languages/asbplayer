@@ -1,3 +1,5 @@
+import { watchInterestConfig, queueWatchInterest, setImmersionMode } from './watch-interest-service';
+import { prepareTargets, queueTargetFeedback, queueTargetMines, drainTargetMines } from './target-service';
 // Background-side orchestration for savi capture, registered as one
 // extra CommandHandler in asbplayer's background handler list.
 //
@@ -18,6 +20,7 @@ import {
     SaviGlossLineMessage,
     SaviGlossLineResponse,
     SaviGlossTranslateMessage,
+    SaviSubtitleTranslateMessage,
     SaviGlossTranslateResponse,
     SaviWarmProjectionsMessage,
     SaviWarmProjectionsResponse,
@@ -92,8 +95,9 @@ import {
     segmentLine,
     explainWord,
     lookupKanji,
+    isDaemonResponseError,
     startCapture,
-    tokenize,
+    tokenizeWithAnalysis,
 } from './daemon-client';
 import {
     getCachedDict,
@@ -126,6 +130,61 @@ export default class SaviCommandHandler implements CommandHandler {
 
     handle(command: any, sender: Browser.runtime.MessageSender, sendResponse: (response?: any) => void) {
         switch (command.message.command) {
+            case 'savi-set-immersion-mode':
+                this._settings
+                    .get(['saviCloudUrl'])
+                    .then(({ saviCloudUrl }) => setImmersionMode(saviCloudUrl, command.message.mode))
+                    .then(sendResponse)
+                    .catch(() => sendResponse({ ok: false }));
+                return true;
+            case 'savi-watch-interest-config':
+                this._settings
+                    .get(['saviCloudUrl'])
+                    .then(({ saviCloudUrl }) => watchInterestConfig(saviCloudUrl))
+                    .then(sendResponse)
+                    .catch(() => sendResponse({ enabled: false }));
+                return true;
+            case 'savi-save-watch-interest':
+                this._settings
+                    .get(['saviCloudUrl'])
+                    .then(({ saviCloudUrl }) =>
+                        queueWatchInterest(saviCloudUrl, command.message.account, command.message.item)
+                    )
+                    .then(sendResponse)
+                    .catch(() => sendResponse({ ok: false }));
+                return true;
+            case 'savi-mine-targets':
+                this._settings
+                    .get(['saviCloudUrl'])
+                    .then(({ saviCloudUrl }) =>
+                        queueTargetMines(saviCloudUrl, command.message.account, command.message.mines)
+                    )
+                    .then(() => {
+                        sendResponse({ ok: true });
+                        void this.drainTargetMines().catch(() => {});
+                    })
+                    .catch(() => sendResponse({ ok: false }));
+                return true;
+            case 'savi-episode-targets':
+                this._settings
+                    .get(['saviCloudUrl'])
+                    .then(({ saviCloudUrl }) => prepareTargets(saviCloudUrl, command.message))
+                    .then(sendResponse)
+                    // `null` is reserved for a title that was definitively not
+                    // resolved. Transport/auth/server failures must keep their
+                    // retry semantics in the content-side controller.
+                    .catch(() => sendResponse({ unavailable: true }));
+                return true;
+            case 'savi-target-feedback':
+                this._settings
+                    .get(['saviCloudUrl'])
+                    .then(({ saviCloudUrl }) =>
+                        queueTargetFeedback(saviCloudUrl, command.message.account, command.message.actions)
+                    )
+                    .then(() => sendResponse({ ok: true }))
+                    .catch(() => sendResponse({ ok: false }));
+                return true;
+
             case 'savi-start-capture':
                 this._startCapture(command.message as SaviStartCaptureMessage, sender)
                     .then(sendResponse)
@@ -139,7 +198,7 @@ export default class SaviCommandHandler implements CommandHandler {
                     });
                 return true;
             case 'savi-stop-capture':
-                this._stopCapture().then(sendResponse);
+                this._stopCapture(command.message.episodeId, sender).then(sendResponse);
                 return true;
             case 'savi-playback-state':
                 this._playbackState(command.message as SaviPlaybackStateMessage, sender)
@@ -251,6 +310,11 @@ export default class SaviCommandHandler implements CommandHandler {
                     .then(sendResponse)
                     .catch(() => sendResponse({} as SaviGlossTranslateResponse));
                 return true;
+            case 'savi-subtitle-translate':
+                this._subtitleTranslate(command.message as SaviSubtitleTranslateMessage)
+                    .then(sendResponse)
+                    .catch(() => sendResponse({} as SaviGlossTranslateResponse));
+                return true;
             case 'savi-word-proficiency':
                 this._wordProficiency(command.message as SaviWordProficiencyMessage)
                     .then(sendResponse)
@@ -274,6 +338,11 @@ export default class SaviCommandHandler implements CommandHandler {
     // The credential split: the LAN token is the bearer (capability), the
     // account JWT rides X-Savi-Account (identity). Resolved per request —
     // JWTs expire ~hourly.
+    async drainTargetMines(): Promise<void> {
+        const { saviCloudUrl } = await this._settings.get(['saviCloudUrl']);
+        return drainTargetMines(saviCloudUrl, () => this._daemonConfig());
+    }
+
     private async _daemonConfig(): Promise<SaviDaemonConfig | null> {
         const { saviDaemonUrl, saviDaemonToken } = await this._settings.get(['saviDaemonUrl', 'saviDaemonToken']);
         const { bearer, accountJwt } = await daemonCredentials(saviDaemonToken);
@@ -425,10 +494,32 @@ export default class SaviCommandHandler implements CommandHandler {
         }
     }
 
-    // Glossing (SV-12): translate ONE word into the user's known language, with
-    // the whole line as DeepL context. Straight to the cloud with the account
-    // JWT (added in cloud-client) — CORS blocks this from the content script.
-    // Empty response = signed out / all providers failed → the label is skipped.
+    // Whole subtitle translation shares the authenticated cloud provider chain.
+    // Failures are converted to an unavailable response by the command dispatcher.
+    private async _subtitleTranslate(message: SaviSubtitleTranslateMessage): Promise<SaviGlossTranslateResponse> {
+        if (
+            typeof message.text !== 'string' ||
+            !message.text.trim() ||
+            message.text.length > 4000 ||
+            typeof message.sourceLang !== 'string' ||
+            !/^[a-z]{2,3}(-[a-zA-Z0-9]{2,8})*$/.test(message.sourceLang) ||
+            typeof message.targetLang !== 'string' ||
+            !/^[a-z]{2,3}(-[a-zA-Z0-9]{2,8})*$/.test(message.targetLang) ||
+            (message.context !== undefined && (typeof message.context !== 'string' || message.context.length > 8000))
+        )
+            return {};
+        const { saviCloudUrl } = await this._settings.get(['saviCloudUrl']);
+        const result = await cloudTranslate(
+            saviCloudUrl,
+            message.text,
+            message.targetLang,
+            message.sourceLang,
+            message.context
+        );
+        return { text: result.text, provider: result.provider };
+    }
+
+    // Word glosses use the user's known language and sentence context.
     private async _glossTranslate(message: SaviGlossTranslateMessage): Promise<SaviGlossTranslateResponse> {
         try {
             const { saviCloudUrl } = await this._settings.get(['saviCloudUrl']);
@@ -496,11 +587,11 @@ export default class SaviCommandHandler implements CommandHandler {
             return { tokens: (await getCachedTokens(message.lang, message.text)) ?? [] };
         }
         try {
-            const tokens = await tokenize(config, message.lang, message.text);
+            const { tokens, rawTokens } = await tokenizeWithAnalysis(config, message.lang, message.text);
             if (tokens.length > 0) {
                 await putCachedTokens(message.lang, message.text, tokens);
             }
-            return { tokens };
+            return { tokens, rawTokens };
         } catch (e) {
             // Daemon unreachable — fall back to the persistent cache so a
             // previously-seen line still hovers offline.
@@ -651,7 +742,7 @@ export default class SaviCommandHandler implements CommandHandler {
     private async _watchedLine(message: SaviWatchedLineMessage): Promise<SaviWatchedLineResponse> {
         const config = await this._daemonConfig();
         if (!config) {
-            return { ok: false };
+            return { ok: false, reason: 'not-configured' };
         }
         try {
             await postWatchedLine(config, {
@@ -665,7 +756,7 @@ export default class SaviCommandHandler implements CommandHandler {
             return { ok: true };
         } catch (e) {
             // Fire-and-forget contract: a dropped line loses one line's exposure.
-            return { ok: false };
+            return { ok: false, reason: isDaemonResponseError(e) ? 'rejected' : 'unreachable' };
         }
     }
 
@@ -733,7 +824,13 @@ export default class SaviCommandHandler implements CommandHandler {
             return {};
         }
         try {
-            return { dataUrl: await captureVisibleTab(tabId) };
+            const tab = await browser.tabs.get(tabId);
+            if (!tab.active || !(await browser.windows.get(tab.windowId)).focused) return {};
+            const dataUrl = await captureVisibleTab(tabId);
+            // captureVisibleTab targets the active tab in a window, not the id.
+            // Recheck to avoid returning another tab if the learner switched.
+            const [active] = await browser.tabs.query({ windowId: tab.windowId, active: true });
+            return active?.id === tabId ? { dataUrl } : {};
         } catch (e) {
             return {};
         }
@@ -772,6 +869,16 @@ export default class SaviCommandHandler implements CommandHandler {
                     errorMessage: 'a savi capture is already running',
                 };
             }
+        }
+
+        if (message.episodeId.startsWith('spotify:')) {
+            const audible = await browser.tabs.query({ audible: true });
+            if (audible.some((tab) => tab.id !== tabId))
+                return {
+                    started: false,
+                    errorCode: 'other',
+                    errorMessage: 'Pause other audible browser tabs before recording Spotify.',
+                };
         }
 
         const { saviAudioRecording } = await this._settings.get(['saviAudioRecording']);
@@ -820,13 +927,19 @@ export default class SaviCommandHandler implements CommandHandler {
         return { started: true, captureId, audio };
     }
 
-    private async _stopCapture(): Promise<SaviStopCaptureResponse> {
+    private async _stopCapture(
+        expectedEpisodeId?: string,
+        sender?: Browser.runtime.MessageSender
+    ): Promise<SaviStopCaptureResponse> {
         const session = await getCaptureSession();
 
         if (session === undefined) {
             return { stopped: false, errorMessage: 'no savi capture is running' };
         }
 
+        if (expectedEpisodeId && (session.episodeId !== expectedEpisodeId || session.tabId !== sender?.tab?.id)) {
+            return { stopped: false, errorMessage: 'Another tab owns this capture.' };
+        }
         const config = await this._daemonConfig();
         await clearCaptureSession();
 
@@ -879,7 +992,11 @@ export default class SaviCommandHandler implements CommandHandler {
         const run = this._playbackChain.then(async (): Promise<SaviPlaybackStateResponse> => {
             const allocated = await nextPlaybackSeq();
 
-            if (allocated === undefined || (tabId !== undefined && allocated.session.tabId !== tabId)) {
+            if (
+                allocated === undefined ||
+                (tabId !== undefined && allocated.session.tabId !== tabId) ||
+                (message.episodeId !== undefined && allocated.session.episodeId !== message.episodeId)
+            ) {
                 return { ok: false };
             }
 
@@ -890,6 +1007,17 @@ export default class SaviCommandHandler implements CommandHandler {
             }
 
             const { session, seq } = allocated;
+            if (session.episodeId.startsWith('spotify:')) {
+                const audible = await browser.tabs.query({ audible: true });
+                if (audible.some((tab) => tab.id !== tabId)) {
+                    await postPlaybackState(config, {
+                        captureId: session.captureId,
+                        seq,
+                        ops: [{ op: 'segment-end' }],
+                    });
+                    return { ok: false, audio: 'off' };
+                }
+            }
             const post = () => postPlaybackState(config, { captureId: session.captureId, seq, ops: message.ops });
 
             const handle = async (result: Awaited<ReturnType<typeof post>>): Promise<SaviPlaybackStateResponse> => {

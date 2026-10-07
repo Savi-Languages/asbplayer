@@ -1,5 +1,5 @@
 import Button from '@mui/material/Button';
-import ButtonGroup from '@mui/material/ButtonGroup';
+import Box from '@mui/material/Box';
 import Stack from '@mui/material/Stack';
 import React from 'react';
 
@@ -13,32 +13,40 @@ interface Props {
 const SettingsGroups: React.FC<Props> = ({ children, groupLabels, selectedGroupIndex, onGroupSelected }) => {
     return (
         <div>
-            <ButtonGroup variant="outlined" fullWidth>
+            <Box
+                sx={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: 0.75,
+                    p: 0.75,
+                    bgcolor: 'action.hover',
+                    borderRadius: 2,
+                    mb: 1,
+                }}
+            >
                 {groupLabels.map((label, index) => {
                     return (
                         <Button
                             key={index}
                             onClick={() => onGroupSelected(index)}
-                            variant={selectedGroupIndex === index ? 'contained' : 'outlined'}
+                            aria-pressed={selectedGroupIndex === index}
+                            variant={selectedGroupIndex === index ? 'contained' : 'text'}
                             sx={{
-                                borderBottomLeftRadius: index === 0 ? 1 : undefined,
-                                borderBottomRightRadius: index === groupLabels.length - 1 ? 1 : undefined,
+                                flex: 1,
+                                minWidth: 'fit-content',
                             }}
                         >
                             {label}
                         </Button>
                     );
                 })}
-            </ButtonGroup>
+            </Box>
             <Stack
                 spacing={1}
                 sx={{
                     p: 1.5,
                     border: (theme) => `1px solid ${theme.palette.action.focus}`,
-                    borderTop: 'none',
-                    borderRadius: 1,
-                    borderTopLeftRadius: 0,
-                    borderTopRightRadius: 0,
+                    borderRadius: 2,
                 }}
             >
                 {children}

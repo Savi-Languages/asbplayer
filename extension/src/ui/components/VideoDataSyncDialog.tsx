@@ -1,3 +1,4 @@
+import LogoIcon from '@project/common/components/LogoIcon';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
 import CloseIcon from '@mui/icons-material/Close';
@@ -200,7 +201,7 @@ export default function VideoDataSyncDialog({
                             key={i}
                             error={!!error}
                             color="primary"
-                            variant="filled"
+                            variant="outlined"
                             label={`${t('extension.videoDataSync.subtitleTrack')} ${i + 1}`}
                             helperText={error || ''}
                             value={
@@ -249,7 +250,8 @@ export default function VideoDataSyncDialog({
 
     return (
         <Dialog disableRestoreFocus disableEnforceFocus fullWidth maxWidth="sm" open={open} onClose={onCancel}>
-            <Toolbar>
+            <Toolbar sx={{ gap: 1.5, py: 1, borderBottom: 1, borderColor: 'divider', mb: 2 }}>
+                <LogoIcon sx={{ width: 28, height: 28 }} />
                 <Typography variant="h6" style={{ flexGrow: 1 }}>
                     {t('extension.videoDataSync.selectSubtitles')}
                 </Typography>
@@ -259,12 +261,12 @@ export default function VideoDataSyncDialog({
                     onSetActiveProfile={onSetActiveProfile}
                 />
                 {onOpenSettings && (
-                    <IconButton edge="end" onClick={onOpenSettings}>
+                    <IconButton aria-label={t('settings.title')} edge="end" onClick={onOpenSettings}>
                         <SettingsIcon />
                     </IconButton>
                 )}
                 {onCancel && (
-                    <IconButton edge="end" onClick={() => onCancel()}>
+                    <IconButton aria-label={t('action.close')} edge="end" onClick={() => onCancel()}>
                         <CloseIcon />
                     </IconButton>
                 )}
@@ -298,7 +300,7 @@ export default function VideoDataSyncDialog({
                                 fullWidth
                                 multiline
                                 color="primary"
-                                variant="filled"
+                                variant="outlined"
                                 label={t('extension.videoDataSync.videoName')}
                                 value={name}
                                 disabled={disabled}
@@ -337,8 +339,13 @@ export default function VideoDataSyncDialog({
                 <Button disabled={disabled} onClick={() => onOpenOnline()}>
                     {t('onlineSubtitleSources.searchOnlineSubtitles')}
                 </Button>
-                <Button action={okActionRef} disabled={!trimmedName || disabled} onClick={handleOkButtonClick}>
-                    {t('action.ok')}
+                <Button
+                    variant="contained"
+                    action={okActionRef}
+                    disabled={!trimmedName || disabled}
+                    onClick={handleOkButtonClick}
+                >
+                    {t('action.loadSubtitles')}
                 </Button>
             </DialogActions>
         </Dialog>

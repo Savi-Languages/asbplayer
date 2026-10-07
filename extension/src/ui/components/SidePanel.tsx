@@ -1,3 +1,4 @@
+import Box from '@mui/material/Box';
 import {
     AsbPlayerToTabCommand,
     AsbPlayerToVideoCommandV2,
@@ -563,7 +564,7 @@ export default function SidePanel({ dictionaryProvider, settingsProvider, settin
     );
 
     const handleOpenUserGuide = useCallback(() => {
-        browser.tabs.create({ active: true, url: 'https://docs.asbplayer.dev/docs/intro' });
+        browser.tabs.create({ active: true, url: 'https://github.com/Savi-Languages/asbplayer/blob/main/SAVI.md' });
     }, []);
     const noOp = useCallback(() => {}, []);
 
@@ -614,7 +615,7 @@ export default function SidePanel({ dictionaryProvider, settingsProvider, settin
     }
 
     return (
-        <div style={{ width: '100%', height: '100%' }} onMouseMove={handleMouseMove}>
+        <div style={{ width: '100%', height: '100dvh', position: 'relative' }} onMouseMove={handleMouseMove}>
             <Alert open={alertOpen} onClose={handleAlertClosed} autoHideDuration={3000} severity={alertSeverity}>
                 {alert}
             </Alert>
@@ -670,43 +671,57 @@ export default function SidePanel({ dictionaryProvider, settingsProvider, settin
                             onOpenUserGuide={handleOpenUserGuide}
                         />
                     ) : (
-                        <>
+                        <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
                             <SidePanelRecordingOverlay show={recordingAudio} />
-                            <Player
-                                origin={browser.runtime.getURL('/sidepanel.html')}
-                                subtitles={subtitles}
-                                hideControls={true}
-                                showCopyButton={true}
-                                forceCompressedMode={true}
-                                subtitleReader={subtitleReader}
-                                dictionaryProvider={dictionaryProvider}
-                                settingsProvider={settingsProvider}
-                                settings={settings}
-                                playbackPreferences={playbackPreferences}
-                                onCopy={handleMineFromSubtitlePlayer}
-                                onError={handleError}
-                                onUnloadVideo={noOp}
-                                onLoaded={noOp}
-                                onTabSelected={noOp}
-                                onAnkiDialogRequest={noOp}
-                                onAnkiDialogRewind={noOp}
-                                onAppBarToggle={noOp}
-                                onHideSubtitlePlayer={noOp}
-                                onVideoPopOut={noOp}
-                                onPlayModeChangedViaBind={noOp}
-                                onSubtitles={setSubtitles}
-                                tab={syncedVideoTab}
-                                availableTabs={emptyArray}
-                                extension={extension}
-                                drawerOpen={false}
-                                appBarHidden={true}
-                                videoFullscreen={false}
-                                hideSubtitlePlayer={false}
-                                videoPopOut={false}
-                                disableKeyEvents={false}
-                                miningContext={miningContext}
-                                keyBinder={keyBinder}
+                            <SidePanelTopControls
+                                ref={topControlsRef}
+                                show={showTopControls}
+                                onLoadSubtitles={handleLoadSubtitles}
+                                canDownloadSubtitles={canDownloadSubtitles}
+                                onDownloadSubtitles={handleDownloadSubtitles}
+                                onBulkExportSubtitles={handleBulkExportSubtitles}
+                                disableBulkExport={recordingAudio}
+                                onShowMiningHistory={handleShowCopyHistory}
+                                miningHistoryCount={copyHistoryItems.length}
+                                onShowStatistics={handleShowStatistics}
                             />
+                            <Box sx={{ flex: 1, minHeight: 0, '& > div': { height: '100%' } }}>
+                                <Player
+                                    origin={browser.runtime.getURL('/sidepanel.html')}
+                                    subtitles={subtitles}
+                                    hideControls={true}
+                                    showCopyButton={true}
+                                    forceCompressedMode={true}
+                                    subtitleReader={subtitleReader}
+                                    dictionaryProvider={dictionaryProvider}
+                                    settingsProvider={settingsProvider}
+                                    settings={settings}
+                                    playbackPreferences={playbackPreferences}
+                                    onCopy={handleMineFromSubtitlePlayer}
+                                    onError={handleError}
+                                    onUnloadVideo={noOp}
+                                    onLoaded={noOp}
+                                    onTabSelected={noOp}
+                                    onAnkiDialogRequest={noOp}
+                                    onAnkiDialogRewind={noOp}
+                                    onAppBarToggle={noOp}
+                                    onHideSubtitlePlayer={noOp}
+                                    onVideoPopOut={noOp}
+                                    onPlayModeChangedViaBind={noOp}
+                                    onSubtitles={setSubtitles}
+                                    tab={syncedVideoTab}
+                                    availableTabs={emptyArray}
+                                    extension={extension}
+                                    drawerOpen={false}
+                                    appBarHidden={true}
+                                    videoFullscreen={false}
+                                    hideSubtitlePlayer={false}
+                                    videoPopOut={false}
+                                    disableKeyEvents={false}
+                                    miningContext={miningContext}
+                                    keyBinder={keyBinder}
+                                />
+                            </Box>
                             <StatisticsDrawer
                                 mediaId={syncedVideoTab?.src}
                                 open={statisticsOpen || extensionRequestedLocation === 'statistics'}
@@ -721,18 +736,6 @@ export default function SidePanel({ dictionaryProvider, settingsProvider, settin
                                 onOpenInNewWindow={createStatisticsPopup}
                                 sx={{ p: 2 }}
                             />
-                            <SidePanelTopControls
-                                ref={topControlsRef}
-                                show={showTopControls}
-                                onLoadSubtitles={handleLoadSubtitles}
-                                canDownloadSubtitles={canDownloadSubtitles}
-                                onDownloadSubtitles={handleDownloadSubtitles}
-                                onBulkExportSubtitles={handleBulkExportSubtitles}
-                                disableBulkExport={recordingAudio}
-                                onShowMiningHistory={handleShowCopyHistory}
-                                miningHistoryCount={copyHistoryItems.length}
-                                onShowStatistics={handleShowStatistics}
-                            />
                             <SidePanelBottomControls
                                 disabled={currentTabId !== syncedVideoTab?.id}
                                 onMineSubtitle={handleMineSubtitle}
@@ -741,7 +744,7 @@ export default function SidePanel({ dictionaryProvider, settingsProvider, settin
                                 audioRecordingEnabled={settings.streamingRecordMedia}
                                 recordingAudio={recordingAudio}
                             />
-                        </>
+                        </Box>
                     )}
                 </>
             )}

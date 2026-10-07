@@ -171,6 +171,7 @@ const SaviSettingsTab: React.FC<Props> = ({
         saviAiSegmentation,
         saviLanguageHushButton,
         saviGlossing,
+        saviSpotifyTranslations,
         saviHoverGloss,
         saviEncounterRecording,
         saviAudioRecording,
@@ -199,7 +200,7 @@ const SaviSettingsTab: React.FC<Props> = ({
     const roamingSupported = onSaviTargetLanguageChange !== undefined;
     const roamingHint = signedIn
         ? 'Saved to your savi account and synced across your devices.'
-        : 'Sign in to savi above to sync this across your devices; it works on this device meanwhile.';
+        : 'Sign in to Savi above to sync this across your devices; it works on this device meanwhile.';
 
     return (
         <Stack spacing={1}>
@@ -241,17 +242,9 @@ const SaviSettingsTab: React.FC<Props> = ({
                             disabled={!saviEmail.trim() || !saviPassword || saviSigningIn}
                             onClick={() => void handleSaviSignIn()}
                         >
-                            {saviSigningIn ? 'Signing in…' : 'Sign in to savi'}
+                            {saviSigningIn ? 'Signing in…' : 'Sign in to Savi'}
                         </Button>
                     </Stack>
-                    <SettingsTextField
-                        color="primary"
-                        fullWidth
-                        type="password"
-                        label={'Savi daemon token (legacy fallback)'}
-                        value={saviDaemonToken}
-                        onChange={(e) => onSettingChanged('saviDaemonToken', e.target.value)}
-                    />
                 </>
             ) : (
                 // Hosts without account support (no session storage here).
@@ -262,6 +255,23 @@ const SaviSettingsTab: React.FC<Props> = ({
                     label={'Savi daemon token'}
                     value={saviDaemonToken}
                     onChange={(e) => onSettingChanged('saviDaemonToken', e.target.value)}
+                />
+            )}
+
+            {roamingSupported && (
+                <LanguageAutocomplete
+                    label={'Target language'}
+                    value={saviTargetLanguage ?? ''}
+                    onCommit={(value) => onSaviTargetLanguageChange?.(value)}
+                    helperText={`The language you're learning. ${roamingHint}`}
+                />
+            )}
+            {roamingSupported && onSaviNativeLanguageChange !== undefined && (
+                <LanguageAutocomplete
+                    label={'Native language (second subtitle line)'}
+                    value={saviNativeLanguage ?? ''}
+                    onCommit={(value) => onSaviNativeLanguageChange(value)}
+                    helperText={`Shown under the target line when the video has that track. Leave blank for a single line. ${roamingHint}`}
                 />
             )}
 
@@ -326,7 +336,7 @@ const SaviSettingsTab: React.FC<Props> = ({
                     <SettingsSection>{'Local video files'}</SettingsSection>
                     <FormHelperText>
                         {
-                            'Savi cannot see videos you open from disk. Chrome blocks extensions from file:// pages until you allow it per-extension, and while it is off nothing Savi does runs on those pages at all — which is why this notice is here rather than on the video. Open chrome://extensions, find asbplayer, and turn on “Allow access to file URLs”, then reload the video tab.'
+                            'Savi cannot see videos you open from disk. Chrome blocks extensions from file:// pages until you allow it per-extension, and while it is off nothing Savi does runs on those pages at all — which is why this notice is here rather than on the video. Open chrome://extensions, find Savi, and turn on “Allow access to file URLs”, then reload the video tab.'
                         }
                     </FormHelperText>
                 </>
@@ -358,6 +368,16 @@ const SaviSettingsTab: React.FC<Props> = ({
             <SwitchLabelWithHoverEffect
                 control={
                     <Switch
+                        checked={saviSpotifyTranslations}
+                        onChange={(e) => onSettingChanged('saviSpotifyTranslations', e.target.checked)}
+                    />
+                }
+                label={'Translate nearby Spotify transcript lines into your native language (requires sign-in)'}
+                labelPlacement="start"
+            />
+            <SwitchLabelWithHoverEffect
+                control={
+                    <Switch
                         checked={saviHoverGloss}
                         onChange={(e) => onSettingChanged('saviHoverGloss', e.target.checked)}
                     />
@@ -381,23 +401,6 @@ const SaviSettingsTab: React.FC<Props> = ({
                     'the next line either way.'
                 }
             />
-            {roamingSupported && (
-                <LanguageAutocomplete
-                    label={'Target language'}
-                    value={saviTargetLanguage ?? ''}
-                    onCommit={(value) => onSaviTargetLanguageChange?.(value)}
-                    helperText={`The language you're learning. ${roamingHint}`}
-                />
-            )}
-            {roamingSupported && onSaviNativeLanguageChange !== undefined && (
-                <LanguageAutocomplete
-                    label={'Native language (second subtitle line)'}
-                    value={saviNativeLanguage ?? ''}
-                    onCommit={(value) => onSaviNativeLanguageChange(value)}
-                    helperText={`Shown under the target line when the video has that track. Leave blank for a single line. ${roamingHint}`}
-                />
-            )}
-
             <SettingsSection>{'Savi capture'}</SettingsSection>
             <SwitchLabelWithHoverEffect
                 control={
@@ -459,20 +462,34 @@ const SaviSettingsTab: React.FC<Props> = ({
                 label={'AI in-context definitions when you tap a word (requires sign-in)'}
                 labelPlacement="start"
             />
-            <SettingsTextField
-                color="primary"
-                fullWidth
-                label={'Savi daemon URL'}
-                value={saviDaemonUrl}
-                onChange={(e) => onSettingChanged('saviDaemonUrl', e.target.value)}
-            />
-            <SettingsTextField
-                color="primary"
-                fullWidth
-                label={'Savi cloud URL'}
-                value={saviCloudUrl}
-                onChange={(e) => onSettingChanged('saviCloudUrl', e.target.value)}
-            />
+            <details style={{ borderTop: '1px solid currentColor', paddingTop: 16, marginTop: 24 }}>
+                <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Advanced connections</summary>
+                <FormHelperText>Connection addresses and a legacy token for custom desktop setups.</FormHelperText>
+                <SettingsTextField
+                    color="primary"
+                    fullWidth
+                    label={'Savi daemon URL'}
+                    value={saviDaemonUrl}
+                    onChange={(e) => onSettingChanged('saviDaemonUrl', e.target.value)}
+                />
+                <SettingsTextField
+                    color="primary"
+                    fullWidth
+                    label={'Savi cloud URL'}
+                    value={saviCloudUrl}
+                    onChange={(e) => onSettingChanged('saviCloudUrl', e.target.value)}
+                />
+                {onSaviSignIn && (
+                    <SettingsTextField
+                        color="primary"
+                        fullWidth
+                        type="password"
+                        label={'Savi daemon token (legacy fallback)'}
+                        value={saviDaemonToken}
+                        onChange={(e) => onSettingChanged('saviDaemonToken', e.target.value)}
+                    />
+                )}
+            </details>
         </Stack>
     );
 };

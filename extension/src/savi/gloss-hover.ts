@@ -1,13 +1,11 @@
-// On-demand hover glossing (follow-up to SV-12/13). Two behaviours, gated behind
+// On-demand hover glossing (follow-up to SV-12/13), gated behind
 // the `saviHoverGloss` setting and scoped to glossable (non-Japanese) languages:
 //
-//   1. Hover a subtitle word → its translation shows in a small ruby-style label
+// Hover a subtitle word → its translation shows in a small ruby-style label
 //      ABOVE the word. Additive to the always-on labels: it only labels words
 //      that don't already have one (words you know, or ones the always-on pass
 //      couldn't translate), so hovering a known word reveals its meaning.
-//   2. Deferred pause: when the current line reaches its end while the cursor is
-//      still on the subtitle, HOLD the line (pause) so you can finish reading;
-//      resume when you move the cursor off the line.
+// Playback is managed separately by SaviHoverPause for every language and mode.
 //
 // Nothing here re-renders the subtitle DOM — the label is a `pointer-events:none`
 // overlay positioned over the word, so moving between words never reflows the
@@ -200,11 +198,6 @@ const describeElement = (target: EventTarget | null): string => {
 export interface GlossHoverSources {
     readonly gloss: SaviGlossController;
     readonly settings: Pick<SettingsProvider, 'get'>;
-    /** The bound media element, for the paused-state check. */
-    readonly video: () => HTMLMediaElement | null | undefined;
-    /** The binding's pause/play (Netflix-aware — a raw video.pause() is overridden). */
-    readonly pause: () => void;
-    readonly play: () => void;
     /** The loaded cues — a hovered line must be one of THESE. asbplayer's
      *  notification banner (e.g. the loaded-subtitle file name) is built with
      *  the exact same DOM shape as a subtitle line and sits above it, so DOM
@@ -227,8 +220,6 @@ export class SaviGlossHover {
     private _settingEnabled = false; // the saviHoverGloss setting (glossable is read live)
     private _bound = false;
     private _label: HTMLDivElement | null = null;
-    private _mouseOnSubtitle = false;
-    private _deferredPaused = false; // WE held the line at its end; WE resume on mouse-out
     private _hoveredKey = ''; // line + span, so a word is translated/positioned once
     /** The reveal currently on screen, so its dwell can be closed when the
      *  cursor moves on. Null whenever no label is showing. */
@@ -268,8 +259,6 @@ export class SaviGlossHover {
      *  feature would wrongly deactivate. `isActive()` reads it live instead. */
     async start(): Promise<void> {
         this._clearHover();
-        this._mouseOnSubtitle = false;
-        this._deferredPaused = false;
         try {
             const { saviHoverGloss } = await this._sources.settings.get(['saviHoverGloss']);
             this._settingEnabled = saviHoverGloss;
@@ -291,30 +280,13 @@ export class SaviGlossHover {
             this._bound = false;
         }
         this._clearHover();
-        this._mouseOnSubtitle = false;
-        this._deferredPaused = false;
         this._settingEnabled = false;
     }
 
     /** True when the feature is active: setting on AND glossing is live for the
-     *  current language (computed LIVE — see start()). The binding reads it to
-     *  suppress asbplayer's IMMEDIATE pause-on-hover, so the two don't both fire. */
+     *  current language (computed LIVE — see start()). */
     isActive(): boolean {
         return this._settingEnabled && this._sources.gloss.glossable;
-    }
-
-    /** The subtitle controller signals the current line is about to stop showing.
-     *  If the cursor is on the subtitle, hold the line (pause) instead. */
-    onWillStopShowing(): void {
-        if (!this.isActive() || !this._mouseOnSubtitle || this._deferredPaused) {
-            return;
-        }
-        const video = this._sources.video();
-        if (video && !video.paused) {
-            this._log('line ended while hovering — holding (pause)');
-            this._sources.pause();
-            this._deferredPaused = true;
-        }
     }
 
     private _onMouseMove = (event: MouseEvent) => {
@@ -324,14 +296,6 @@ export class SaviGlossHover {
             return;
         }
         const line = this._subtitleLineAt(event);
-        this._mouseOnSubtitle = line !== null;
-
-        // Resume the line we held once the cursor leaves the subtitle.
-        if (this._deferredPaused && !this._mouseOnSubtitle) {
-            this._deferredPaused = false;
-            this._sources.play();
-        }
-
         if (!line) {
             this._clearHover();
             return;
@@ -420,8 +384,7 @@ export class SaviGlossHover {
     private async _hoverWord(line: HTMLElement, x: number, y: number): Promise<void> {
         // Only the primary (target-language) track is glossed — hovering a
         // translation track would "translate" the user's own language. The
-        // deferred pause still applies to any track (_mouseOnSubtitle is set
-        // before this runs).
+        // playback controller handles hovering either subtitle track separately.
         const track = line.closest('[data-track]')?.getAttribute('data-track') ?? '0';
         if (track !== '0') {
             this._log(`track ${track} line — not the target-language track, no hover gloss`);

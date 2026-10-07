@@ -30,8 +30,9 @@ const useStyles = makeStyles(({ anchor }: { anchor: Anchor }) => ({
     container: {
         display: 'inline-flex',
         width: 'auto',
-        backgroundColor: 'rgba(0, 0, 0, .7)',
-        borderRadius: 16,
+        backgroundColor: 'rgba(15, 17, 21, .96)',
+        border: '1px solid #2a313c',
+        borderRadius: 12,
     },
     playModePopOver: {
         '& .MuiPopover-paper': {
@@ -363,7 +364,12 @@ const MobileVideoOverlay = React.forwardRef<HTMLDivElement, Props>(function Mobi
                     <Grid item>
                         <Tooltip {...defaultTooltipProps} title={t('binds.toggleSubtitles')!}>
                             <span>
-                                <IconButton disabled={model.recording} onClick={onToggleSubtitles}>
+                                <IconButton
+                                    aria-label={t('binds.toggleSubtitles')}
+                                    aria-pressed={model.subtitlesAreVisible}
+                                    disabled={model.recording}
+                                    onClick={onToggleSubtitles}
+                                >
                                     {model.subtitlesAreVisible && (
                                         <SubtitlesOffIcon
                                             className={model.recording ? classes.inactiveButton : classes.button}

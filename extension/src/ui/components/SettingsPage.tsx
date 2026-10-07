@@ -1,12 +1,10 @@
+import SaviBrand from '@project/common/components/SaviBrand';
+import Typography from '@mui/material/Typography';
 import { CardModel, HttpFetcher } from '@project/common';
-import { useCallback, useEffect, useMemo } from 'react';
-import { makeStyles } from '@mui/styles';
+import { useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import Box from '@mui/material/Box';
 import SettingsForm from '@project/common/components/SettingsForm';
-import Dialog from '@mui/material/Dialog';
-import DialogTitle from '@mui/material/DialogTitle';
-import DialogContent from '@mui/material/DialogContent';
 import { useCommandKeyBinds } from '../hooks/use-command-key-binds';
 import { useLocalFontFamilies } from '@project/common/hooks';
 import { useI18n } from '../hooks/use-i18n';
@@ -15,7 +13,6 @@ import { Anki } from '@project/common/anki';
 import { useSupportedLanguages } from '../hooks/use-supported-languages';
 import SettingsProfileSelectMenu from '@project/common/components/SettingsProfileSelectMenu';
 import { AsbplayerSettings, Profile, testCard } from '@project/common/settings';
-import { useTheme, type Theme } from '@mui/material/styles';
 import { settingsPageConfigs } from '@/services/pages';
 import { DictionaryProvider } from '@project/common/dictionary-db';
 import { useLocationHash } from '@project/common/hooks/use-location-hash';
@@ -23,21 +20,6 @@ import { useSaviAccount } from '../hooks/use-savi-account';
 import { useSaviRoamingSettings } from '../hooks/use-savi-roaming-settings';
 import { useSaviMutedSites } from '../hooks/use-savi-muted-sites';
 import { useFileUrlAccess } from '../hooks/use-file-url-access';
-
-const useStyles = makeStyles<Theme>((theme) => ({
-    root: {
-        '& .MuiPaper-root': {
-            height: '100vh',
-        },
-    },
-    content: {
-        maxHeight: '100%',
-    },
-    profilesContainer: {
-        paddingLeft: theme.spacing(4),
-        paddingRight: theme.spacing(4),
-    },
-}));
 
 interface Props {
     dictionaryProvider: DictionaryProvider;
@@ -70,12 +52,10 @@ const SettingsPage = ({
     ...profileContext
 }: Props) => {
     const { t } = useTranslation();
-    const theme = useTheme();
     const anki = useMemo(
         () => (settings === undefined ? undefined : new Anki(settings, new HttpFetcher())),
         [settings]
     );
-    const classes = useStyles();
 
     const {
         updateLocalFontsPermission,
@@ -109,10 +89,31 @@ const SettingsPage = ({
     }
 
     return (
-        <Paper square style={{ height: '100vh' }}>
-            <Dialog open={true} maxWidth="md" fullWidth className={classes.root} onClose={() => {}}>
-                <DialogTitle>{t('settings.title')}</DialogTitle>
-                <DialogContent className={classes.content}>
+        <Box
+            component="main"
+            sx={{
+                minHeight: '100dvh',
+                bgcolor: settings.themeType === 'dark' ? '#0f1115' : '#f2f6fa',
+                p: { xs: 2, md: 4 },
+            }}
+        >
+            <Box sx={{ maxWidth: 1120, mx: 'auto' }}>
+                <Box
+                    component="header"
+                    sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4, gap: 2 }}
+                >
+                    <SaviBrand caption={t('saviUi.watchingCompanion')} />
+                    <Typography variant="caption" color="text.secondary">
+                        {t('saviUi.savedAutomatically')}
+                    </Typography>
+                </Box>
+                <Typography component="h1" variant="h4">
+                    {t('saviUi.yourWay')}
+                </Typography>
+                <Typography color="text.secondary" sx={{ mt: 1, mb: 3 }}>
+                    {t('saviUi.settingsIntro')}
+                </Typography>
+                <Paper variant="outlined" sx={{ p: { xs: 1.5, md: 3 }, minHeight: 560 }}>
                     <SettingsForm
                         anki={anki}
                         extensionInstalled
@@ -164,12 +165,12 @@ const SettingsPage = ({
                         saviNativeLanguage={saviRoaming.nativeLanguage}
                         onSaviNativeLanguageChange={saviRoaming.setNativeLanguage}
                     />
-                </DialogContent>
-                <Box style={{ marginBottom: theme.spacing(2) }} className={classes.profilesContainer}>
+                </Paper>
+                <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end' }}>
                     <SettingsProfileSelectMenu {...profileContext} />
                 </Box>
-            </Dialog>
-        </Paper>
+            </Box>
+        </Box>
     );
 };
 

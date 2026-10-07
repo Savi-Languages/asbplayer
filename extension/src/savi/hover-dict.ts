@@ -1,3 +1,4 @@
+import { subtitleTokens } from './token-cache';
 // Live-subtitle hover dictionary: hover a word on the video's asbplayer
 // subtitle overlay and see (a) the word boxed under the cursor, Language
 // Reactor-style, and (b) its dictionary entry in a popup.
@@ -51,7 +52,6 @@ export const SUBTITLE_CONTAINER = '.asbplayer-subtitles, .asbplayer-fullscreen-s
 const LANG = 'ja';
 // Hiragana, katakana, CJK (+ Ext. A), compatibility ideographs, halfwidth kana.
 const JAPANESE = /[぀-ヿ㐀-䶿一-鿿豈-﫿ｦ-ﾟ]/;
-const HOVER_DEBOUNCE_MS = 0; // fire as good as immediately; tokenize/dict are cached
 const SHOT_MAX_WIDTH = 960; // cap the mined card's screenshot width (height scales)
 // Grace period before hiding once the cursor leaves the subtitle line, so the
 // visible gap between the word and the popup can be crossed to click a button.
@@ -187,7 +187,7 @@ export function caretRangeFromPoint(x: number, y: number): Range | null {
 
 const POPUP_BG = '#171b22';
 const ARROW_SIZE = 7; // px; the triangle that points from the popup to the word
-const POPUP_GAP = 12; // px of clear space between the word and the popup body
+const POPUP_MIN_GAP = 48; // leave the neighboring text row accessible
 
 const POPUP_STYLE: Partial<CSSStyleDeclaration> = {
     position: 'fixed',
@@ -196,7 +196,7 @@ const POPUP_STYLE: Partial<CSSStyleDeclaration> = {
     background: POPUP_BG,
     color: '#e8eaed',
     border: '1px solid #2a313c',
-    borderRadius: '12px',
+    borderRadius: '14px',
     padding: '15px 18px',
     boxShadow: '0 8px 30px rgba(0,0,0,0.5)',
     font: '14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Sans", "Noto Sans JP", sans-serif',
@@ -211,9 +211,9 @@ const HIGHLIGHT_STYLE: Partial<CSSStyleDeclaration> = {
     zIndex: '2147483646', // just beneath the popup
     pointerEvents: 'none',
     boxSizing: 'border-box',
-    border: '1.5px solid rgba(255, 255, 255, 0.7)',
+    border: '1.5px solid rgba(76, 194, 255, 0.8)',
     borderRadius: '5px',
-    background: 'rgba(255, 255, 255, 0.12)',
+    background: 'rgba(76, 194, 255, 0.14)',
     transition: 'left 60ms linear, top 60ms linear, width 60ms linear, height 60ms linear',
     display: 'none',
 };
@@ -229,9 +229,9 @@ const MINE_BTN_STYLE: Partial<CSSStyleDeclaration> = {
     fontSize: '13px',
     fontWeight: '600',
     color: '#171b22',
-    background: '#ffd166',
+    background: '#4cc2ff',
     border: 'none',
-    borderRadius: '7px',
+    borderRadius: '10px',
     cursor: 'pointer',
 };
 
@@ -246,7 +246,7 @@ const BREAKDOWN_BTN_STYLE: Partial<CSSStyleDeclaration> = {
     color: '#cfd6df',
     background: 'transparent',
     border: '1px solid #3a424e',
-    borderRadius: '7px',
+    borderRadius: '10px',
     cursor: 'pointer',
 };
 
@@ -361,19 +361,28 @@ function renderEntry(
 // Anchor the popup to the WORD (not the cursor), centered above it with a clear
 // gap, and point the arrow at the word's center. Flips below when there's no
 // room above.
-function positionPopup(popup: HTMLDivElement, arrow: HTMLDivElement, word: DOMRect) {
-    const pr = popup.getBoundingClientRect();
+export function positionPopup(popup: HTMLDivElement, arrow: HTMLDivElement, word: DOMRect) {
+    const content = popup.querySelector<HTMLElement>('[data-savi-popup-content]');
+    if (content) content.style.maxHeight = '';
+    let pr = popup.getBoundingClientRect();
     const margin = 8;
     const wordCenterX = word.left + word.width / 2;
 
     let left = wordCenterX - pr.width / 2;
     left = Math.max(margin, Math.min(left, window.innerWidth - pr.width - margin));
 
-    let top = word.top - pr.height - POPUP_GAP - ARROW_SIZE; // prefer above
-    const below = top < margin;
-    if (below) {
-        top = word.bottom + POPUP_GAP + ARROW_SIZE;
+    const gap = Math.max(POPUP_MIN_GAP, Math.ceil(word.height * 1.8));
+    const aboveSpace = Math.max(0, word.top - gap - ARROW_SIZE - margin);
+    const belowSpace = Math.max(0, window.innerHeight - word.bottom - gap - ARROW_SIZE - margin);
+    const below = pr.height > aboveSpace && belowSpace > aboveSpace;
+    const available = below ? belowSpace : aboveSpace;
+    if (content && pr.height > available) {
+        const chrome = pr.height - content.getBoundingClientRect().height;
+        content.style.maxHeight = `${Math.max(0, available - chrome)}px`;
+        content.style.overflowY = 'auto';
+        pr = popup.getBoundingClientRect();
     }
+    const top = below ? word.bottom + gap + ARROW_SIZE : word.top - pr.height - gap - ARROW_SIZE;
 
     popup.style.left = `${left}px`;
     popup.style.top = `${top}px`;
@@ -402,8 +411,13 @@ function positionPopup(popup: HTMLDivElement, arrow: HTMLDivElement, word: DOMRe
  *  kanji-only result still teaches, but there is no label to persist). */
 const firstDictGloss = (entries: SaviDictEntry[]): string => entries[0]?.senses?.[0]?.glosses?.[0] ?? '';
 
+export interface SaviHoverAdapter {
+    resolveLine(target: EventTarget | null, x: number, y: number): HTMLElement | null;
+    episodeId(): string | undefined;
+    playback(): Pick<HTMLMediaElement, 'paused' | 'pause' | 'play'> | null;
+}
+
 export class SaviHoverDictionary {
-    private readonly _tokenizeCache = new Map<string, SaviToken[]>();
     // AI segmentations only — a rule-based fallback is never cached (see _segment).
     private readonly _segmentCache = new Map<string, SaviToken[]>();
     private readonly _explainCache = new Map<string, string | null>();
@@ -411,17 +425,36 @@ export class SaviHoverDictionary {
     private _wordPanel: SaviWordPanel | null = null;
     private _panelOpen = false; // the tap study panel is up → keep the video paused
     private _pausedForPanel = false; // WE paused the video for the panel, so WE resume
-    private readonly _dictCache = new Map<string, SaviDictResponse>();
+    private readonly _dictCache = new Map<string, { result: SaviDictResponse; expiresAt: number }>();
+    private readonly _dictFlights = new Map<string, Promise<SaviDictResponse>>();
+    private _prefetchTimer: ReturnType<typeof setInterval> | undefined;
+    private _prefetching = false;
+    private _prefetchRetryAt = 0;
+    private _panelPlayback: Pick<HTMLMediaElement, 'paused' | 'pause' | 'play'> | null = null;
+    private _panelEpisode: string | undefined;
+    private _lifecycle = 0;
     private _popup: HTMLDivElement | null = null;
     private _popupContent: HTMLDivElement | null = null;
     private _arrow: HTMLDivElement | null = null;
     private _highlight: HTMLDivElement | null = null;
+    /** The subtitle line element the highlight box currently sits on. Moves
+     *  within it glide; a move to any other line snaps. See _highlightRect. */
+    private _highlightLine: HTMLElement | null = null;
+    /** The WORD the visuals are anchored to (line element + char span), so the
+     *  box and popup can follow it when the page moves it. The rect measured at
+     *  hover time goes stale in seconds on Netflix: hovering pauses the video,
+     *  the player chrome fades a beat later, and the bottom-anchored subtitle
+     *  block shifts back down — leaving a fixed-position box ringing empty
+     *  pixels above the word. The word's IDENTITY is stable; its position isn't. */
+    private _anchor: { line: HTMLElement; start: number; end: number; text: string } | null = null;
+    private _trackRaf: number | null = null;
+    /** The last rect applied to the visuals, to skip no-op writes per frame. */
+    private _lastRect: { left: number; top: number; width: number; height: number } | null = null;
     private _bridge: HTMLDivElement | null = null; // transparent gap-cover from word up to popup
     private _toastEl: HTMLDivElement | null = null; // standalone mine-result toast (outlives the popup)
     private _toastTimer: number | null = null;
     private _cursorLine: HTMLElement | null = null; // line we set cursor:pointer on
     private _currentTerm: string | null = null;
-    private _hoverTimer: ReturnType<typeof setTimeout> | undefined;
     private _hideTimer: ReturnType<typeof setTimeout> | undefined; // delayed hide, cancellable
     private _generation = 0; // bumps to cancel stale async work
     private _bound = false;
@@ -448,8 +481,25 @@ export class SaviHoverDictionary {
         private readonly _subtitleProvider: () => SerializableSubtitle[] = () => [],
         private readonly _onReveal?: (lineText: string, word: string, gloss: string) => void,
         private readonly _onRevealEnd?: (lineText: string, word: string) => void,
-        private readonly _onRetract?: (lineText: string, word: string) => void
+        private readonly _onRetract?: (lineText: string, word: string) => void,
+        private readonly _adapter?: SaviHoverAdapter
     ) {}
+
+    private _episodeId() {
+        return this._adapter ? this._adapter.episodeId() : deriveEpisodeId(location.href, document.title);
+    }
+    private _playback() {
+        return this._adapter ? this._adapter.playback() : this._videoProvider();
+    }
+    private _resolveLine(target: EventTarget | null, x: number, y: number) {
+        return this._adapter ? this._adapter.resolveLine(target, x, y) : lineElement(target);
+    }
+
+    /** A platform control superseded Savi's pause ownership. */
+    cancelPlaybackResume() {
+        this._pausedForPanel = false;
+        this._panelPlayback = null;
+    }
 
     /** The reveal currently on screen, so its dwell can be closed when the
      *  popup or panel goes away. */
@@ -477,17 +527,23 @@ export class SaviHoverDictionary {
         this._bound = true;
         document.addEventListener('mousemove', this._onMouseMove, true);
         document.addEventListener('click', this._onClick, true);
+        this._prefetchTimer = setInterval(() => void this._prefetch(), 500);
+        void this._prefetch();
     }
 
     stop() {
+        this._lifecycle++;
         this._endReveal();
         if (!this._bound) return;
         this._bound = false;
+        clearInterval(this._prefetchTimer);
+        this._prefetchTimer = undefined;
         document.removeEventListener('mousemove', this._onMouseMove, true);
         document.removeEventListener('click', this._onClick, true);
         this._clear();
         this._panelOpen = false;
         this._pausedForPanel = false;
+        this._panelPlayback = null;
         this._wordPanel?.destroy();
         this._wordPanel = null;
     }
@@ -502,20 +558,24 @@ export class SaviHoverDictionary {
         }
         const el = document.elementFromPoint(x, y);
         if (!(el instanceof Node)) return false;
-        return (!!this._popup && this._popup.contains(el)) || (!!this._bridge && this._bridge.contains(el));
+        return (!!this._popup && this._popup.contains(el)) || this._isOverBridge(x, y);
+    }
+
+    private _isOverBridge(x: number, y: number): boolean {
+        if (!this._bridge || this._bridge.style.display === 'none') return false;
+        const rect = this._bridge.getBoundingClientRect();
+        return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
     }
 
     private _onMouseMove = (event: MouseEvent) => {
-        const line = lineElement(event.target);
+        const line = this._resolveLine(event.target, event.clientX, event.clientY);
         if (!line) {
             const target = event.target;
             const onPopup = !!this._popup && target instanceof Node && this._popup.contains(target);
-            const onBridge = target === this._bridge;
+            const onBridge = this._isOverBridge(event.clientX, event.clientY);
             if (onPopup || onBridge) {
-                // On the popup, or the invisible bridge spanning the gap up to it
-                // — keep things up so the buttons stay reachable. Travelling the
-                // bridge is what stops the OTHER subtitle line (which sits in that
-                // gap for a bottom-line word) from stealing the hover.
+                // Empty space in the gap keeps the popup reachable. Actual text
+                // resolves above and takes priority, allowing direct line-to-line hover.
                 this._cancelHide();
                 return;
             }
@@ -527,8 +587,7 @@ export class SaviHoverDictionary {
         // Back on a subtitle line — cancel any pending hide.
         this._cancelHide();
         const { clientX, clientY } = event;
-        clearTimeout(this._hoverTimer);
-        this._hoverTimer = setTimeout(() => void this._handleHover(line, clientX, clientY), HOVER_DEBOUNCE_MS);
+        void this._handleHover(line, clientX, clientY);
     };
 
     private _scheduleHide() {
@@ -554,14 +613,16 @@ export class SaviHoverDictionary {
             this._clear();
             return;
         }
-        // Hover is purely rule-based — instant, and never touches the LLM. The AI
-        // in-context read lives in the tap panel (_openWordDetail), so a slow or
-        // flaky provider can't delay or break the hover popup.
-        const tokens = await this._tokenize(text);
-        if (generation !== this._generation) {
-            return; // a newer hover (or a clear) superseded this one
+        // Prepared words render in this event. Cold lookups use the local
+        // tokenizer/dictionary; the hover path never calls an LLM.
+        try {
+            const available = this._tokenize(text);
+            const tokens = Array.isArray(available) ? available : await available;
+            if (generation !== this._generation) return;
+            await this._applyTokens(line, text, offset, x, y, tokens, generation);
+        } catch {
+            if (generation === this._generation) this._clear();
         }
-        await this._applyTokens(line, text, offset, x, y, tokens, generation);
     }
 
     /** Box the token at `offset` and show its rule-based dictionary popup. */
@@ -586,19 +647,43 @@ export class SaviHoverDictionary {
         const wordRect = range ? range.getBoundingClientRect() : null;
         if (wordRect && (wordRect.width > 0 || wordRect.height > 0)) {
             this._highlightRect(line, wordRect);
+            // Anchor by identity and keep following it: if the page moves the
+            // word (chrome fade, subtitle reflow), the visuals move WITH it.
+            this._anchor = { line, start: span.start, end: span.end, text: line.textContent ?? '' };
+            this._startTracking();
         } else {
-            this._hideHighlight();
+            this._clear();
+            return;
         }
 
         // Look up the dictionary form — fall back to the surface so words without
         // a lemma (しかし, そこ, 東京) get defined instead of skipped.
         const term = lookupTermFor(span.token);
         if (term === this._currentTerm) {
-            return; // already showing this word's definition
+            // The same word can occur elsewhere in the cue. Its definition is
+            // cached on screen, but its popup still needs the new position.
+            positionPopup(this._popup!, this._arrow!, wordRect);
+            this._positionBridge(wordRect);
+            return;
         }
-        const result = await this._lookupDict(term);
+        const available = this._lookupDict(term);
+        const result = available instanceof Promise ? await available : available;
         if (generation !== this._generation) {
             return;
+        }
+        // Layout can change while the dictionary request is in flight.
+        const currentRect = this._anchorRect();
+        if (!currentRect) {
+            this._clear();
+            return;
+        }
+        if (
+            currentRect.left !== wordRect.left ||
+            currentRect.top !== wordRect.top ||
+            currentRect.width !== wordRect.width ||
+            currentRect.height !== wordRect.height
+        ) {
+            this._placeHighlight(line, currentRect, true);
         }
         // Show the popup when there's anything useful — a definition OR just a
         // kanji breakdown (so even an unknown compound still teaches its kanji).
@@ -622,25 +707,46 @@ export class SaviHoverDictionary {
         // The word's meaning is now on screen — a hover_glossed encounter with
         // the shown label (SV-20). Kanji-only results reveal no label ('').
         this._noteReveal(text, span.token.text, firstDictGloss(result.entries));
-        // Anchor to the word so the arrow points at it; fall back to the cursor.
-        const anchor = wordRect ?? new DOMRect(x, y, 0, 0);
+        const anchor = currentRect;
         positionPopup(popup, this._arrow!, anchor);
         // Lay the invisible bridge over the gap so the path to the popup never
         // crosses (and triggers) the other subtitle line.
         this._positionBridge(anchor);
     }
 
-    private async _tokenize(text: string): Promise<SaviToken[]> {
-        const cached = this._tokenizeCache.get(text);
-        if (cached) return cached;
-        const res = await sendToBackground<SaviTokenizeResponse>({ command: 'savi-tokenize', lang: LANG, text });
-        const tokens = res.tokens ?? [];
-        if (this._tokenizeCache.size >= TOKENIZE_CACHE_MAX) {
-            const oldest = this._tokenizeCache.keys().next().value;
-            if (oldest !== undefined) this._tokenizeCache.delete(oldest);
+    private _tokenize(text: string): SaviToken[] | Promise<SaviToken[]> {
+        return subtitleTokens.peek(LANG, text) ?? subtitleTokens.get(LANG, text);
+    }
+
+    /** Warm at most two primary cues within five seconds of the playhead.
+     *  Sequential requests bound background load; hover shares their cache and
+     *  in-flight requests. Preparation never displays or records a reveal. */
+    private async _prefetch() {
+        if (!this._bound || this._prefetching || Date.now() < this._prefetchRetryAt) return;
+        const video = this._videoProvider();
+        if (!video || !Number.isFinite(video.currentTime)) return;
+        const now = video.currentTime * 1000;
+        const cues = this._subtitleProvider()
+            .filter((cue) => cue.track === 0 && cue.end >= now && cue.start <= now + 5000 && JAPANESE.test(cue.text))
+            .sort((a, b) => a.start - b.start)
+            .slice(0, 2);
+        this._prefetching = true;
+        try {
+            for (const cue of cues) {
+                if (!this._bound) return;
+                const tokens = await this._tokenize(cue.text.replace(/\s+$/, ''));
+                const terms = new Set(tokens.filter((token) => JAPANESE.test(token.text)).map(lookupTermFor));
+                for (const term of terms) {
+                    if (!this._bound) return;
+                    await this._lookupDict(term);
+                }
+            }
+        } catch {
+            // Offline/unavailable: hover can retry, background work backs off.
+            this._prefetchRetryAt = Date.now() + 5000;
+        } finally {
+            this._prefetching = false;
         }
-        this._tokenizeCache.set(text, tokens);
-        return tokens;
     }
 
     /** AI segmentation for a line (cached). `tokens` is null when the daemon fell
@@ -654,7 +760,8 @@ export class SaviHoverDictionary {
      *  cached null and keep telling them to sign in, right under an explanation
      *  section that just succeeded. */
     private async _segment(text: string): Promise<{ tokens: SaviToken[] | null; unavailable?: SaviAiUnavailable }> {
-        const cached = this._segmentCache.get(text);
+        const cacheKey = this._adapter ? `${this._episodeId() ?? ''}\u0000${text}` : text;
+        const cached = this._segmentCache.get(cacheKey);
         if (cached !== undefined) {
             return { tokens: cached };
         }
@@ -665,7 +772,7 @@ export class SaviHoverDictionary {
             text,
             prevLines,
             nextLines,
-            episodeId: deriveEpisodeId(location.href, document.title),
+            episodeId: this._episodeId(),
         });
         if (!res.ai || res.tokens.length === 0) {
             return { tokens: null, unavailable: res.unavailable };
@@ -674,7 +781,7 @@ export class SaviHoverDictionary {
             const oldest = this._segmentCache.keys().next().value;
             if (oldest !== undefined) this._segmentCache.delete(oldest);
         }
-        this._segmentCache.set(text, res.tokens);
+        this._segmentCache.set(cacheKey, res.tokens);
         return { tokens: res.tokens };
     }
 
@@ -690,7 +797,7 @@ export class SaviHoverDictionary {
         term: string,
         reading?: string
     ): Promise<{ explanation: string | null; unavailable?: SaviAiUnavailable }> {
-        const cacheKey = `${term}\u0000${text}`;
+        const cacheKey = `${this._adapter ? (this._episodeId() ?? '') : ''}\u0000${term}\u0000${text}`;
         const cached = this._explainCache.get(cacheKey);
         if (cached !== undefined) {
             return { explanation: cached };
@@ -704,7 +811,7 @@ export class SaviHoverDictionary {
             text,
             prevLines,
             nextLines,
-            episodeId: deriveEpisodeId(location.href, document.title),
+            episodeId: this._episodeId(),
         });
         const explanation = res.explanation ?? null;
         if (explanation === null) {
@@ -750,7 +857,7 @@ export class SaviHoverDictionary {
 
     /** Tap handler: open the study panel for a Japanese subtitle word. */
     private _onClick = (event: MouseEvent) => {
-        const line = lineElement(event.target);
+        const line = this._resolveLine(event.target, event.clientX, event.clientY);
         if (!line) {
             return; // not on a subtitle — let the click through (video controls, etc.)
         }
@@ -770,13 +877,17 @@ export class SaviHoverDictionary {
      *  on demand. This is the ONLY place the segmentation LLM runs, so a slow or
      *  failed call only ever affects this panel — never the hover popup. */
     private async _openWordDetail(text: string, offset: number) {
+        const lifecycle = this._lifecycle;
+        const episode = this._episodeId();
         const tokens = await this._tokenize(text);
+        if (lifecycle !== this._lifecycle || episode !== this._episodeId()) return;
         const span = tokenSpanAtOffset(tokens, offset);
         if (!span || !JAPANESE.test(span.token.text)) {
             return;
         }
         const term = lookupTermFor(span.token);
         const dict = await this._lookupDict(term);
+        if (lifecycle !== this._lifecycle || episode !== this._episodeId()) return;
         this._hidePopup(); // the small hover popup gives way to the full panel
         // Opening the study panel is MINING intent, not a failure to recall —
         // the panel is where the "+ Add to Anki" button lives. Retract before
@@ -800,10 +911,12 @@ export class SaviHoverDictionary {
         // (isOverHoverSurface returns true while _panelOpen, so the binding's
         // hover-resume can't fire; we resume on close only when WE were the pauser.)
         this._panelOpen = true;
-        const video = this._videoProvider();
+        const video = this._playback();
         if (video && !video.paused) {
             video.pause();
             this._pausedForPanel = true;
+            this._panelPlayback = video;
+            this._panelEpisode = episode;
         }
         // Make sure the daemon has the whole-episode transcript (once per episode) so
         // the AI explanation + segmentation can ground in the episode gist — not just
@@ -812,10 +925,11 @@ export class SaviHoverDictionary {
         // Skipped entirely when the page has no stable id yet — grounding the
         // AI in an episode we cannot name would file the transcript under a
         // throwaway id.
-        const transcriptEpisodeId = deriveEpisodeId(location.href, document.title);
+        const transcriptEpisodeId = this._episodeId();
         if (transcriptEpisodeId !== undefined) {
             await this._maybeSendTranscript(transcriptEpisodeId).catch(() => {});
         }
+        if (lifecycle !== this._lifecycle || episode !== this._episodeId()) return;
         // AI in-context — fired ONLY here, on a deliberate tap. Far fewer calls than
         // per-hover (so the providers stop rate-limiting), and a slow/failed call
         // degrades to a graceful "unavailable" inside the panel.
@@ -864,10 +978,11 @@ export class SaviHoverDictionary {
         this._panelOpen = false;
         if (this._pausedForPanel) {
             this._pausedForPanel = false;
-            const video = this._videoProvider();
-            if (video) {
+            const video = this._playback();
+            if (video && video === this._panelPlayback && this._episodeId() === this._panelEpisode && video.paused) {
                 void video.play().catch(() => {});
             }
+            this._panelPlayback = null;
         }
     }
 
@@ -887,7 +1002,7 @@ export class SaviHoverDictionary {
         button.disabled = true;
         button.textContent = 'Adding…';
         try {
-            const episodeId = deriveEpisodeId(location.href, document.title);
+            const episodeId = this._episodeId();
             if (episodeId === undefined) {
                 button.textContent = 'Not ready';
                 return;
@@ -1064,33 +1179,42 @@ export class SaviHoverDictionary {
         return el;
     }
 
-    private async _lookupDict(term: string): Promise<SaviDictResponse> {
+    private _lookupDict(term: string): SaviDictResponse | Promise<SaviDictResponse> {
         const cached = this._dictCache.get(term);
-        if (cached) return cached; // re-hovers / common words are instant
-        const res = await sendToBackground<SaviDictResponse>({ command: 'savi-dict', lang: LANG, term });
-        const result: SaviDictResponse = { entries: res.entries ?? [], kanji: res.kanji ?? [] };
-        if (this._dictCache.size >= DICT_CACHE_MAX) {
-            const oldest = this._dictCache.keys().next().value;
-            if (oldest !== undefined) this._dictCache.delete(oldest);
-        }
-        this._dictCache.set(term, result);
-        return result;
+        if (cached && cached.expiresAt > Date.now()) return cached.result;
+        const flight = this._dictFlights.get(term);
+        if (flight) return flight;
+        const pending = sendToBackground<SaviDictResponse>({ command: 'savi-dict', lang: LANG, term })
+            .then((res) => {
+                const result: SaviDictResponse = { entries: res.entries ?? [], kanji: res.kanji ?? [] };
+                if (this._dictCache.size >= DICT_CACHE_MAX) {
+                    const oldest = this._dictCache.keys().next().value;
+                    if (oldest !== undefined) this._dictCache.delete(oldest);
+                }
+                // The background also returns an empty result when offline.
+                // Retry misses shortly instead of caching an outage indefinitely.
+                const expiresAt = result.entries.length || result.kanji.length ? Infinity : Date.now() + 5000;
+                this._dictCache.set(term, { result, expiresAt });
+                return result;
+            })
+            .finally(() => this._dictFlights.delete(term));
+        this._dictFlights.set(term, pending);
+        return pending;
     }
 
     private _highlightRect(line: HTMLElement, rect: DOMRect) {
-        // Japanese cues carry letter-spacing, which the word's rect includes as
-        // trailing space on the right — drop it so the box ends at the last
-        // glyph instead of reaching into the next word. Small horizontal room,
-        // a touch more vertical.
-        const trailing = parseFloat(getComputedStyle(line).letterSpacing) || 0;
-        const padX = 1;
-        const padY = 3;
+        // The box GLIDES between words (60ms transition on left/top/width/height)
+        // so it reads as one cursor sliding along a line. That's right within a
+        // line and wrong across lines: hopping from a word on the Japanese line
+        // to a word on the English line beneath — or to the next cue's line
+        // after the previous one is gone — slid the box diagonally across the
+        // video, which reads as the subtitle scrolling. Same story when the box
+        // was last left on some far-away word and reappears here. Glide only
+        // when staying on the same line element; otherwise snap, and re-enable
+        // the transition on the next frame so the NEXT within-line move glides.
         const el = this._ensureHighlight();
-        el.style.left = `${rect.left - padX}px`;
-        el.style.top = `${rect.top - padY}px`;
-        el.style.width = `${Math.max(0, rect.width - trailing + padX * 2)}px`;
-        el.style.height = `${rect.height + padY * 2}px`;
-        el.style.display = 'block';
+        const sameLine = this._highlightLine === line && el.style.display !== 'none';
+        this._placeHighlight(line, rect, !sameLine);
         // The subtitle container forces cursor:text; signal the word is
         // clickable with a pointer while it's boxed.
         if (this._cursorLine !== line) {
@@ -1099,6 +1223,96 @@ export class SaviHoverDictionary {
             this._cursorLine = line;
         }
     }
+
+    /** Write the box's geometry for `rect`. `snap` suppresses the glide for
+     *  this placement (cross-line hops, and the anchor tracker following a
+     *  layout shift — gliding there reads as the box chasing the subtitle). */
+    private _placeHighlight(line: HTMLElement, rect: DOMRect, snap: boolean) {
+        // Japanese cues carry letter-spacing, which the word's rect includes as
+        // trailing space on the right — drop it so the box ends at the last
+        // glyph instead of reaching into the next word. Small horizontal room,
+        // a touch more vertical.
+        const trailing = parseFloat(getComputedStyle(line).letterSpacing) || 0;
+        const padX = 1;
+        const padY = 3;
+        const el = this._ensureHighlight();
+        if (snap) {
+            el.style.transition = 'none';
+        }
+        this._highlightLine = line;
+        el.style.left = `${rect.left - padX}px`;
+        el.style.top = `${rect.top - padY}px`;
+        el.style.width = `${Math.max(0, rect.width - trailing + padX * 2)}px`;
+        el.style.height = `${rect.height + padY * 2}px`;
+        el.style.display = 'block';
+        if (snap) {
+            // Force the style flush at the snapped position before restoring
+            // the transition, or the browser coalesces both writes and glides
+            // anyway.
+            void el.offsetWidth;
+            el.style.transition = HIGHLIGHT_STYLE.transition ?? '';
+        }
+        this._lastRect = { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+    }
+
+    // ── Anchor tracking ─────────────────────────────────────────────────────
+    // While the highlight is visible, re-measure the anchored word every frame
+    // and move the visuals when the PAGE moved the word. The classic trigger:
+    // hover pauses the video, Netflix's control chrome fades out a couple of
+    // seconds later, and the bottom-anchored subtitle block drops back down —
+    // with a one-shot rect, the box and popup stayed floating where the word
+    // USED to be. Measure only while visible; write styles only on change.
+
+    private _startTracking() {
+        if (this._trackRaf === null) {
+            this._trackRaf = requestAnimationFrame(this._trackTick);
+        }
+    }
+
+    private _stopTracking() {
+        if (this._trackRaf !== null) {
+            cancelAnimationFrame(this._trackRaf);
+            this._trackRaf = null;
+        }
+        this._anchor = null;
+        this._lastRect = null;
+    }
+
+    private _anchorRect(): DOMRect | null {
+        const anchor = this._anchor;
+        if (!anchor || !anchor.line.isConnected || anchor.line.textContent !== anchor.text) {
+            return null;
+        }
+        const range = rangeForCharSpan(anchor.line, anchor.start, anchor.end);
+        const rect = range?.getBoundingClientRect();
+        return rect && (rect.width > 0 || rect.height > 0) ? rect : null;
+    }
+
+    private _trackTick = () => {
+        this._trackRaf = null;
+        if (!this._anchor) return;
+        const rect = this._anchorRect();
+        if (!rect) {
+            // A replaced, removed or hidden cue no longer anchors this lookup.
+            this._clear();
+            return;
+        }
+        const last = this._lastRect;
+        const moved =
+            !last ||
+            last.left !== rect.left ||
+            last.top !== rect.top ||
+            last.width !== rect.width ||
+            last.height !== rect.height;
+        if (moved) {
+            this._placeHighlight(this._anchor.line, rect, true);
+            if (this._popup && this._popup.style.display !== 'none') {
+                positionPopup(this._popup, this._arrow!, rect);
+                this._positionBridge(rect);
+            }
+        }
+        this._startTracking();
+    };
 
     private _clear() {
         this._cancelHide();
@@ -1115,7 +1329,9 @@ export class SaviHoverDictionary {
     }
 
     private _hideHighlight() {
+        this._stopTracking();
         if (this._highlight) this._highlight.style.display = 'none';
+        this._highlightLine = null;
         if (this._cursorLine) {
             this._cursorLine.style.cursor = '';
             this._cursorLine = null;
@@ -1129,11 +1345,11 @@ export class SaviHoverDictionary {
         Object.assign(popup.style, POPUP_STYLE);
         // Keep it alive while the cursor is on the popup itself.
         popup.addEventListener('mouseenter', () => {
-            clearTimeout(this._hoverTimer);
             this._cancelHide();
         });
 
         const content = document.createElement('div');
+        content.dataset.saviPopupContent = '';
         popup.appendChild(content);
 
         // Triangle that points from the popup to the word (border colors set in
@@ -1171,8 +1387,8 @@ export class SaviHoverDictionary {
         el.className = 'savi-dict-bridge';
         Object.assign(el.style, {
             position: 'fixed',
-            zIndex: '2147483646', // just below the popup, above the subtitles
-            pointerEvents: 'auto',
+            zIndex: '2147483646', // geometry only; underlying words remain interactive
+            pointerEvents: 'none',
             background: 'transparent',
             display: 'none',
         });
@@ -1181,11 +1397,8 @@ export class SaviHoverDictionary {
         return el;
     }
 
-    // Cover the gap between the hovered word and its popup with a transparent,
-    // interactive strip. The cursor travels over this on its way to the popup,
-    // and `_onMouseMove` treats the bridge as "on the popup" — so reaching the
-    // buttons never crosses the OTHER subtitle line that sits in that gap for a
-    // bottom-line word. Geometry-driven, so it needs no hover timing.
+    // Geometry-only corridor keeps the popup open across blank space without
+    // intercepting hover or clicks on neighboring subtitle lines.
     private _positionBridge(word: DOMRect) {
         const popup = this._popup;
         const bridge = this._ensureBridge();

@@ -16,7 +16,8 @@ import path from 'path';
 // The web app (`common/app/components/SettingsDialog.tsx`) is deliberately NOT
 // in this list: it has no browser.storage, cannot read or edit the list, and
 // correctly renders nothing.
-const EXTENSION_SETTINGS_HOSTS = ['Popup.tsx', 'SettingsPage.tsx'];
+// The watching popup now opens SettingsPage rather than embedding settings.
+const EXTENSION_SETTINGS_HOSTS = ['SettingsPage.tsx'];
 
 const REQUIRED_PROPS = ['saviMutedSites=', 'onSaviUnmuteSite='];
 

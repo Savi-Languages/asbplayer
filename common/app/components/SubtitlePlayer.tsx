@@ -119,7 +119,7 @@ interface StylesProps {
 
 const useSubtitlePlayerStyles = makeStyles<Theme, StylesProps, string>((theme) => ({
     container: {
-        height: ({ appBarHidden, appBarHeight }) => (appBarHidden ? '100vh' : `calc(100vh - ${appBarHeight}px)`),
+        height: ({ appBarHidden, appBarHeight }) => (appBarHidden ? '100%' : `calc(100vh - ${appBarHeight}px)`),
         position: 'relative',
         overflow: 'hidden',
         backgroundColor: theme.palette.background.default,
@@ -145,17 +145,19 @@ const useSubtitleRowStyles = makeStyles<Theme>((theme) => ({
             backgroundColor: theme.palette.action.hover,
         },
         minWidth: 250,
+        '& td': { borderBottom: `1px solid ${theme.palette.divider}` },
     },
     selectedSubtitleRow: {
         minWidth: 250,
         '& td': {
-            borderColor: theme.palette.background.paper,
+            borderColor: theme.palette.divider,
         },
         animation: `$select-subtitle-row 300ms ${theme.transitions.easing.easeInOut} forwards`,
     },
     '@keyframes select-subtitle-row': {
         '100%': {
-            backgroundColor: theme.palette.background.paper,
+            backgroundColor: theme.palette.action.selected,
+            boxShadow: `inset 3px 0 ${theme.palette.primary.main}`,
         },
     },
     unselectedSubtitleRow: {
@@ -170,14 +172,16 @@ const useSubtitleRowStyles = makeStyles<Theme>((theme) => ({
     },
     subtitle: {
         fontSize: 20,
-        paddingRight: 0,
+        lineHeight: 1.7,
+        padding: '18px 0 18px 18px',
         width: '100%',
         overflowWrap: 'anywhere',
         whiteSpace: 'pre-wrap',
     },
     compressedSubtitle: {
-        fontSize: 16,
-        paddingRight: 0,
+        fontSize: 17,
+        lineHeight: 1.65,
+        padding: '16px 0 16px 16px',
         width: '100%',
         overflowWrap: 'anywhere',
         whiteSpace: 'pre-wrap',
@@ -191,8 +195,9 @@ const useSubtitleRowStyles = makeStyles<Theme>((theme) => ({
         userSelect: 'none',
     },
     timestamp: {
-        fontSize: 14,
-        color: '#aaaaaa',
+        fontSize: 11,
+        fontVariantNumeric: 'tabular-nums',
+        color: theme.palette.text.secondary,
         textAlign: 'right',
         paddingRight: 15,
         paddingLeft: 5,
@@ -388,7 +393,11 @@ const SubtitleRowCells = React.memo(function SubtitleRowCells({
             )}
             {showCopyButton && (
                 <TableCell className={classes.copyButton}>
-                    <IconButton disabled={selectionState !== undefined} onClick={(e) => onCopySubtitle(e, index)}>
+                    <IconButton
+                        aria-label={t('action.mineSubtitle')}
+                        disabled={selectionState !== undefined}
+                        onClick={(e) => onCopySubtitle(e, index)}
+                    >
                         <NoteAddIcon fontSize={compressed ? 'small' : 'medium'} />
                     </IconButton>
                 </TableCell>
