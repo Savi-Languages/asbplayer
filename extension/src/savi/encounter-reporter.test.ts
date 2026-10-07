@@ -21,8 +21,7 @@ const line = (text: string, start = 84210, track = 0) => ({ text, start, track }
 describe('SaviEncounterReporter (line lifecycle)', () => {
     it('finalizes a line when the NEXT line starts, with full context', async () => {
         const { d, sent } = deps({
-            glossedEntries: (text) =>
-                text.includes('quería') ? [{ word: 'quería', gloss: 'wanted' }] : [],
+            glossedEntries: (text) => (text.includes('quería') ? [{ word: 'quería', gloss: 'wanted' }] : []),
         });
         const reporter = new SaviEncounterReporter(d);
         await reporter.start();

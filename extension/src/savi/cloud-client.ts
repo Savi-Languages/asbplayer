@@ -170,9 +170,12 @@ export const wordBuckets = async (cloudUrl: string, lang: string): Promise<Recor
     if (!token) {
         return {};
     }
-    const response = await fetchWithTimeout(`${resolveCloudBase(cloudUrl)}/v2/words/${encodeURIComponent(lang)}/buckets`, {
-        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-    });
+    const response = await fetchWithTimeout(
+        `${resolveCloudBase(cloudUrl)}/v2/words/${encodeURIComponent(lang)}/buckets`,
+        {
+            headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+        }
+    );
     if (!response.ok) {
         throw new Error(`cloud word buckets failed: HTTP ${response.status}`);
     }
@@ -185,10 +188,7 @@ export const wordBuckets = async (cloudUrl: string, lang: string): Promise<Recor
  *  Untracked lemmas are absent (treat as 0 → gloss). Returns undefined when
  *  signed out; throws on a non-2xx response (an old cloud → the caller falls
  *  back to buckets). */
-export const wordsProficiency = async (
-    cloudUrl: string,
-    lang: string
-): Promise<Record<string, number> | undefined> => {
+export const wordsProficiency = async (cloudUrl: string, lang: string): Promise<Record<string, number> | undefined> => {
     const token = await currentAccessToken();
     if (!token) {
         return undefined;
@@ -246,7 +246,9 @@ export const warmProjections = async (cloudUrl: string, lang: string): Promise<v
         throw new Error(`cloud warm failed: HTTP ${response.status}`);
     }
     const body = (await response.json()) as { cached?: boolean; lemmas?: number; foldedAtMs?: number };
-    console.debug(`savi: gloss — warm ok (cached=${body.cached}, lemmas=${body.lemmas}, foldedAtMs=${body.foldedAtMs})`);
+    console.debug(
+        `savi: gloss — warm ok (cached=${body.cached}, lemmas=${body.lemmas}, foldedAtMs=${body.foldedAtMs})`
+    );
 };
 
 /** The default gloss-decision threshold: gloss when proficiency < this. */

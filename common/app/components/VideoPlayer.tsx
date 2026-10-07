@@ -1888,7 +1888,6 @@ export default function VideoPlayer({
                 tooltipsEnabled={true}
                 initialControlType={lastControlType}
                 onScrollToControlType={setLastControlType}
-                onMineSubtitle={() => inferAndExecuteMiningBehavior(settings.clickToMineDefaultAction)}
                 onOffset={handleOffsetChange}
                 onPlaybackRate={handlePlaybackRateChange}
                 onPlayModeSelected={handlePlayMode}
