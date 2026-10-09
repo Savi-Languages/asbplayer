@@ -88,9 +88,9 @@ describe('activeKind — the truth table IS the spec', () => {
     });
 
     it('paused BEFORE the first play → nothing, even attended and active', () => {
-        // The founder timed a 39:19 watch that Savi recorded as 41:19. This
-        // was the leak: browsing to a title with the tab focused and the mouse
-        // moving credited `watch` before a single frame had played.
+        // The founder timed a 39:19 watch that Savi recorded as 41:19. This was
+        // the leak: browsing to a title with the tab focused and the mouse moving
+        // credited `watch` before a single frame had played.
         const i = inputs({ playing: false, lastInteractionAt: 0, everPlayed: false });
         expect(activeKind(i, 1_000, opts)).toBeNull();
     });
@@ -101,15 +101,15 @@ describe('activeKind — the truth table IS the spec', () => {
     });
 
     it('paused MID-viewing still counts — that is the studying case', () => {
-        // The half of the rule the founder explicitly asked to keep: pausing
-        // to hover a word is learning, and must not be collateral damage.
+        // The half of the rule the founder explicitly asked to keep: pausing to
+        // hover a word is learning, and must not be collateral damage.
         const i = inputs({ playing: false, lastInteractionAt: 0, everPlayed: true, ended: false });
         expect(activeKind(i, 1_000, opts)).toBe('watch');
     });
 
     it('omitting the media flags preserves the reviewer, which has no media', () => {
-        // `everPlayed` defaults true and `ended` false precisely so a surface
-        // with nothing to play is unaffected — presence IS the activity there.
+        // `everPlayed` defaults true and `ended` false precisely so a surface with
+        // nothing to play is unaffected — presence IS the activity there.
         const reviewer = { foregroundKind: 'flashcard' as const, backgroundKind: null, idleMs: 60_000 };
         expect(activeKind(inputs({ lastInteractionAt: 0 }), 1_000, reviewer)).toBe('flashcard');
     });
@@ -301,6 +301,95 @@ describe('EngagementClock', () => {
         run(c, 26, 1_000, () => inputs({ playing: true }));
         c.flush();
         expect(onFlush).toHaveBeenCalledTimes(3);
+    });
+});
+
+describe('EngagementClock — media-anchored credit across long gaps (SV-59)', () => {
+    // A phone with its screen off keeps the audio playing but stretches the
+    // page's timers and `timeupdate` far past maxTickDeltaMs. Every one of those
+    // gaps used to be discarded: ~10 minutes played, 2 logged.
+    const bg = (mediaTimeMs: number, over: Partial<ClockInputs> = {}): ClockInputs =>
+        inputs({ playing: true, visible: false, mediaTimeMs, ...over });
+
+    it('credits a long gap by how far the media really advanced', () => {
+        const { c, flushes } = clock({ backgroundKind: 'relisten' });
+        // Ticks 40 s apart while the audio plays straight through for 4 minutes.
+        for (let t = 0; t <= 240_000; t += 40_000) c.tick(t, WALL0 + t, bg(t));
+        c.flush();
+        expect(flushes).toHaveLength(1);
+        expect(flushes[0]).toMatchObject({ kind: 'relisten', engagedMs: 240_000 });
+    });
+
+    it('still discards the gap when the media did NOT advance — the slept laptop', () => {
+        // Sleep stops the audio as well, so its position stands still.
+        const { c } = clock();
+        c.tick(0, WALL0, bg(60_000));
+        const eightHours = 8 * 60 * 60_000;
+        c.tick(eightHours, WALL0 + eightHours, bg(60_000));
+        expect(c.openMs).toBe(0);
+    });
+
+    it('never credits more than the wall time, however far the media jumped', () => {
+        // A lock-screen seek or a condensed-playback skip moves the position
+        // further than the time that passed.
+        const { c } = clock();
+        c.tick(0, WALL0, bg(0));
+        c.tick(30_000, WALL0 + 30_000, bg(600_000));
+        expect(c.openMs).toBe(30_000);
+    });
+
+    it('credits nothing for a gap that STARTED paused', () => {
+        const { c } = clock();
+        c.tick(0, WALL0, bg(10_000, { playing: false, visible: true, lastInteractionAt: 0 }));
+        c.tick(30_000, WALL0 + 30_000, bg(40_000));
+        expect(c.openMs).toBe(0);
+    });
+
+    it('credits a frozen stretch reported by the pause that ends it', () => {
+        // The lock-screen pause button is often the first event after a long
+        // freeze; it arrives as a NOT-playing tick carrying the final position.
+        const { c, flushes } = clock({ backgroundKind: 'relisten' });
+        c.tick(0, WALL0, bg(0));
+        c.tick(90_000, WALL0 + 90_000, bg(85_000, { playing: false }));
+        expect(flushes.map((f) => f.engagedMs)).toEqual([85_000]);
+    });
+
+    it('converts media advance back to wall time at the playback rate', () => {
+        const { c } = clock();
+        c.tick(0, WALL0, bg(0, { playbackRate: 2 }));
+        c.tick(60_000, WALL0 + 60_000, bg(120_000, { playbackRate: 2 }));
+        expect(c.openMs).toBe(60_000);
+    });
+
+    it('a rewind is credited as nothing rather than negative time', () => {
+        const { c } = clock();
+        c.tick(0, WALL0, bg(100_000));
+        c.tick(30_000, WALL0 + 30_000, bg(20_000));
+        expect(c.openMs).toBe(0);
+    });
+
+    it('chunks one long anchored gap into rows the server accepts unchanged', () => {
+        // A single 12-minute gap must not become a 12-minute row: ingest clamps to
+        // MAX_SESSION_MS and the excess would be silently lost.
+        const { c, flushes } = clock({ backgroundKind: 'relisten' });
+        c.tick(0, WALL0, bg(0));
+        c.tick(720_000, WALL0 + 720_000, bg(720_000));
+        c.flush();
+        expect(flushes.map((f) => f.engagedMs)).toEqual([300_000, 300_000, 120_000]);
+        for (const f of flushes) {
+            expect(f.engagedMs).toBeLessThanOrEqual(f.endedAtMs - f.startedAtMs);
+        }
+        // The chunks tile the span without overlapping.
+        expect(flushes[0].endedAtMs).toBeLessThanOrEqual(flushes[1].startedAtMs);
+        expect(flushes[1].endedAtMs).toBeLessThanOrEqual(flushes[2].startedAtMs);
+        expect(flushes[2].endedAtMs).toBe(WALL0 + 720_000);
+    });
+
+    it('without mediaTimeMs, behaviour is exactly as before (surfaces that omit it)', () => {
+        const { c } = clock();
+        c.tick(0, WALL0, inputs({ playing: true }));
+        c.tick(30_000, WALL0 + 30_000, inputs({ playing: true }));
+        expect(c.openMs).toBe(0);
     });
 });
 
