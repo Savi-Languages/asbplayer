@@ -10,7 +10,7 @@ import { prepareTargets, queueTargetFeedback, queueTargetMines, drainTargetMines
 // module) so it survives MV3 service-worker restarts. No offscreen document
 // and no tabCapture are involved anymore.
 
-import { SettingsProvider } from '@project/common/settings';
+import { defaultSettings, SettingsProvider } from '@project/common/settings';
 import { CommandHandler } from '@/handlers/command-handler';
 import {
     SaviCaptureEndedToVideoMessage,
@@ -114,6 +114,7 @@ import { isStaleCaptureSession } from './capture-staleness';
 
 export default class SaviCommandHandler implements CommandHandler {
     private readonly _settings: SettingsProvider;
+    private _watchedDaemonBase: string | undefined;
 
     constructor(settings: SettingsProvider) {
         this._settings = settings;
@@ -725,10 +726,21 @@ export default class SaviCommandHandler implements CommandHandler {
                 glossedWords: message.glossedWords,
                 hoverGlossedWords: message.hoverGlossedWords,
             });
+            this._watchedDaemonBase = config.baseUrl;
             return { ok: true };
         } catch (e) {
-            // Fire-and-forget contract: a dropped line loses one line's exposure.
-            return { ok: false, reason: isDaemonResponseError(e) ? 'rejected' : 'unreachable' };
+            if (isDaemonResponseError(e)) {
+                return { ok: false, reason: 'rejected' };
+            }
+            const { saviDaemonToken } = await this._settings.get(['saviDaemonToken']);
+            // Signing in supplies a JWT, but does not mean the user installed
+            // the desktop app. Still attempt JWT-only delivery; only warn for
+            // explicit setup or a default daemon that previously answered.
+            const expectedDaemon =
+                Boolean(saviDaemonToken.trim()) ||
+                config.baseUrl !== normalizedBaseUrl(defaultSettings.saviDaemonUrl) ||
+                this._watchedDaemonBase === config.baseUrl;
+            return { ok: false, reason: expectedDaemon ? 'unreachable' : 'not-configured' };
         }
     }
 

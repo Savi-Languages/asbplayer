@@ -191,7 +191,7 @@ TypeScript compile, and the Chrome production build before review. Real Netflix
 playback with the matching cloud/daemon and AnkiConnect remains a separate live
 integration check; automated tests do not establish that result.
 
-### Immersion modes (0.58)
+### Immersion modes (0.78)
 
 The small “Savi modes” control opens Watch / Explore / Listen and explicit Bookmark / Replay / Reveal actions. Mode is stored in the signed-in account's `saviImmersionMode` setting and refreshed each minute. Watch is the default: no automatic target preparation, card, or hover mining. Explore allows those features subject to existing consent/settings. Existing gloss labels and hover gloss remain controlled by their own settings and language support, independent of immersion mode. When Savi gloss hover is active, it holds playback at the subtitle boundary; otherwise the user's asbplayer Pause on hover setting applies immediately. Listen hides the Savi subtitle layer with a reversible Reveal button; it does not rewrite subtitle settings. General asbplayer playback modes selected explicitly by the user remain separate.
 

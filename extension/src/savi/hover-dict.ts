@@ -28,7 +28,6 @@ import {
     SaviKanjiMessage,
     SaviKanjiResponse,
     SaviTokenizeMessage,
-    SaviTokenizeResponse,
     SaviAiUnavailable,
 } from './messages';
 import { serializeToSrt, SerializableSubtitle } from './subtitle-serializer';

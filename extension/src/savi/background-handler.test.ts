@@ -23,6 +23,14 @@ jest.mock('./cloud-client', () => ({
     warmProjections: jest.fn(),
 }));
 
+jest.mock('./account', () => ({ daemonCredentials: jest.fn() }));
+jest.mock('./daemon-client', () => ({
+    ...jest.requireActual('./daemon-client'),
+    postWatchedLine: jest.fn(),
+}));
+
+import { daemonCredentials } from './account';
+import { postWatchedLine, SaviDaemonHttpError } from './daemon-client';
 import SaviCommandHandler from './background-handler';
 import { warmProjections as mockWarmProjections } from './cloud-client';
 
@@ -95,5 +103,40 @@ describe('Savi screenshot tab identity', () => {
         };
         const handler = new SaviCommandHandler({} as any);
         expect(await (handler as any)._captureFrame({ tab: { id: 5 } })).toEqual({});
+    });
+});
+
+describe('watched-line daemon availability', () => {
+    const message = { lang: 'ja', text: '猫', episodeId: 'episode', lineStartMs: 1200 };
+    const handler = (saviDaemonToken = '', saviDaemonUrl = 'http://127.0.0.1:4030') =>
+        new SaviCommandHandler({ get: async () => ({ saviDaemonToken, saviDaemonUrl }) } as any);
+    const watched = (h: SaviCommandHandler) => (h as any)._watchedLine(message);
+    beforeEach(() => {
+        jest.mocked(daemonCredentials).mockImplementation(async (lanToken) => ({
+            bearer: lanToken.trim() || 'account-jwt',
+            accountJwt: 'account-jwt',
+        }));
+        jest.mocked(postWatchedLine).mockReset();
+    });
+    it('does not warn an extension-only user when the default daemon has never responded', async () => {
+        jest.mocked(postWatchedLine).mockRejectedValue(new TypeError('Failed to fetch'));
+        await expect(watched(handler())).resolves.toEqual({ ok: false, reason: 'not-configured' });
+    });
+    it('still supports a working JWT-only daemon and reports a later disconnect', async () => {
+        const h = handler();
+        jest.mocked(postWatchedLine).mockResolvedValueOnce(undefined).mockRejectedValueOnce(new TypeError('offline'));
+        await expect(watched(h)).resolves.toEqual({ ok: true });
+        await expect(watched(h)).resolves.toEqual({ ok: false, reason: 'unreachable' });
+    });
+    it.each([
+        ['lan-token', 'http://127.0.0.1:4030'],
+        ['', 'http://desktop.local:4030'],
+    ])('warns on a configured daemon transport failure (%s, %s)', async (token, url) => {
+        jest.mocked(postWatchedLine).mockRejectedValue(new TypeError('offline'));
+        await expect(watched(handler(token, url))).resolves.toEqual({ ok: false, reason: 'unreachable' });
+    });
+    it('keeps HTTP rejection distinct even for JWT-only default connections', async () => {
+        jest.mocked(postWatchedLine).mockRejectedValue(new SaviDaemonHttpError(401, 'unauthorized'));
+        await expect(watched(handler())).resolves.toEqual({ ok: false, reason: 'rejected' });
     });
 });
