@@ -141,6 +141,7 @@ export default class SubtitleController {
     disabledSubtitleTracks: { [key: number]: boolean | undefined };
     subtitleFileNames?: string[];
     _forceHideSubtitles: boolean;
+    immersionHideSubtitles = false;
     _displaySubtitles: boolean;
     surroundingSubtitlesCountRadius: number;
     surroundingSubtitlesTimeRadius: number;
@@ -557,7 +558,7 @@ export default class SubtitleController {
             const shouldRenderOffset =
                 (showOffset && offset !== this.showingOffset) || (!showOffset && this.showingOffset !== undefined);
 
-            if ((!showOffset && !this._displaySubtitles) || this._forceHideSubtitles) {
+            if ((!showOffset && !this._displaySubtitles) || this._forceHideSubtitles || this.immersionHideSubtitles) {
                 this.bottomSubtitlesElementOverlay.hide();
                 this.topSubtitlesElementOverlay.hide();
             } else if (subtitlesAreNew || shouldRenderOffset || this.refreshCurrentSubtitle) {

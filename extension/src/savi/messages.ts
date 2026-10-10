@@ -204,6 +204,7 @@ export interface SaviKanjiResponse {
 }
 
 export interface SaviTokenizeResponse {
+    readonly rawTokens?: SaviToken[];
     readonly tokens: SaviToken[];
 }
 
@@ -329,6 +330,7 @@ export interface SaviEngagementSessionMessage {
 
 export interface SaviWatchedLineResponse {
     readonly ok: boolean;
+    readonly reason?: 'not-configured' | 'unreachable' | 'rejected';
 }
 
 // Search OpenSubtitles.com for a subtitle in the target language and return its
@@ -582,4 +584,24 @@ export interface SaviRequestStartToVideoMessage {
 export interface SaviCommand<M> {
     readonly sender: 'savi-video' | 'savi-popup' | 'savi-extension-to-video';
     readonly message: M;
+}
+
+// Target attention features are independent of capture success and never delay it.
+export interface SaviEpisodeTargetsMessage {
+    command: 'savi-episode-targets';
+    episodeId: string;
+    title: string;
+    show?: string;
+    lang: string;
+}
+export interface SaviTargetFeedbackMessage {
+    command: 'savi-target-feedback';
+    account: string;
+    actions: import('./target-types').TargetFeedback[];
+}
+
+export interface SaviMineTargetsMessage {
+    command: 'savi-mine-targets';
+    account: string;
+    mines: import('./target-types').HeardTargetMine[];
 }

@@ -655,6 +655,9 @@ const settingsSchema = {
         webSocketServerUrl: {
             type: 'string',
         },
+        saviStudyToolbar: {
+            type: 'boolean',
+        },
         saviCaptureEnabled: {
             type: 'boolean',
         },
