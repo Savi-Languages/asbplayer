@@ -1109,13 +1109,15 @@ export default class VideoDataSyncController {
     private async _syncData(data: VideoDataSubtitleTrack[]) {
         try {
             let subtitles: SerializedSubtitleFile[] = [];
+            const sourceBasename = this._syncedData?.basename;
             const sourceEpisodeId = this._syncedData?.episodeId;
             const sourceUrl = this._syncedData?.sourceUrl;
+            const sourceRequestId = this._syncedData?.requestId;
 
             for (let i = 0; i < data.length; i++) {
                 const { extension, url, language, localFile } = data[i];
                 const subtitleFiles = await this._subtitlesForUrl(
-                    this._defaultVideoName(this._syncedData?.basename, data[i]),
+                    this._defaultVideoName(sourceBasename, data[i]),
                     language,
                     extension,
                     url,
@@ -1129,8 +1131,13 @@ export default class VideoDataSyncController {
                 subtitles.push(...subtitleFiles);
             }
 
-            if (sourceUrl !== undefined && sourceUrl !== window.location.href) {
-                console.info('[savi subtitle sync] page changed while subtitles were downloading; discarding them');
+            if (
+                (sourceUrl !== undefined && sourceUrl !== window.location.href) ||
+                (sourceRequestId !== undefined && sourceRequestId !== this._syncedDataRequestId)
+            ) {
+                console.info(
+                    '[savi subtitle sync] page or request changed while subtitles were downloading; discarding them'
+                );
                 return false;
             }
 
@@ -1153,6 +1160,7 @@ export default class VideoDataSyncController {
             let subtitles: SerializedSubtitleFile[] = [];
             const sourceEpisodeId = this._syncedData?.episodeId;
             const sourceUrl = this._syncedData?.sourceUrl;
+            const sourceRequestId = this._syncedData?.requestId;
 
             for (let i = 0; i < data.length; i++) {
                 const { name, language, extension, url, localFile } = data[i];
@@ -1171,9 +1179,12 @@ export default class VideoDataSyncController {
                 subtitles.push(...subtitleFiles);
             }
 
-            if (sourceUrl !== undefined && sourceUrl !== window.location.href) {
+            if (
+                (sourceUrl !== undefined && sourceUrl !== window.location.href) ||
+                (sourceRequestId !== undefined && sourceRequestId !== this._syncedDataRequestId)
+            ) {
                 console.info(
-                    '[savi subtitle sync] page changed while picker subtitles were downloading; discarding them'
+                    '[savi subtitle sync] page or request changed while picker subtitles were downloading; discarding them'
                 );
                 return false;
             }

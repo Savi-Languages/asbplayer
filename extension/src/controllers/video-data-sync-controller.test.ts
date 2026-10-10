@@ -422,6 +422,20 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
             }
         });
 
+        it.each(['_syncData', '_syncDataArray'])(
+            'does not let an older %s download overwrite a newer request on the same URL',
+            async (method) => {
+                controller._syncedDataRequestId = 'old';
+                controller._syncedData = { requestId: 'old', sourceUrl: window.location.href, basename: 'Old' };
+                (globalThis.fetch as jest.Mock).mockImplementation(async () => {
+                    controller._syncedDataRequestId = 'new';
+                    return { ok: true, arrayBuffer: async () => new ArrayBuffer(0) };
+                });
+                expect(await controller[method]([{ ...track('2', 'es', 'Spanish'), name: 'Spanish' }])).toBe(false);
+                expect(loadSubtitles).not.toHaveBeenCalled();
+            }
+        );
+
         it('correlates overlapping lazy responses and accepts a player id unlike the URL', async () => {
             controller._syncedData = {
                 sourceUrl: window.location.href,
