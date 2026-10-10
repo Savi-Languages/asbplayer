@@ -7,6 +7,71 @@ const tok = (text: string, lemma?: string): SaviToken => ({ text, lemma });
 // 容疑(0-1) 者(2) は(3) 黙秘(4-5) を(6) — concatenates to 容疑者は黙秘を
 const tokens = [tok('容疑', '容疑'), tok('者'), tok('は'), tok('黙秘', '黙秘'), tok('を')];
 
+describe('hover highlight row changes', () => {
+    let dict: SaviHoverDictionary;
+    let line: HTMLElement;
+    let highlight: HTMLDivElement;
+    let flushed: { top: string; left: string; transition: string }[];
+    const move = (element: HTMLElement, left: number, top: number, height = 24) =>
+        (dict as any)._highlightRect(element, { left, top, width: 40, height } as DOMRect);
+
+    beforeEach(() => {
+        dict = new SaviHoverDictionary();
+        line = document.createElement('span');
+        line.textContent = '字幕が二行に折り返す';
+        document.body.append(line);
+        highlight = (dict as any)._ensureHighlight();
+        flushed = [];
+        Object.defineProperty(highlight, 'offsetWidth', {
+            get: () => {
+                flushed.push({
+                    top: highlight.style.top,
+                    left: highlight.style.left,
+                    transition: highlight.style.transition,
+                });
+                return 42;
+            },
+        });
+    });
+
+    afterEach(() => document.body.replaceChildren());
+
+    it('glides between words on the same visible row, including small glyph-height differences', () => {
+        move(line, 10, 100);
+        flushed.length = 0;
+        move(line, 60, 102, 22);
+        expect(flushed).toEqual([]);
+        expect(highlight.style.left).toBe('59px');
+        expect(highlight.style.transition).toContain('left 60ms');
+    });
+
+    it('snaps between wrapped rows in the same subtitle element', () => {
+        move(line, 200, 100);
+        flushed.length = 0;
+        move(line, 10, 132);
+        expect(flushed).toEqual([{ top: '129px', left: '9px', transition: 'none' }]);
+        expect(highlight.style.transition).toContain('left 60ms');
+        flushed.length = 0;
+        move(line, 60, 132);
+        expect(flushed).toEqual([]);
+    });
+
+    it('snaps to a different subtitle element even at the same vertical position', () => {
+        move(line, 200, 100);
+        flushed.length = 0;
+        move(document.createElement('span'), 10, 100);
+        expect(flushed).toEqual([{ top: '97px', left: '9px', transition: 'none' }]);
+    });
+
+    it('snaps when a hidden highlight reappears on the same row', () => {
+        move(line, 200, 100);
+        (dict as any)._hideHighlight();
+        flushed.length = 0;
+        move(line, 10, 100);
+        expect(flushed).toEqual([{ top: '97px', left: '9px', transition: 'none' }]);
+    });
+});
+
 describe('tokenAtOffset', () => {
     it('finds the token whose range contains the offset', () => {
         expect(tokenAtOffset(tokens, 0)?.text).toBe('容疑');
