@@ -96,6 +96,7 @@ test('Listen has a reversible text reveal and teardown restores subtitles', asyn
         onModeChange,
         send: jest.fn(async () => ({ account: 'u', enabled: true, mode: 'listen' })),
     });
+    c.setToolbarEnabled(true);
     c.start('ja');
     await flush();
     expect(onModeChange).toHaveBeenLastCalledWith('listen', true);
@@ -131,6 +132,7 @@ test('a mode choice wins over an older config request', async () => {
         onModeChange,
         send,
     });
+    controller.setToolbarEnabled(true);
     controller.start('ja');
     const shadow = document.querySelector('[data-savi-immersion]')!.shadowRoot!;
     const explore = Array.from(shadow.querySelectorAll('button')).find((b) => b.textContent === 'Explore')!;
@@ -156,6 +158,7 @@ test('Replay line uses the host player controls without writing to the media ele
         send: jest.fn(async () => ({ account: 'u', enabled: false, mode: 'watch' })),
     };
     const c = new SaviWatchInterest(deps);
+    c.setToolbarEnabled(true);
     c.start('ja');
     await flush();
     const shadow = document.querySelector('[data-savi-immersion]')!.shadowRoot!;
@@ -186,6 +189,7 @@ test('bookmarks round fractional cue times to the outbox integer contract', asyn
         metadata: () => ({ episodeId: 'netflix:1', title: 'Episode' }),
         send,
     });
+    c.setToolbarEnabled(true);
     c.start('ja');
     await flush();
     await (c as any).bookmark();
@@ -193,4 +197,37 @@ test('bookmarks round fractional cue times to the outbox integer contract', asyn
         expect.objectContaining({ lineStartMs: 1000, lineEndMs: 4001 })
     );
     c.stop();
+});
+
+test('toolbar is opt-in and disabling it restores Listen subtitles across config refreshes', async () => {
+    const onModeChange = jest.fn();
+    const controller = new SaviWatchInterest({
+        video: document.createElement('video'),
+        seek: jest.fn(),
+        play: jest.fn(),
+        subtitles: () => cues,
+        metadata: () => ({ title: 'Episode' }),
+        onModeChange,
+        send: jest.fn(async () => ({ account: 'u', enabled: true, mode: 'listen' })),
+    });
+    controller.start('ja');
+    await flush();
+    expect(document.querySelector('[data-savi-immersion]')).toBeNull();
+    expect(onModeChange).toHaveBeenLastCalledWith('listen', false);
+    controller.setToolbarEnabled(true);
+    controller.setToolbarEnabled(true);
+    expect(document.querySelectorAll('[data-savi-immersion]')).toHaveLength(1);
+    expect(onModeChange).toHaveBeenLastCalledWith('listen', true);
+    controller.setToolbarEnabled(false);
+    expect(document.querySelector('[data-savi-immersion]')).toBeNull();
+    expect(onModeChange).toHaveBeenLastCalledWith('listen', false);
+    await (controller as any).config();
+    expect(onModeChange).toHaveBeenLastCalledWith('listen', false);
+    controller.stop();
+    controller.start('ja');
+    await flush();
+    expect(document.querySelector('[data-savi-immersion]')).toBeNull();
+    controller.stop();
+    controller.setToolbarEnabled(true);
+    expect(document.querySelector('[data-savi-immersion]')).toBeNull();
 });

@@ -1483,6 +1483,7 @@ export default class Binding {
 
     async _refreshSettings() {
         const currentSettings = await this.settings.getAll();
+        this.saviWatchInterest.setToolbarEnabled(currentSettings.saviStudyToolbar);
         this._seekDuration = currentSettings.seekDuration;
         this._speedChangeStep = currentSettings.speedChangeStep;
         this.seekableTracks = currentSettings.seekableTracks;

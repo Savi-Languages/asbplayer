@@ -31,6 +31,7 @@ export class SaviWatchInterest {
     private lang = '';
     private mode = 'watch';
     private revealed = false;
+    private toolbarEnabled = false;
     private toolbar?: HTMLElement;
     private toolbarHost?: HTMLElement;
     private revealButton?: HTMLButtonElement;
@@ -59,15 +60,13 @@ export class SaviWatchInterest {
         window.addEventListener('blur', this.clear);
         for (const event of ['play', 'seeking']) this.deps.video.addEventListener(event, this.clear);
         this.deps.video.addEventListener('pause', this.arm);
-        this.mountControls();
+        if (this.toolbarEnabled) this.mountControls();
         void this.config();
         this.refresh = setInterval(() => void this.config(), 60000);
     }
     stop() {
         this.bound = false;
-        this.toolbarHost?.remove();
-        this.toolbarHost = undefined;
-        this.toolbar = undefined;
+        this.unmountControls();
         this.mode = 'watch';
         this.revealed = false;
         document.removeEventListener('fullscreenchange', this.fullscreen);
@@ -85,6 +84,22 @@ export class SaviWatchInterest {
         window.removeEventListener('blur', this.clear);
         for (const event of ['play', 'seeking']) this.deps.video.removeEventListener(event, this.clear);
         this.deps.video.removeEventListener('pause', this.arm);
+    }
+    /** Local opt-in: hiding the only Reveal control must also restore subtitle text. */
+    setToolbarEnabled(enabled: boolean) {
+        if (this.toolbarEnabled === enabled) return;
+        this.toolbarEnabled = enabled;
+        if (!this.bound) return;
+        if (enabled) this.mountControls();
+        else this.unmountControls();
+        this.updateMode();
+    }
+    private unmountControls() {
+        this.toolbarHost?.remove();
+        this.toolbarHost = undefined;
+        this.toolbar = undefined;
+        this.revealButton = undefined;
+        this.status = undefined;
     }
     private async config() {
         const generation = this.generation;
@@ -122,7 +137,7 @@ export class SaviWatchInterest {
         if (this.toolbarHost) (document.fullscreenElement ?? document.body).append(this.toolbarHost);
     };
     private updateMode() {
-        this.deps.onModeChange?.(this.mode, this.mode === 'listen' && !this.revealed);
+        this.deps.onModeChange?.(this.mode, this.toolbarEnabled && this.mode === 'listen' && !this.revealed);
         this.toolbar?.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) => {
             b.setAttribute('aria-pressed', String(b.dataset.mode === this.mode));
             b.style.background = b.dataset.mode === this.mode ? '#225d75' : '#20252d';

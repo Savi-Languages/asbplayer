@@ -796,6 +796,7 @@ export interface WebSocketClientSettings {
 
 // Savi integration: streaming-capture daemon connection (see extension/src/savi)
 export interface SaviSettings {
+    readonly saviStudyToolbar: boolean;
     readonly saviCaptureEnabled: boolean;
     readonly saviDaemonUrl: string;
     readonly saviDaemonToken: string;
