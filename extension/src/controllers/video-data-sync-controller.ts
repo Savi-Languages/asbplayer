@@ -73,23 +73,43 @@ interface ShowOptions {
     fromAsbplayerId?: string;
 }
 
-const fetchDataForLanguageOnDemand = (language: string): Promise<VideoData> => {
+// Shared by controller instances so simultaneous video bindings cannot consume
+// one another's replies. These are correlation tokens, not credentials.
+let syncRequestSequence = 0;
+const nextSyncRequestId = () => String(++syncRequestSequence);
+
+const fetchDataForLanguageOnDemand = (language: string, episodeId?: string): Promise<VideoData> => {
+    const requestId = nextSyncRequestId();
     return new Promise((resolve, reject) => {
+        const cleanup = () => {
+            document.removeEventListener('asbplayer-synced-language-data', listener, false);
+            window.clearTimeout(timeout);
+        };
         const listener = (event: Event) => {
             const data = (event as CustomEvent).detail as VideoData;
+            if (data.requestId !== requestId) {
+                return;
+            }
+            cleanup();
             resolve(data);
-            document.removeEventListener('asbplayer-synced-language-data', listener, false);
         };
+        const timeout = window.setTimeout(() => {
+            cleanup();
+            reject(new Error('Timed out fetching Netflix subtitle track'));
+        }, 20000);
         document.addEventListener('asbplayer-synced-language-data', listener, false);
-        document.dispatchEvent(new CustomEvent('asbplayer-get-synced-language-data', { detail: language }));
+        let payload = { requestId, language, episodeId };
+        if (typeof cloneInto === 'function') {
+            payload = cloneInto(payload, document.defaultView);
+        }
+        document.dispatchEvent(new CustomEvent('asbplayer-get-synced-language-data', { detail: payload }));
     });
 };
 
 const globalStateProvider = new ExtensionGlobalStateProvider();
 
-/** Identified page-script data is safe only for the same media page.
- * Undefined identities preserve compatibility with integrations that cannot
- * yet provide a stable id; Netflix always provides one. */
+/** Compare identities from the same namespace only. Legacy integrations may
+ * omit identity; Netflix's player id is never compared with its watch URL. */
 export const videoDataMatchesEpisode = (
     dataEpisodeId: string | undefined,
     currentEpisodeId: string | undefined
@@ -105,6 +125,7 @@ export default class VideoDataSyncController {
     private _lastLanguagesSynced: { [key: string]: string[] };
     private _emptySubtitle: VideoDataSubtitleTrack;
     private _syncedData?: VideoData;
+    private _syncedDataRequestId?: string;
     /** Filename-derived identity for a delegate-less page (SV-44). Set only on
      *  that path; a streaming page leaves it undefined and keeps using the
      *  site's own basename. */
@@ -157,6 +178,7 @@ export default class VideoDataSyncController {
         }
 
         this._dataReceivedListener = undefined;
+        this._syncedDataRequestId = undefined;
         this._resetEpisodeSyncRetry();
         this._syncedData = undefined;
         this._cleanupPlayBlocker();
@@ -244,6 +266,13 @@ export default class VideoDataSyncController {
             const targetTranslationLanguageCodes =
                 (await this._settings.getSingle('streamingPages')).youtube.targetLanguages ?? [];
             let payload = { targetTranslationLanguageCodes };
+            if (typeof cloneInto === 'function') {
+                payload = cloneInto(payload, document.defaultView);
+            }
+            document.dispatchEvent(new CustomEvent('asbplayer-get-synced-data', { detail: payload }));
+        } else if (pageDelegate.config.key === 'netflix') {
+            this._syncedDataRequestId = nextSyncRequestId();
+            let payload = { requestId: this._syncedDataRequestId };
             if (typeof cloneInto === 'function') {
                 payload = cloneInto(payload, document.defaultView);
             }
@@ -462,14 +491,12 @@ export default class VideoDataSyncController {
     }
 
     private async _setSyncedData(data: VideoData) {
-        const currentEpisodeId = deriveEpisodeId(window.location.href, document.title);
-
-        if (!videoDataMatchesEpisode(data.episodeId, currentEpisodeId)) {
-            console.info(
-                '[savi subtitle sync] discarding stale response for %s while page is %s',
-                data.episodeId,
-                currentEpisodeId ?? '(not ready)'
-            );
+        // A late reply must not replace a newer request, even on the same URL.
+        if (data.requestId !== undefined && data.requestId !== this._syncedDataRequestId) {
+            return;
+        }
+        if (data.stale || (data.sourceUrl !== undefined && data.sourceUrl !== window.location.href)) {
+            console.info('[savi subtitle sync] discarding response after Netflix page/player changed');
             this._scheduleEpisodeSyncRetry();
             return;
         }
@@ -1083,6 +1110,7 @@ export default class VideoDataSyncController {
         try {
             let subtitles: SerializedSubtitleFile[] = [];
             const sourceEpisodeId = this._syncedData?.episodeId;
+            const sourceUrl = this._syncedData?.sourceUrl;
 
             for (let i = 0; i < data.length; i++) {
                 const { extension, url, language, localFile } = data[i];
@@ -1092,14 +1120,16 @@ export default class VideoDataSyncController {
                     extension,
                     url,
                     localFile,
-                    sourceEpisodeId
+                    sourceEpisodeId,
+                    sourceUrl
                 );
-                if (subtitleFiles !== undefined) {
-                    subtitles.push(...subtitleFiles);
+                if (subtitleFiles === undefined) {
+                    return false;
                 }
+                subtitles.push(...subtitleFiles);
             }
 
-            if (!videoDataMatchesEpisode(sourceEpisodeId, deriveEpisodeId(window.location.href, document.title))) {
+            if (sourceUrl !== undefined && sourceUrl !== window.location.href) {
                 console.info('[savi subtitle sync] page changed while subtitles were downloading; discarding them');
                 return false;
             }
@@ -1122,6 +1152,7 @@ export default class VideoDataSyncController {
         try {
             let subtitles: SerializedSubtitleFile[] = [];
             const sourceEpisodeId = this._syncedData?.episodeId;
+            const sourceUrl = this._syncedData?.sourceUrl;
 
             for (let i = 0; i < data.length; i++) {
                 const { name, language, extension, url, localFile } = data[i];
@@ -1131,14 +1162,16 @@ export default class VideoDataSyncController {
                     extension,
                     url,
                     localFile,
-                    sourceEpisodeId
+                    sourceEpisodeId,
+                    sourceUrl
                 );
-                if (subtitleFiles !== undefined) {
-                    subtitles.push(...subtitleFiles);
+                if (subtitleFiles === undefined) {
+                    return false;
                 }
+                subtitles.push(...subtitleFiles);
             }
 
-            if (!videoDataMatchesEpisode(sourceEpisodeId, deriveEpisodeId(window.location.href, document.title))) {
+            if (sourceUrl !== undefined && sourceUrl !== window.location.href) {
                 console.info(
                     '[savi subtitle sync] page changed while picker subtitles were downloading; discarding them'
                 );
@@ -1177,7 +1210,8 @@ export default class VideoDataSyncController {
         extension: string,
         url: string | string[],
         localFile: boolean | undefined,
-        sourceEpisodeId?: string
+        sourceEpisodeId?: string,
+        sourceUrl?: string
     ): Promise<SerializedSubtitleFile[] | undefined> {
         if (url === '-') {
             return [
@@ -1194,11 +1228,13 @@ export default class VideoDataSyncController {
                 return undefined;
             }
 
-            const data = await fetchDataForLanguageOnDemand(language);
+            const data = await fetchDataForLanguageOnDemand(language, sourceEpisodeId);
 
             if (
+                data.stale ||
                 !videoDataMatchesEpisode(data.episodeId, sourceEpisodeId) ||
-                !videoDataMatchesEpisode(data.episodeId, deriveEpisodeId(window.location.href, document.title))
+                (data.sourceUrl !== undefined && data.sourceUrl !== window.location.href) ||
+                (sourceUrl !== undefined && sourceUrl !== window.location.href)
             ) {
                 console.info('[savi subtitle sync] discarding stale lazy subtitle response');
                 return undefined;

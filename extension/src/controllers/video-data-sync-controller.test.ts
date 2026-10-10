@@ -367,6 +367,131 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
     });
 
     describe('episode-safe controller wiring', () => {
+        it('accepts a current Netflix player whose id differs from the watch URL', async () => {
+            controller._syncedDataRequestId = 'current';
+            controller._buildModel = jest.fn().mockResolvedValue({});
+            await controller._setSyncedData({
+                requestId: 'current',
+                sourceUrl: window.location.href,
+                episodeId: 'netflix:playable-not-url-id',
+                basename: 'Show',
+                subtitles: [track('2', 'es', 'Spanish')],
+            });
+            expect(loadSubtitles).toHaveBeenCalledTimes(1);
+        });
+
+        it('ignores a superseded request even when its URL matches', async () => {
+            controller._syncedDataRequestId = 'new';
+            controller._scheduleEpisodeSyncRetry = jest.fn();
+            await controller._setSyncedData({
+                requestId: 'old',
+                sourceUrl: window.location.href,
+                basename: 'Old',
+                subtitles: [track('2', 'es', 'Spanish')],
+            });
+            expect(loadSubtitles).not.toHaveBeenCalled();
+            expect(controller._syncedData).toBeUndefined();
+            expect(controller._scheduleEpisodeSyncRetry).not.toHaveBeenCalled();
+        });
+
+        it('rejects a response after navigation using the captured URL, not the player id', async () => {
+            controller._syncedDataRequestId = 'current';
+            controller._scheduleEpisodeSyncRetry = jest.fn();
+            await controller._setSyncedData({
+                requestId: 'current',
+                sourceUrl: window.location.href + 'previous',
+                basename: 'Old',
+                subtitles: [track('2', 'es', 'Spanish')],
+            });
+            expect(loadSubtitles).not.toHaveBeenCalled();
+            expect(controller._scheduleEpisodeSyncRetry).toHaveBeenCalledTimes(1);
+        });
+
+        it.each(['_syncData', '_syncDataArray'])('rejects navigation during %s downloads', async (method) => {
+            const originalUrl = window.location.href;
+            controller._syncedData = { sourceUrl: originalUrl, basename: 'Show', subtitles: [] };
+            (globalThis.fetch as jest.Mock).mockImplementation(async () => {
+                window.history.replaceState({}, '', '/next');
+                return { ok: true, arrayBuffer: async () => new ArrayBuffer(0) };
+            });
+            try {
+                expect(await controller[method]([{ ...track('2', 'es', 'Spanish'), name: 'Spanish' }])).toBe(false);
+                expect(loadSubtitles).not.toHaveBeenCalled();
+            } finally {
+                window.history.replaceState({}, '', originalUrl);
+            }
+        });
+
+        it('correlates overlapping lazy responses and accepts a player id unlike the URL', async () => {
+            controller._syncedData = {
+                sourceUrl: window.location.href,
+                episodeId: 'netflix:playable',
+                basename: 'Show',
+                subtitles: [],
+            };
+            const requests: any[] = [];
+            const listener = (e: Event) => {
+                requests.push((e as CustomEvent).detail);
+            };
+            document.addEventListener('asbplayer-get-synced-language-data', listener);
+            try {
+                const first = controller._syncData([{ ...track('2', 'es', 'Spanish'), url: 'lazy' }]);
+                const second = controller._syncData([{ ...track('1', 'en', 'English'), url: 'lazy' }]);
+                for (const request of requests.slice().reverse()) {
+                    document.dispatchEvent(
+                        new CustomEvent('asbplayer-synced-language-data', {
+                            detail: {
+                                requestId: request.requestId,
+                                sourceUrl: window.location.href,
+                                episodeId: 'netflix:playable',
+                                basename: 'Show',
+                                subtitles: [track(request.language, request.language, request.language)],
+                            },
+                        })
+                    );
+                }
+                expect(await Promise.all([first, second])).toEqual([true, true]);
+                expect(globalThis.fetch).toHaveBeenCalledWith('https://sub/es.vtt');
+                expect(globalThis.fetch).toHaveBeenCalledWith('https://sub/en.vtt');
+            } finally {
+                document.removeEventListener('asbplayer-get-synced-language-data', listener);
+            }
+        });
+
+        it('never reports a stale lazy download as successful or loads empty subtitles', async () => {
+            controller._syncedData = { episodeId: 'netflix:old', sourceUrl: window.location.href, basename: 'Show' };
+            const listener = (e: Event) =>
+                document.dispatchEvent(
+                    new CustomEvent('asbplayer-synced-language-data', {
+                        detail: { requestId: (e as CustomEvent).detail.requestId, stale: true },
+                    })
+                );
+            document.addEventListener('asbplayer-get-synced-language-data', listener);
+            try {
+                expect(await controller._syncData([{ ...track('2', 'es', 'Spanish'), url: 'lazy' }])).toBe(false);
+                expect(loadSubtitles).not.toHaveBeenCalled();
+            } finally {
+                document.removeEventListener('asbplayer-get-synced-language-data', listener);
+            }
+        });
+
+        it('times out an unanswered lazy request and removes its listener', async () => {
+            jest.useFakeTimers();
+            const removed = jest.spyOn(document, 'removeEventListener');
+            controller._reportError = jest.fn().mockResolvedValue(undefined);
+            try {
+                const pending = controller._syncData([{ ...track('2', 'es', 'Spanish'), url: 'lazy' }]);
+                await jest.advanceTimersByTimeAsync(20000);
+                expect(await pending).toBe(false);
+                expect(controller._reportError).toHaveBeenCalledWith(expect.stringContaining('Timed out'));
+                expect(removed).toHaveBeenCalledWith('asbplayer-synced-language-data', expect.any(Function), false);
+                expect(loadSubtitles).not.toHaveBeenCalled();
+            } finally {
+                removed.mockRestore();
+                jest.useRealTimers();
+            }
+        });
+
         it('threads the selected episode through the picker confirm download path', async () => {
             controller._syncedData = { episodeId: 'netflix:111', subtitles: [] };
             controller._subtitlesForUrl = jest.fn().mockResolvedValue([]);
@@ -386,7 +511,8 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
                 'vtt',
                 'lazy',
                 undefined,
-                'netflix:111'
+                'netflix:111',
+                undefined
             );
         });
 
@@ -396,7 +522,7 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
 
             try {
                 for (let attempt = 0; attempt < 4; attempt++) {
-                    await controller._setSyncedData({ episodeId: 'netflix:stale' });
+                    await controller._setSyncedData({ sourceUrl: window.location.href + 'stale', stale: true });
                     await jest.advanceTimersByTimeAsync(500);
                 }
 
