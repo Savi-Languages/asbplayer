@@ -161,3 +161,29 @@ describe('SaviHoverDictionary._segment — the reason travels, the fallback is n
         expect(sent).toHaveLength(2);
     });
 });
+
+it('clears stale hover UI when shared tokenization fails instead of rejecting the hover task', async () => {
+    const { subtitleTokens } = await import('./token-cache');
+    const tokenize = jest.spyOn(subtitleTokens, 'get').mockRejectedValue(new Error('offline'));
+    const dict = new SaviHoverDictionary();
+    const line = document.createElement('span');
+    line.textContent = '猫';
+    document.body.append(line);
+    const range = document.createRange();
+    range.setStart(line.firstChild!, 0);
+    Object.defineProperty(document, 'caretRangeFromPoint', { configurable: true, value: () => range });
+    const highlight = (dict as any)._ensureHighlight();
+    highlight.style.display = 'block';
+    const popup = (dict as any)._ensurePopup();
+    popup.style.display = 'block';
+    try {
+        await expect((dict as any)._handleHover(line, 1, 1)).resolves.toBeUndefined();
+        expect(highlight.style.display).toBe('none');
+        expect(popup.style.display).toBe('none');
+    } finally {
+        tokenize.mockRestore();
+        delete (document as any).caretRangeFromPoint;
+        dict.stop();
+        line.remove();
+    }
+});

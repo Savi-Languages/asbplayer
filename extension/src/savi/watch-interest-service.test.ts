@@ -166,3 +166,10 @@ test('honors bookmark retry backoff even when automatic hover saving is disabled
     expect(request).toHaveBeenCalledTimes(1);
     expect(pending[key]).toBeDefined();
 });
+
+test('an empty or unrelated watch-interest outbox performs no cloud request', async () => {
+    pending['saviWatchInterest:other'] = { account: 'b', base: 'local', item: { kind: 'bookmark' } };
+    await drainWatchInterest('local');
+    expect(targetCloud).not.toHaveBeenCalled();
+    expect(request).not.toHaveBeenCalled();
+});

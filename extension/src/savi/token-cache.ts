@@ -21,12 +21,11 @@ export class SharedTokenCache {
         const pending = this.fetch(lang, text)
             .then((value) => {
                 const result = Array.isArray(value) ? { tokens: value } : value;
-                if (
-                    [result.tokens, ...(result.rawTokens ? [result.rawTokens] : [])].some(
-                        (tokens) => tokens.map((token) => token.text).join('') !== text
-                    )
-                )
+                if (result.tokens.map((token) => token.text).join('') !== text)
                     throw new Error('Tokenizer surface mismatch');
+                // Target analysis is optional. A malformed raw token stream
+                // must not disable the existing hover dictionary.
+                if (result.rawTokens?.map((token) => token.text).join('') !== text) result.rawTokens = undefined;
                 if (this.entries.size >= this.limit) this.entries.delete(this.entries.keys().next().value!);
                 this.entries.set(key, result);
                 return result;

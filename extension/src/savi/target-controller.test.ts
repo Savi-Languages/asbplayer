@@ -18,7 +18,7 @@ beforeEach(() => {
     document.body.innerHTML = '';
     (global as any).browser = { storage: { onChanged: { addListener: jest.fn(), removeListener: jest.fn() } } };
 });
-it('never pauses for late preparation, opens once on the next play gesture and records acceptance', async () => {
+it('prepares while paused, opens once near the episode start and records acceptance', async () => {
     const video = document.createElement('video');
     let resolve!: (value: any) => void;
     const send = jest
@@ -256,4 +256,84 @@ it('negative-caches an unresolved title instead of retrying every event', async 
     expect(send).toHaveBeenCalledTimes(2);
     controller.stop();
     clock.mockRestore();
+});
+
+it.each([true, false])(
+    'does not interrupt a later resume after preparation during playback (paused at resolution: %s)',
+    async (pausedAtResolution) => {
+        const video = document.createElement('video');
+        let paused = pausedAtResolution;
+        Object.defineProperty(video, 'paused', { get: () => paused });
+        video.currentTime = pausedAtResolution ? 120 : 10;
+        const pause = jest.fn();
+        const controller = new SaviTargetController({
+            video,
+            metadata: () => ({ episodeId: 'netflix:1', title: 'Episode' }),
+            subtitles: () => [],
+            pause,
+            play: jest.fn(),
+            send: jest.fn(async () => prep()),
+        });
+        controller.setImmersionMode('explore');
+        controller.start('ja');
+        await settle();
+        paused = true;
+        video.dispatchEvent(new Event('pause'));
+        paused = false;
+        video.dispatchEvent(new Event('play'));
+        expect(pause).not.toHaveBeenCalled();
+        expect(document.querySelector('[data-savi-target-card]')).toBeNull();
+        controller.stop();
+    }
+);
+
+it('does not attach canvas screenshots from DRM-protected video to heard-target mines', async () => {
+    const video = document.createElement('video');
+    Object.defineProperties(video, {
+        paused: { value: false },
+        mediaKeys: { value: {} },
+        videoWidth: { value: 640 },
+        videoHeight: { value: 360 },
+    });
+    const drawImage = jest.fn();
+    const context = jest.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ drawImage } as any);
+    const image = jest.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue('data:image/jpeg;base64,black');
+    let now = 0;
+    const clock = jest.spyOn(Date, 'now').mockImplementation(() => now);
+    const send = jest.fn().mockResolvedValue({ ...prep(), cardEnabled: false });
+    const c = new SaviTargetController({
+        video,
+        metadata: () => ({ episodeId: 'netflix:1', title: 'Episode' }),
+        subtitles: () => [{ text: '関与', start: 0, end: 1000 }],
+        pause: jest.fn(),
+        play: jest.fn(),
+        send,
+    });
+    try {
+        c.setImmersionMode('explore');
+        c.start('ja');
+        await settle();
+        video.dispatchEvent(new Event('play'));
+        now = 950;
+        video.currentTime = 0.95;
+        video.dispatchEvent(new Event('timeupdate'));
+        await settle();
+        c.onHeardAcknowledged({
+            episodeId: 'netflix:1',
+            lang: 'ja',
+            lineStartMs: 0,
+            text: '関与',
+            occurredAtMs: 1000,
+        } as any);
+        await settle();
+        const mine = send.mock.calls.find(([m]) => m.command === 'savi-mine-targets')?.[0].mines[0];
+        expect(mine).toBeDefined();
+        expect(mine.imageBase64).toBeUndefined();
+        expect(drawImage).not.toHaveBeenCalled();
+    } finally {
+        c.stop();
+        clock.mockRestore();
+        context.mockRestore();
+        image.mockRestore();
+    }
 });

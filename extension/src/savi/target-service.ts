@@ -127,6 +127,9 @@ export function drainTargetFeedback(cloudUrl: string): Promise<void> {
             (a, b) => a.occurredAtMs - b.occurredAtMs || a.id.localeCompare(b.id)
         );
         for (const action of actions) {
+            const key = `${OUTBOX}${action.id}`;
+            const row = (await browser.storage.local.get(key))[key] as any;
+            if (!row || (row.retryAt && row.retryAt > Date.now())) continue;
             try {
                 await cloud.request('/v2/events', 'POST', { actions: [action] });
                 await browser.storage.local.remove(`${OUTBOX}${action.id}`);
@@ -135,6 +138,9 @@ export function drainTargetFeedback(cloudUrl: string): Promise<void> {
                 if (status === 400 || status === 413 || status === 422) {
                     // The immutable action can never become valid by retrying.
                     await browser.storage.local.remove(`${OUTBOX}${action.id}`);
+                } else {
+                    // Keep pending dismissals effective while throttling delivery.
+                    await browser.storage.local.set({ [key]: { ...row, retryAt: Date.now() + 15 * 60_000 } });
                 }
                 // A bad or temporarily unavailable row must not starve later,
                 // independent feedback events in the same account outbox.
@@ -174,7 +180,9 @@ export function bindTargetFeedbackDrain(cloudUrl: () => Promise<string>): void {
 
 const MINES = 'saviTargetMine:';
 const MAX_COMPLETED_MINES = 2048;
-const MAX_MINE_ATTEMPTS = 5;
+// Twelve attempts span about 20.5 hours with the capped delays below, so
+// keeping Anki closed during an episode does not lose its pending exports.
+const MAX_MINE_ATTEMPTS = 12;
 const MINE_RETRY_BASE_MS = 60_000;
 const MINE_RETRY_MAX_MS = 6 * 60 * 60_000;
 type MineDecision = { eligible: boolean; autoMineToAnki: boolean };

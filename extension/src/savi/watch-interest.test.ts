@@ -30,6 +30,8 @@ describe('paused subtitle interest', () => {
                 : { ok: true }
         );
         const controller = new SaviWatchInterest({
+            seek: jest.fn(),
+            play: jest.fn(),
             video,
             subtitles: () => cues,
             metadata: () => ({ episodeId: 'netflix:1', title: 'Episode' }),
@@ -65,6 +67,8 @@ describe('paused subtitle interest', () => {
         video.currentTime = 2;
         const send = jest.fn(async () => ({ enabled: false, account: 'u' }));
         const controller = new SaviWatchInterest({
+            seek: jest.fn(),
+            play: jest.fn(),
             video,
             subtitles: () => cues,
             metadata: () => ({ episodeId: 'netflix:1', title: 'Episode' }),
@@ -84,6 +88,8 @@ test('Listen has a reversible text reveal and teardown restores subtitles', asyn
     const video = document.createElement('video');
     const onModeChange = jest.fn();
     const c = new SaviWatchInterest({
+        seek: jest.fn(),
+        play: jest.fn(),
         video,
         subtitles: () => cues,
         metadata: () => ({ episodeId: 'netflix:1', title: 'Episode' }),
@@ -117,6 +123,8 @@ test('a mode choice wins over an older config request', async () => {
         return Promise.resolve({ ok: true });
     });
     const controller = new SaviWatchInterest({
+        seek: jest.fn(),
+        play: jest.fn(),
         video,
         subtitles: () => cues,
         metadata: () => ({ episodeId: 'netflix:1', title: 'Episode' }),
@@ -133,4 +141,56 @@ test('a mode choice wins over an older config request', async () => {
 
     expect(onModeChange).toHaveBeenLastCalledWith('explore', false);
     controller.stop();
+});
+
+test('Replay line uses the host player controls without writing to the media element', async () => {
+    const video = document.createElement('video');
+    video.currentTime = 2;
+    const directPlay = jest.spyOn(video, 'play').mockResolvedValue();
+    const deps = {
+        video,
+        seek: jest.fn(),
+        play: jest.fn(),
+        subtitles: () => cues,
+        metadata: () => ({ episodeId: 'netflix:1', title: 'Episode' }),
+        send: jest.fn(async () => ({ account: 'u', enabled: false, mode: 'watch' })),
+    };
+    const c = new SaviWatchInterest(deps);
+    c.start('ja');
+    await flush();
+    const shadow = document.querySelector('[data-savi-immersion]')!.shadowRoot!;
+    Array.from(shadow.querySelectorAll('button'))
+        .find((b) => b.textContent === 'Replay line')!
+        .click();
+    expect(deps.seek).toHaveBeenCalledWith(1);
+    expect(deps.play).toHaveBeenCalledTimes(1);
+    expect(video.currentTime).toBe(2);
+    expect(directPlay).not.toHaveBeenCalled();
+    c.stop();
+    directPlay.mockRestore();
+});
+
+test('bookmarks round fractional cue times to the outbox integer contract', async () => {
+    const video = document.createElement('video');
+    video.currentTime = 2;
+    const send = jest.fn(async (message: any) =>
+        message.command === 'savi-watch-interest-config'
+            ? { account: 'u', enabled: false, mode: 'watch' }
+            : { ok: true }
+    );
+    const c = new SaviWatchInterest({
+        seek: jest.fn(),
+        play: jest.fn(),
+        video,
+        subtitles: () => [{ ...cues[0], start: 1000.4, end: 4000.6 }],
+        metadata: () => ({ episodeId: 'netflix:1', title: 'Episode' }),
+        send,
+    });
+    c.start('ja');
+    await flush();
+    await (c as any).bookmark();
+    expect(send.mock.calls.find(([m]) => m.command === 'savi-save-watch-interest')?.[0].item).toEqual(
+        expect.objectContaining({ lineStartMs: 1000, lineEndMs: 4001 })
+    );
+    c.stop();
 });

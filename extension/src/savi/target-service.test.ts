@@ -183,7 +183,7 @@ it('caps repeated transient mine attempts and discards the sensitive payload', a
     (mineHeardTarget as jest.Mock).mockRejectedValue(new Error('daemon offline'));
     const key = Object.keys(data).find((candidate) => candidate.startsWith('saviTargetMine:'))!;
 
-    for (let attempt = 0; attempt < 5; attempt += 1) {
+    for (let attempt = 0; attempt < 12; attempt += 1) {
         if (data[key]?.retryAt) data[key].retryAt = Date.now() - 1;
         await drainTargetMines('', async () => ({}) as any);
     }
@@ -263,4 +263,39 @@ it('uses the UI filesystem-safe capture mapping before attempting metadata resol
         'https://test.invalid/v2/settings',
         'https://test.invalid/v2/episodes/99/2/3/targets?lang=ja',
     ]);
+});
+
+it('backs off target feedback failures without hiding the pending dismissal', async () => {
+    data['saviTargetFeedback:dismissal'] = { base: 'https://test.invalid', account: 'alice', action };
+    (global as any).fetch = jest.fn(async () => ({ ok: false, status: 500 }));
+    await drainTargetFeedback('');
+    await drainTargetFeedback('');
+    expect((global as any).fetch).toHaveBeenCalledTimes(1);
+    expect(data['saviTargetFeedback:dismissal'].action).toEqual(action);
+    expect(data['saviTargetFeedback:dismissal'].retryAt).toBeGreaterThan(Date.now());
+});
+
+it('keeps Anki exports retryable after an episode and still caps the total retry window', async () => {
+    let now = Date.now();
+    const start = now;
+    const clock = jest.spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+        await queueTargetMines('', 'alice', [{ ...mine('関与'), exportToAnki: true }]);
+        (global as any).fetch = jest.fn(async () => ({
+            ok: true,
+            json: async () => ({ account: 'alice', eligible: ['関与'], autoMineToAnki: true }),
+        }));
+        (mineHeardTarget as jest.Mock).mockResolvedValue({ ok: true, ankiPending: true });
+        const key = Object.keys(data).find((k) => k.startsWith('saviTargetMine:'))!;
+        for (let i = 0; i < 20 && !data[key].exhausted; i++) {
+            await drainTargetMines('', async () => ({}) as any);
+            if (!data[key].exhausted) now = data[key].retryAt;
+        }
+        expect(data[key].exhausted).toBe(true);
+        expect(now - start).toBeGreaterThan(12 * 60 * 60_000);
+        expect(now - start).toBeLessThan(24 * 60 * 60_000);
+        expect((global as any).fetch).toHaveBeenCalledTimes(1);
+    } finally {
+        clock.mockRestore();
+    }
 });

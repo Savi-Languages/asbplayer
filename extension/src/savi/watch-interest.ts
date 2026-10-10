@@ -9,6 +9,8 @@ interface Cue {
 }
 interface Sources {
     video: HTMLMediaElement;
+    seek(seconds: number): void;
+    play(): void;
     subtitles(): readonly Cue[];
     metadata(): { episodeId?: string; title: string; show?: string };
     send(message: unknown): Promise<any>;
@@ -217,8 +219,8 @@ export class SaviWatchInterest {
                         this.deps.video.currentTime * 1000 < c.end
                 );
             if (cue) {
-                this.deps.video.currentTime = cue.start / 1000;
-                void this.deps.video.play().catch(() => {});
+                this.deps.seek(cue.start / 1000);
+                this.deps.play();
             }
         });
         button('Bookmark', () => {
@@ -300,8 +302,8 @@ export class SaviWatchInterest {
                 episodeId: meta.episodeId,
                 show: meta.show ?? '',
                 episodeTitle: meta.title,
-                lineStartMs: cue.start,
-                lineEndMs: cue.end,
+                lineStartMs: Math.round(cue.start),
+                lineEndMs: Math.round(cue.end),
                 lineText: cue.text,
                 kind: 'bookmark',
                 context: this.deps

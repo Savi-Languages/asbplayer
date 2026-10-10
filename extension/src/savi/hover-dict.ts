@@ -631,7 +631,9 @@ export class SaviHoverDictionary {
     }
 
     private _tokenize(text: string): Promise<SaviToken[]> {
-        return subtitleTokens.get(LANG, text);
+        // Unavailable tokenization clears the previous hover rather than
+        // leaving stale UI behind through an unhandled async rejection.
+        return subtitleTokens.get(LANG, text).catch(() => []);
     }
 
     /** AI segmentation for a line (cached). `tokens` is null when the daemon fell

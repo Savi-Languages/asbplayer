@@ -50,3 +50,14 @@ it('shares one request while preserving raw target lemmas and merged hover compo
     expect(hover).toHaveLength(1);
     expect(targets.map((t) => t.lemma)).toEqual(['理事', '長']);
 });
+
+it('keeps valid hover tokens usable when raw target tokens do not match the surface', async () => {
+    const fetch = jest
+        .fn()
+        .mockResolvedValue({ tokens: [{ text: '猫', lemma: '猫' }], rawTokens: [{ text: 'wrong' }] });
+    const cache = new SharedTokenCache(fetch);
+    await expect(cache.get('ja', '猫')).resolves.toEqual([{ text: '猫', lemma: '猫' }]);
+    await expect(cache.getRaw('ja', '猫')).rejects.toThrow();
+    fetch.mockResolvedValue({ tokens: [{ text: '猫' }], rawTokens: [{ text: '猫' }] });
+    await expect(cache.getRaw('ja', '猫')).resolves.toEqual([{ text: '猫' }]);
+});

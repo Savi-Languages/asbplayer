@@ -329,6 +329,8 @@ export default class Binding {
         });
         this.saviWatchInterest = new SaviWatchInterest({
             video,
+            seek: (seconds) => this.seek(seconds),
+            play: () => void this.play(),
             onModeChange: (mode, hideText) => {
                 this.saviTargetController?.setImmersionMode(mode);
                 this.subtitleController.immersionHideSubtitles = hideText;

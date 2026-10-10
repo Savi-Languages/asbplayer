@@ -70,12 +70,18 @@ let draining: Promise<void> | undefined;
 export function drainWatchInterest(url: string): Promise<void> {
     if (draining) return draining;
     draining = (async () => {
-        const cloud = await targetCloud(url);
+        const account = (await storedAccount())?.userId;
+        if (!account) return;
         const base = resolveCloudBase(url);
-        const entries = await browser.storage.local.get(null);
+        const entries = Object.entries(await browser.storage.local.get(null)).filter(
+            ([key, raw]) => key.startsWith(PREFIX) && (raw as any)?.account === account && (raw as any)?.base === base
+        );
+        if (!entries.length) return;
+        const cloud = await targetCloud(url);
+        if (cloud.user !== account) return;
         const settings = (await cloud.request('/v2/settings')).settings;
         const enabled = settings?.saviSavePausedHovers?.value === true;
-        for (const [key, raw] of Object.entries(entries)) {
+        for (const [key, raw] of entries) {
             const row = raw as any;
             if (!key.startsWith(PREFIX) || row.account !== cloud.user || row.base !== base) continue;
             await cloud.check();

@@ -45,6 +45,7 @@ export class SaviTargetController {
         this.sample();
         if (
             this.immersionMode !== 'explore' ||
+            this.deps.video.currentTime > 60 ||
             !this.prepared ||
             this.cardShown ||
             !this.prepared.cardEnabled ||
@@ -134,6 +135,9 @@ export class SaviTargetController {
                 }
                 this.retries.delete(key);
                 this.prepared = result;
+                // Do not hijack a later programmatic resume, such as leaving
+                // Savi's line-end hover hold, with a delayed pre-watch card.
+                if (!this.deps.video.paused || this.deps.video.currentTime > 60) this.cardShown = true;
                 if (this.immersionMode === 'explore')
                     this.decorator.setTargets(
                         this.lang,
@@ -186,7 +190,7 @@ export class SaviTargetController {
                         video.currentTime * 1000 < line.start
                     )
                         return;
-                    if (!(video instanceof HTMLVideoElement) || !video.videoWidth) return;
+                    if (!(video instanceof HTMLVideoElement) || !video.videoWidth || video.mediaKeys) return;
                     try {
                         const canvas = document.createElement('canvas');
                         canvas.width = Math.min(640, video.videoWidth);

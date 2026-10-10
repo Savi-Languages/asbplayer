@@ -145,8 +145,9 @@ track is your native one.
 
 With the matching Savi cloud and daemon, episode preparation selects a small list
 from public subtitle profiles and your current vocabulary. Resolved episodes can
-show a pre-watch card on the next play gesture. A late response never pauses an
-already playing video. Preparation and heard-target mining run only in Explore.
+show a pre-watch card on the next play near the episode start. Preparation that
+finishes during playback or after the first minute suppresses the card for that
+episode, so a later hover-hold resume is never interrupted. Preparation and heard-target mining run only in Explore.
 Unresolved/provider failures leave capture running; transient preparation failures
 back off from 30 seconds to a 10-minute cap, while unresolved titles are cached
 for 15 minutes before another lookup.
@@ -172,13 +173,16 @@ owner JWT; target mining sends no separate `X-Savi-Account` header and the daemo
 does not relay a credential or call the cloud. This requires the daemon contract
 in [Savi #74](https://github.com/Savi-Languages/savi/pull/74), version 0.78.0.
 Optional audio and JPEG frames stay local and are best effort; protected video
-may have no screenshot.
+with an active DRM session is not sampled through canvas.
 Anki export requires opt-in in both the prepared request and current cloud setting,
 uses the `savi` deck, reconciles lost replies and retries without duplicate actions.
 Mining drops immutable daemon 400/409 failures. Transient and pending-Anki retries
-back off exponentially and stop after five attempts; exhausted rows discard their
+back off exponentially up to six hours and stop after twelve attempts (about
+20.5 hours at the earliest); exhausted rows discard their
 subtitle/frame payloads. Pending-Anki retries reuse the eligibility decision
-without another cloud call.
+without another cloud call. Target-feedback delivery retries at most once every
+15 minutes after a failure while retaining pending dismissals. Empty watch-review
+outboxes make no cloud settings request.
 The built-in reviewer continues to use the captured encounter context.
 
 Validation covers Watch-mode gating, preparation backoff, daemon authentication,
