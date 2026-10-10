@@ -295,8 +295,8 @@ export function drainTargetMines(
                     if (!config) return;
                     if ((await storedAccount())?.userId !== account) return;
                     try {
-                        let decision = row.decision as MineDecision | undefined;
-                        if (!decision) {
+                        let decision: MineDecision;
+                        {
                             cloud ??= await targetCloud(cloudUrl);
                             const eligibility = await cloud.request('/v2/targets/check', 'POST', {
                                 lang: mine.lang,
@@ -319,9 +319,8 @@ export function drainTargetMines(
                             ...decision,
                         });
                         if (result.ankiPending) {
-                            // The learning action already exists. Reuse the
-                            // authenticated decision while retrying only Anki,
-                            // rather than calling the cloud on every alarm.
+                            // Backoff avoids requests on every alarm. Recheck
+                            // current eligibility and export consent when due.
                             await deferTargetMine(key, row, 'anki-pending', decision);
                             continue;
                         }

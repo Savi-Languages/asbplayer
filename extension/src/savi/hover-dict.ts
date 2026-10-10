@@ -447,7 +447,8 @@ export class SaviHoverDictionary {
         private readonly _subtitleProvider: () => SerializableSubtitle[] = () => [],
         private readonly _onReveal?: (lineText: string, word: string, gloss: string) => void,
         private readonly _onRevealEnd?: (lineText: string, word: string) => void,
-        private readonly _onRetract?: (lineText: string, word: string) => void
+        private readonly _onRetract?: (lineText: string, word: string) => void,
+        private readonly _resumePlayback?: () => void
     ) {}
 
     /** The reveal currently on screen, so its dwell can be closed when the
@@ -856,9 +857,11 @@ export class SaviHoverDictionary {
         this._panelOpen = false;
         if (this._pausedForPanel) {
             this._pausedForPanel = false;
-            const video = this._videoProvider();
-            if (video) {
-                void video.play().catch(() => {});
+            if (this._resumePlayback) {
+                this._resumePlayback();
+            } else {
+                const video = this._videoProvider();
+                if (video) void video.play().catch(() => {});
             }
         }
     }

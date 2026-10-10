@@ -363,7 +363,8 @@ export default class Binding {
             (lineText, word) => this.saviEncounterReporter.noteHoverRevealEnd(lineText, word),
             // Mining is collection, not failed recall: withdraw the reveal so
             // adding a card never lapses the card you just added.
-            (lineText, word) => this.saviEncounterReporter.noteHoverRetract(lineText, word)
+            (lineText, word) => this.saviEncounterReporter.noteHoverRetract(lineText, word),
+            () => void this.play()
         );
         // Glossing (SV-12/13): supplies gloss-ruby HTML to the subtitle controller;
         // a resolved gloss asks the controller to re-render the showing lines. The

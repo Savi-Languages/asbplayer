@@ -187,3 +187,21 @@ it('clears stale hover UI when shared tokenization fails instead of rejecting th
         line.remove();
     }
 });
+
+it('resumes the study panel through the guarded host playback path', () => {
+    const video = document.createElement('video');
+    video.play = jest.fn().mockResolvedValue(undefined);
+    const resume = jest.fn();
+    const dict = new (SaviHoverDictionary as any)(
+        () => video,
+        () => [],
+        undefined,
+        undefined,
+        undefined,
+        resume
+    );
+    dict._pausedForPanel = true;
+    dict._onPanelClosed();
+    expect(resume).toHaveBeenCalledTimes(1);
+    expect(video.play).not.toHaveBeenCalled();
+});

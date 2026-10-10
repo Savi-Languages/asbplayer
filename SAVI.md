@@ -179,8 +179,9 @@ uses the `savi` deck, reconciles lost replies and retries without duplicate acti
 Mining drops immutable daemon 400/409 failures. Transient and pending-Anki retries
 back off exponentially up to six hours and stop after twelve attempts (about
 20.5 hours at the earliest); exhausted rows discard their
-subtitle/frame payloads. Pending-Anki retries reuse the eligibility decision
-without another cloud call. Target-feedback delivery retries at most once every
+subtitle/frame payloads. Pending-Anki retries recheck current eligibility and
+export consent only when due; alarms during backoff make no cloud eligibility
+request. Target-feedback delivery retries at most once every
 15 minutes after a failure while retaining pending dismissals. Empty watch-review
 outboxes make no cloud settings request.
 The built-in reviewer continues to use the captured encounter context.

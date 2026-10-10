@@ -58,6 +58,11 @@ it('keeps valid hover tokens usable when raw target tokens do not match the surf
     const cache = new SharedTokenCache(fetch);
     await expect(cache.get('ja', '猫')).resolves.toEqual([{ text: '猫', lemma: '猫' }]);
     await expect(cache.getRaw('ja', '猫')).rejects.toThrow();
+    await expect(cache.getRaw('ja', '猫')).rejects.toThrow();
+    await expect(cache.get('ja', '猫')).resolves.toEqual([{ text: '猫', lemma: '猫' }]);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const now = jest.spyOn(Date, 'now').mockReturnValue(Date.now() + 30_001);
     fetch.mockResolvedValue({ tokens: [{ text: '猫' }], rawTokens: [{ text: '猫' }] });
     await expect(cache.getRaw('ja', '猫')).resolves.toEqual([{ text: '猫' }]);
+    now.mockRestore();
 });

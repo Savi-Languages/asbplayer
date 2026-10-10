@@ -152,7 +152,7 @@ it.each([400, 409])('drops a permanently invalid target mine after daemon HTTP %
     expect(Object.keys(data).filter((key) => key.startsWith('saviTargetMine:'))).toHaveLength(0);
 });
 
-it('backs off Anki retries without repeating the cloud eligibility request', async () => {
+it('rechecks consent on due Anki retries but not during backoff', async () => {
     await queueTargetMines('', 'alice', [{ ...mine('関与'), exportToAnki: true }]);
     (global as any).fetch = jest.fn(async () => ({
         ok: true,
@@ -166,11 +166,18 @@ it('backs off Anki retries without repeating the cloud eligibility request', asy
     expect(data[key].retryAt).toBeGreaterThan(Date.now());
 
     data[key].retryAt = Date.now() - 1;
-    (global as any).fetch.mockClear();
+    (global as any).fetch.mockClear().mockResolvedValue({
+        ok: true,
+        json: async () => ({ account: 'alice', eligible: ['関与'], autoMineToAnki: false }),
+    });
     (mineHeardTarget as jest.Mock).mockResolvedValueOnce({ ok: true });
     await drainTargetMines('', async () => ({}) as any);
 
-    expect((global as any).fetch).not.toHaveBeenCalled();
+    expect((global as any).fetch).toHaveBeenCalledTimes(1);
+    expect(mineHeardTarget).toHaveBeenLastCalledWith(
+        expect.anything(),
+        expect.objectContaining({ autoMineToAnki: false })
+    );
     expect(Object.values(data).filter((value) => value.done)).toHaveLength(1);
 });
 
@@ -294,7 +301,7 @@ it('keeps Anki exports retryable after an episode and still caps the total retry
         expect(data[key].exhausted).toBe(true);
         expect(now - start).toBeGreaterThan(12 * 60 * 60_000);
         expect(now - start).toBeLessThan(24 * 60 * 60_000);
-        expect((global as any).fetch).toHaveBeenCalledTimes(1);
+        expect((global as any).fetch).toHaveBeenCalledTimes(12);
     } finally {
         clock.mockRestore();
     }

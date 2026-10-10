@@ -42,6 +42,7 @@ export class SaviTargetController {
     private bound = false;
     /** Internal playback (hover resume, replay, recording) must never open a card. */
     skipPrewatchCard(): void {
+        if (this.immersionMode !== 'explore') return;
         this.checkEpisode();
         this.cardShown = true;
     }
