@@ -59,7 +59,7 @@ import {
     SaviWatchedLineResponse,
     SaviEngagementSessionMessage,
 } from './messages';
-import { currentAccessToken, daemonCredentials } from './account';
+import { currentAccessToken, daemonCredentials, storedAccount } from './account';
 import {
     DEFAULT_GLOSS_THRESHOLD,
     glossThreshold as cloudGlossThreshold,
@@ -114,7 +114,6 @@ import { isStaleCaptureSession } from './capture-staleness';
 
 export default class SaviCommandHandler implements CommandHandler {
     private readonly _settings: SettingsProvider;
-    private _watchedDaemonBase: string | undefined;
 
     constructor(settings: SettingsProvider) {
         this._settings = settings;
@@ -717,6 +716,12 @@ export default class SaviCommandHandler implements CommandHandler {
         if (!config) {
             return { ok: false, reason: 'not-configured' };
         }
+        const { saviDaemonToken, saviDaemonUrl } = await this._settings.get(['saviDaemonToken', 'saviDaemonUrl']);
+        const account = (await storedAccount())?.userId;
+        const seenKey = `saviDaemonSeen:${JSON.stringify([account ?? '', config.baseUrl])}`;
+        const explicit =
+            Boolean(saviDaemonToken.trim()) ||
+            normalizedBaseUrl(saviDaemonUrl) !== normalizedBaseUrl(defaultSettings.saviDaemonUrl);
         try {
             await postWatchedLine(config, {
                 lang: message.lang,
@@ -726,22 +731,22 @@ export default class SaviCommandHandler implements CommandHandler {
                 glossedWords: message.glossedWords,
                 hoverGlossedWords: message.hoverGlossedWords,
             });
-            this._watchedDaemonBase = config.baseUrl;
-            return { ok: true };
         } catch (e) {
-            if (isDaemonResponseError(e)) {
-                return { ok: false, reason: 'rejected' };
-            }
-            const { saviDaemonToken } = await this._settings.get(['saviDaemonToken']);
-            // Signing in supplies a JWT, but does not mean the user installed
-            // the desktop app. Still attempt JWT-only delivery; only warn for
-            // explicit setup or a default daemon that previously answered.
-            const expectedDaemon =
-                Boolean(saviDaemonToken.trim()) ||
-                config.baseUrl !== normalizedBaseUrl(defaultSettings.saviDaemonUrl) ||
-                this._watchedDaemonBase === config.baseUrl;
-            return { ok: false, reason: expectedDaemon ? 'unreachable' : 'not-configured' };
+            // Fire-and-forget contract: a dropped line loses one line's exposure.
+            if (isDaemonResponseError(e)) return { ok: false, reason: 'rejected' };
+            const seen = (await browser.storage.local.get(seenKey))[seenKey] === true;
+            return { ok: false, reason: explicit || seen ? 'unreachable' : 'not-configured' };
         }
+        // A storage failure must not turn an acknowledged heard line into a
+        // delivery failure. This flag only controls future warning visibility.
+        try {
+            if ((await storedAccount())?.userId === account) {
+                await browser.storage.local.set({ [seenKey]: true });
+            }
+        } catch {
+            /* best-effort reachability history */
+        }
+        return { ok: true };
     }
 
     private async _engagementSession(message: SaviEngagementSessionMessage): Promise<{ ok: boolean }> {

@@ -40,6 +40,11 @@ export class SaviTargetController {
     private cardShown = false;
     private host?: HTMLElement;
     private bound = false;
+    /** Internal playback (hover resume, replay, recording) must never open a card. */
+    skipPrewatchCard(): void {
+        this.checkEpisode();
+        this.cardShown = true;
+    }
     private readonly onPlay = () => {
         this.checkEpisode();
         this.sample();

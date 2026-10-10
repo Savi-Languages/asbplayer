@@ -1898,6 +1898,7 @@ export default class Binding {
     }
 
     async play() {
+        this.saviTargetController?.skipPrewatchCard();
         if (netflix) {
             await this._playNetflix();
             return;

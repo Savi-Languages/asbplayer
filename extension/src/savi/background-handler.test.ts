@@ -1,3 +1,7 @@
+jest.mock('./account', () => ({ daemonCredentials: jest.fn(), storedAccount: jest.fn() }));
+jest.mock('./daemon-client', () => ({ ...jest.requireActual('./daemon-client'), postWatchedLine: jest.fn() }));
+import { daemonCredentials, storedAccount } from './account';
+import { postWatchedLine, SaviDaemonHttpError } from './daemon-client';
 // Direct coverage of SaviCommandHandler._warmProjections (SV-40 bind-time warm
 // follow-up). The finding this closes: cloud-client.ts's warmProjections never
 // checked response.ok, so a 401 (expired JWT), 404 (a cloud predating the
@@ -23,14 +27,6 @@ jest.mock('./cloud-client', () => ({
     warmProjections: jest.fn(),
 }));
 
-jest.mock('./account', () => ({ daemonCredentials: jest.fn() }));
-jest.mock('./daemon-client', () => ({
-    ...jest.requireActual('./daemon-client'),
-    postWatchedLine: jest.fn(),
-}));
-
-import { daemonCredentials } from './account';
-import { postWatchedLine, SaviDaemonHttpError } from './daemon-client';
 import SaviCommandHandler from './background-handler';
 import { warmProjections as mockWarmProjections } from './cloud-client';
 
@@ -106,17 +102,91 @@ describe('Savi screenshot tab identity', () => {
     });
 });
 
+describe('watched-line daemon warning configuration', () => {
+    let values: Record<string, any>;
+    let token: string;
+    let url: string;
+    const send = (handler: SaviCommandHandler) =>
+        (handler as any)._watchedLine({
+            lang: 'ja',
+            text: '猫',
+            episodeId: 'netflix:1',
+            lineStartMs: 1000,
+            occurredAtMs: 1,
+        });
+    const handler = () =>
+        new SaviCommandHandler({ get: async () => ({ saviDaemonUrl: url, saviDaemonToken: token }) } as any);
+    beforeEach(() => {
+        values = {};
+        token = '';
+        url = 'http://127.0.0.1:4030';
+        (globalThis as any).browser = {
+            storage: {
+                local: {
+                    get: jest.fn(async (key: string) => ({ [key]: values[key] })),
+                    set: jest.fn(async (v: any) => Object.assign(values, v)),
+                },
+            },
+        };
+        (storedAccount as jest.Mock).mockResolvedValue({ userId: 'alice' });
+        (daemonCredentials as jest.Mock).mockImplementation(async () => ({
+            bearer: token || 'jwt',
+            accountJwt: 'jwt',
+        }));
+        (postWatchedLine as jest.Mock).mockReset().mockRejectedValue(new TypeError('network failure'));
+    });
+    afterEach(() => {
+        delete (globalThis as any).browser;
+    });
+    it('does not alarm for a signed-in default installation that never reached a daemon', async () => {
+        expect(await send(handler())).toEqual({ ok: false, reason: 'not-configured' });
+        expect(postWatchedLine).toHaveBeenCalled();
+    });
+    it('remembers a working JWT-only daemon across handler restarts, scoped to account and URL', async () => {
+        (postWatchedLine as jest.Mock).mockResolvedValueOnce({});
+        expect(await send(handler())).toEqual({ ok: true });
+        expect(await send(handler())).toEqual({ ok: false, reason: 'unreachable' });
+        (storedAccount as jest.Mock).mockResolvedValue({ userId: 'bob' });
+        expect(await send(handler())).toEqual({ ok: false, reason: 'not-configured' });
+    });
+    it('still alarms for an explicitly configured LAN token or custom address', async () => {
+        token = 'lan';
+        expect(await send(handler())).toEqual({ ok: false, reason: 'unreachable' });
+        token = '';
+        url = 'http://desktop.local:4030';
+        expect(await send(handler())).toEqual({ ok: false, reason: 'unreachable' });
+    });
+    it('does not mistake HTTP rejection for an unreachable daemon', async () => {
+        (postWatchedLine as jest.Mock).mockRejectedValue(new SaviDaemonHttpError(401, 'Unauthorized'));
+        expect(await send(handler())).toEqual({ ok: false, reason: 'rejected' });
+    });
+});
+
 describe('watched-line daemon availability', () => {
     const message = { lang: 'ja', text: '猫', episodeId: 'episode', lineStartMs: 1200 };
     const handler = (saviDaemonToken = '', saviDaemonUrl = 'http://127.0.0.1:4030') =>
         new SaviCommandHandler({ get: async () => ({ saviDaemonToken, saviDaemonUrl }) } as any);
     const watched = (h: SaviCommandHandler) => (h as any)._watchedLine(message);
     beforeEach(() => {
+        const values: Record<string, any> = {};
+        (globalThis as any).browser = {
+            storage: {
+                local: {
+                    get: jest.fn(async (key: string) => ({ [key]: values[key] })),
+                    set: jest.fn(async (v: any) => Object.assign(values, v)),
+                },
+            },
+        };
+        jest.mocked(storedAccount).mockResolvedValue({ userId: 'alice' } as any);
+
         jest.mocked(daemonCredentials).mockImplementation(async (lanToken) => ({
             bearer: lanToken.trim() || 'account-jwt',
             accountJwt: 'account-jwt',
         }));
         jest.mocked(postWatchedLine).mockReset();
+    });
+    afterEach(() => {
+        delete (globalThis as any).browser;
     });
     it('does not warn an extension-only user when the default daemon has never responded', async () => {
         jest.mocked(postWatchedLine).mockRejectedValue(new TypeError('Failed to fetch'));

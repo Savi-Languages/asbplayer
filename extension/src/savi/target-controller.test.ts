@@ -337,3 +337,24 @@ it('does not attach canvas screenshots from DRM-protected video to heard-target 
         image.mockRestore();
     }
 });
+
+it('does not interrupt the first programmatic play even when preparation completed while paused', async () => {
+    const video = document.createElement('video');
+    const pause = jest.fn();
+    const controller = new SaviTargetController({
+        video,
+        metadata: () => ({ episodeId: 'netflix:1', title: 'S1:E1', show: 'Dark' }),
+        subtitles: () => [],
+        pause,
+        play: jest.fn(),
+        send: jest.fn().mockResolvedValue(prep()),
+    });
+    controller.setImmersionMode('explore');
+    controller.start('ja');
+    await settle();
+    (controller as any).skipPrewatchCard?.();
+    video.dispatchEvent(new Event('play'));
+    expect(pause).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-savi-target-card]')).toBeNull();
+    controller.stop();
+});
