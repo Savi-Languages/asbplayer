@@ -419,6 +419,7 @@ export class SaviHoverDictionary {
     /** The subtitle line element the highlight box currently sits on. Moves
      *  within it glide; a move to any other line snaps. See _highlightRect. */
     private _highlightLine: HTMLElement | null = null;
+    private _highlightRow: { top: number; height: number } | null = null;
     private _bridge: HTMLDivElement | null = null; // transparent gap-cover from word up to popup
     private _toastEl: HTMLDivElement | null = null; // standalone mine-result toast (outlives the popup)
     private _toastTimer: number | null = null;
@@ -1096,13 +1097,20 @@ export class SaviHoverDictionary {
         // after the previous one is gone — slid the box diagonally across the
         // video, which reads as the subtitle scrolling. Same story when the box
         // was last left on some far-away word and reappears here. Glide only
-        // when staying on the same line element; otherwise snap, and re-enable
-        // the transition on the next frame so the NEXT within-line move glides.
-        const sameLine = this._highlightLine === line && el.style.display !== 'none';
+        // when staying on the same visible row of the same line element;
+        // a single cue can wrap into multiple rows. Restore the transition
+        // after a style flush so the NEXT within-row move glides.
+        const previousRow = this._highlightRow;
+        const sameLine =
+            this._highlightLine === line &&
+            el.style.display !== 'none' &&
+            previousRow !== null &&
+            Math.abs(rect.top - previousRow.top) < Math.min(rect.height, previousRow.height) / 2;
         if (!sameLine) {
             el.style.transition = 'none';
         }
         this._highlightLine = line;
+        this._highlightRow = { top: rect.top, height: rect.height };
         el.style.left = `${rect.left - padX}px`;
         el.style.top = `${rect.top - padY}px`;
         el.style.width = `${Math.max(0, rect.width - trailing + padX * 2)}px`;
@@ -1141,6 +1149,7 @@ export class SaviHoverDictionary {
     private _hideHighlight() {
         if (this._highlight) this._highlight.style.display = 'none';
         this._highlightLine = null;
+        this._highlightRow = null;
         if (this._cursorLine) {
             this._cursorLine.style.cursor = '';
             this._cursorLine = null;
