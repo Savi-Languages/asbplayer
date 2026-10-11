@@ -140,3 +140,62 @@ appearance (or clear those fields). To make the **native (English) line
 smaller than the target line**, give it its own size under Settings → Subtitle
 appearance → the second track's tab (per-track styling); savi can't guess which
 track is your native one.
+
+## Target words (0.78.0)
+
+With the matching Savi cloud and daemon, episode preparation selects a small list
+from public subtitle profiles and your current vocabulary. Resolved episodes can
+show a pre-watch card on the next play near the episode start. Preparation that
+finishes during playback or after the first minute suppresses the card for that
+episode, so a later hover-hold resume is never interrupted. Preparation and heard-target mining run only in Explore.
+Unresolved/provider failures leave capture running; transient preparation failures
+back off from 30 seconds to a 10-minute cap, while unresolved titles are cached
+for 15 minutes before another lookup.
+
+The primary subtitle track gets a soft purple target underline. Hover and targets
+share one local tokenizer request/cache: hover uses dictionary compounds, targets
+use the raw analyzer lemmas that also generate heard evidence. No AI call runs on
+the decoration path. Text and ruby labels remain intact.
+
+“I know this” and “Not for this show” persist account-bound feedback offline;
+“Start watching” records acceptance and resumes. Savi Settings controls the card
+(default on) and automatic Anki export (default off). Saved player episode
+corrections are honored through both platform and filesystem-safe capture IDs.
+
+A target enters Savi review only after an acknowledged heard event and 90% audible
+forward playback of its actual primary-track cue. Paused time, seeks and repeated
+fragments cannot manufacture coverage. Mining uses a durable account/language/
+episode/cue-start/lemma identity in browser storage and daemon SQLite. The signed-in
+extension checks fresh known/suppressed state through the cloud, verifies the
+response account, and sends `eligible` and `autoMineToAnki` to the daemon. The
+daemon authenticates with the LAN token or, when no LAN token is configured, the
+owner JWT; target mining sends no separate `X-Savi-Account` header and the daemon
+does not relay a credential or call the cloud. This requires the daemon contract
+in [Savi #74](https://github.com/Savi-Languages/savi/pull/74), version 0.78.0.
+Optional audio and JPEG frames stay local and are best effort; protected video
+with an active DRM session is not sampled through canvas.
+Anki export requires opt-in in both the prepared request and current cloud setting,
+uses the `savi` deck, reconciles lost replies and retries without duplicate actions.
+Mining drops immutable daemon 400/409 failures. Transient and pending-Anki retries
+back off exponentially up to six hours and stop after twelve attempts (about
+20.5 hours at the earliest); exhausted rows discard their
+subtitle/frame payloads. Pending-Anki retries recheck current eligibility and
+export consent only when due; alarms during backoff make no cloud eligibility
+request. Target-feedback delivery retries at most once every
+15 minutes after a failure while retaining pending dismissals. Empty watch-review
+outboxes make no cloud settings request.
+The built-in reviewer continues to use the captured encounter context.
+
+Validation covers Watch-mode gating, preparation backoff, daemon authentication,
+mining retry limits, and hover-pause ownership. Run `yarn verify`, the extension
+TypeScript compile, and the Chrome production build before review. Real Netflix
+playback with the matching cloud/daemon and AnkiConnect remains a separate live
+integration check; automated tests do not establish that result.
+
+### Immersion modes (0.78)
+
+The small “Savi modes” control opens Watch / Explore / Listen and explicit Bookmark / Replay / Reveal actions. Mode is stored in the signed-in account's `saviImmersionMode` setting and refreshed each minute. Watch is the default: no automatic target preparation, card, or hover mining. Explore allows those features subject to existing consent/settings. Existing gloss labels and hover gloss remain controlled by their own settings and language support, independent of immersion mode. When Savi gloss hover is active, it holds playback at the subtitle boundary; otherwise the user's asbplayer Pause on hover setting applies immediately. Listen hides the Savi subtitle layer with a reversible Reveal button; it does not rewrite subtitle settings. General asbplayer playback modes selected explicitly by the user remain separate.
+
+A bookmark is saved locally before upload even when hover mining is disabled. A paused hover must last 1.5 seconds, match an exact current primary cue, and be in Explore with consent. Strong AI selections become candidates; admission budgets are enforced in Savi. Playback alone never grades an item. The local outbox remains account/backend scoped; unavailable AI retries later.
+
+Review follow-up: internal hover/replay/recording resumes bypass the pre-watch card. A signed-in default installation without a successful daemon connection does not show an offline warning; explicit daemon settings and previously successful watched-line delivery retain outage warnings across worker restarts.

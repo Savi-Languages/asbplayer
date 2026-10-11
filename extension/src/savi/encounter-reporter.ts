@@ -88,6 +88,7 @@ export interface EncounterReporterDeps {
     onDeliveryFailure?: (consecutive: number) => void;
     /** Delivery worked again after at least one failure — clear the banner. */
     onDeliveryRecovered?: () => void;
+    onHeardAcknowledged?: (message: SaviWatchedLineMessage) => void;
     now?: () => number;
 }
 
@@ -242,26 +243,40 @@ export class SaviEncounterReporter {
         for (const reveal of line.hovered.values()) {
             this._closeReveal(reveal);
         }
+        const message: SaviWatchedLineMessage = {
+            command: 'savi-watched-line',
+            lang: line.lang,
+            text: line.text,
+            episodeId: line.episodeId,
+            lineStartMs: line.lineStartMs,
+            occurredAtMs: line.occurredAtMs,
+            glossedWords: this._deps.glossedEntries(line.text, line.track),
+            // A retracted (mined) reveal sends NO dwell rather than a
+            // zero: absent means "no qualifying dwell claimed", which is
+            // the case we want, while 0 would be a measurement we
+            // deliberately declined to make.
+            hoverGlossedWords: [...line.hovered].map(([word, reveal]) =>
+                reveal.retracted
+                    ? { word, gloss: reveal.gloss }
+                    : { word, gloss: reveal.gloss, dwellMs: reveal.longestMs }
+            ),
+        };
         this._deps
-            .send({
-                command: 'savi-watched-line',
-                lang: line.lang,
-                text: line.text,
-                episodeId: line.episodeId,
-                lineStartMs: line.lineStartMs,
-                occurredAtMs: line.occurredAtMs,
-                glossedWords: this._deps.glossedEntries(line.text, line.track),
-                // A retracted (mined) reveal sends NO dwell rather than a
-                // zero: absent means "no qualifying dwell claimed", which is
-                // the case we want, while 0 would be a measurement we
-                // deliberately declined to make.
-                hoverGlossedWords: [...line.hovered].map(([word, reveal]) =>
-                    reveal.retracted
-                        ? { word, gloss: reveal.gloss }
-                        : { word, gloss: reveal.gloss, dwellMs: reveal.longestMs }
-                ),
+            .send(message)
+            .then((response) => {
+                const result = response as { ok?: boolean; reason?: string };
+                if (result?.ok) {
+                    this._noteDelivered();
+                    this._deps.onHeardAcknowledged?.(message);
+                } else if (result?.reason === 'unreachable') {
+                    this._noteFailure(new Error('Savi daemon is unreachable'));
+                } else {
+                    // Missing configuration and HTTP rejection both prove nothing
+                    // about reachability. Neither may raise the "daemon is off"
+                    // alarm, and neither acknowledges the heard line for mining.
+                    this._noteDelivered();
+                }
             })
-            .then(() => this._noteDelivered())
             .catch((e) => this._noteFailure(e));
     }
 

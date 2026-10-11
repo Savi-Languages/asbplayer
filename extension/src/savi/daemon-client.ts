@@ -131,11 +131,23 @@ const doFetch = async (base: string, config: SaviDaemonConfig, path: string, ini
             // Not JSON - status alone will have to do
         }
 
-        throw new Error(`savi daemon: ${message}`);
+        throw new SaviDaemonHttpError(response.status, message);
     }
 
     return await response.json();
 };
+
+export class SaviDaemonHttpError extends Error {
+    constructor(
+        readonly status: number,
+        message: string
+    ) {
+        super(`savi daemon: ${message}`);
+        this.name = 'SaviDaemonHttpError';
+    }
+}
+
+export const isDaemonResponseError = (error: unknown): boolean => error instanceof SaviDaemonHttpError;
 
 const request = async (config: SaviDaemonConfig, path: string, init: RequestInit) => {
     const configured = normalizedBaseUrl(config.baseUrl);
@@ -147,7 +159,7 @@ const request = async (config: SaviDaemonConfig, path: string, init: RequestInit
         // HTTP-level errors (auth, 4xx/5xx) come back as our Error above and
         // mean the daemon WAS reached — rethrow. Only a network-level failure
         // (fetch rejection: nothing listening / port moved) triggers discovery.
-        if (e instanceof Error && e.message.startsWith('savi daemon:')) {
+        if (isDaemonResponseError(e)) {
             throw e;
         }
 
@@ -392,6 +404,14 @@ export const tokenize = async (config: SaviDaemonConfig, lang: string, text: str
     return body.tokens ?? [];
 };
 
+/** Same local request, retaining the analyzer tokens used by heard evidence. */
+export const tokenizeWithAnalysis = async (
+    config: SaviDaemonConfig,
+    lang: string,
+    text: string
+): Promise<{ tokens: SaviToken[]; rawTokens?: SaviToken[] }> =>
+    request(config, '/v2/tokenize', jsonInit({ lang, text }));
+
 /** The daemon's word on why AI had nothing — it saw the credentials, so its
  *  account reasons are authoritative over anything guessed client-side.
  *  Absent on responses from a pre-split daemon. */
@@ -578,3 +598,16 @@ export const finishCapture = async (config: SaviDaemonConfig, captureId: string)
         condenseWarning: body.condenseWarning,
     };
 };
+
+/** Own-review collection; Anki export is independently opted in and retryable. */
+export async function mineHeardTarget(
+    config: SaviDaemonConfig,
+    body: import('./target-types').HeardTargetMine & { eligible: boolean; autoMineToAnki: boolean }
+): Promise<{ ok: boolean; ankiPending?: boolean }> {
+    // Eligibility was already checked by the authenticated extension cloud
+    // client. Only the daemon bearer and the decision cross this boundary. In
+    // the documented no-LAN-token setup the owner's JWT doubles as that bearer;
+    // it is never forwarded again as a separate identity credential.
+    if (!config.token) throw new Error('A Savi daemon bearer is required for target mining');
+    return request({ baseUrl: config.baseUrl, token: config.token }, '/v2/targets/mine', jsonInit(body));
+}

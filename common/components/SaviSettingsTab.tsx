@@ -398,6 +398,23 @@ const SaviSettingsTab: React.FC<Props> = ({
                 />
             )}
 
+            <SettingsSection>{'Study controls'}</SettingsSection>
+            <SwitchLabelWithHoverEffect
+                control={
+                    <Switch
+                        checked={settings.saviStudyToolbar}
+                        onChange={(e) => onSettingChanged('saviStudyToolbar', e.target.checked)}
+                    />
+                }
+                label={'Show floating study toolbar'}
+                labelPlacement="start"
+            />
+            <FormHelperText>
+                {
+                    'Show Watch, Explore, Listen, Reveal, Replay, and Bookmark controls over the video. Off by default. Subtitles stay visible while the toolbar is off, including in Listen mode.'
+                }
+            </FormHelperText>
+
             <SettingsSection>{'Savi capture'}</SettingsSection>
             <SwitchLabelWithHoverEffect
                 control={

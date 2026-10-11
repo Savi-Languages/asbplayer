@@ -1,3 +1,4 @@
+import { subtitleTokens } from './token-cache';
 // Live-subtitle hover dictionary: hover a word on the video's asbplayer
 // subtitle overlay and see (a) the word boxed under the cursor, Language
 // Reactor-style, and (b) its dictionary entry in a popup.
@@ -27,7 +28,6 @@ import {
     SaviKanjiMessage,
     SaviKanjiResponse,
     SaviTokenizeMessage,
-    SaviTokenizeResponse,
     SaviAiUnavailable,
 } from './messages';
 import { serializeToSrt, SerializableSubtitle } from './subtitle-serializer';
@@ -403,7 +403,6 @@ function positionPopup(popup: HTMLDivElement, arrow: HTMLDivElement, word: DOMRe
 const firstDictGloss = (entries: SaviDictEntry[]): string => entries[0]?.senses?.[0]?.glosses?.[0] ?? '';
 
 export class SaviHoverDictionary {
-    private readonly _tokenizeCache = new Map<string, SaviToken[]>();
     // AI segmentations only — a rule-based fallback is never cached (see _segment).
     private readonly _segmentCache = new Map<string, SaviToken[]>();
     private readonly _explainCache = new Map<string, string | null>();
@@ -448,7 +447,8 @@ export class SaviHoverDictionary {
         private readonly _subtitleProvider: () => SerializableSubtitle[] = () => [],
         private readonly _onReveal?: (lineText: string, word: string, gloss: string) => void,
         private readonly _onRevealEnd?: (lineText: string, word: string) => void,
-        private readonly _onRetract?: (lineText: string, word: string) => void
+        private readonly _onRetract?: (lineText: string, word: string) => void,
+        private readonly _resumePlayback?: () => void
     ) {}
 
     /** The reveal currently on screen, so its dwell can be closed when the
@@ -630,17 +630,10 @@ export class SaviHoverDictionary {
         this._positionBridge(anchor);
     }
 
-    private async _tokenize(text: string): Promise<SaviToken[]> {
-        const cached = this._tokenizeCache.get(text);
-        if (cached) return cached;
-        const res = await sendToBackground<SaviTokenizeResponse>({ command: 'savi-tokenize', lang: LANG, text });
-        const tokens = res.tokens ?? [];
-        if (this._tokenizeCache.size >= TOKENIZE_CACHE_MAX) {
-            const oldest = this._tokenizeCache.keys().next().value;
-            if (oldest !== undefined) this._tokenizeCache.delete(oldest);
-        }
-        this._tokenizeCache.set(text, tokens);
-        return tokens;
+    private _tokenize(text: string): Promise<SaviToken[]> {
+        // Unavailable tokenization clears the previous hover rather than
+        // leaving stale UI behind through an unhandled async rejection.
+        return subtitleTokens.get(LANG, text).catch(() => []);
     }
 
     /** AI segmentation for a line (cached). `tokens` is null when the daemon fell
@@ -864,9 +857,11 @@ export class SaviHoverDictionary {
         this._panelOpen = false;
         if (this._pausedForPanel) {
             this._pausedForPanel = false;
-            const video = this._videoProvider();
-            if (video) {
-                void video.play().catch(() => {});
+            if (this._resumePlayback) {
+                this._resumePlayback();
+            } else {
+                const video = this._videoProvider();
+                if (video) void video.play().catch(() => {});
             }
         }
     }
