@@ -385,6 +385,38 @@ describe('EngagementClock — media-anchored credit across long gaps (SV-59)', (
         expect(flushes[2].endedAtMs).toBe(WALL0 + 720_000);
     });
 
+    it('keeps the anchor through a buffering stall, so the next screen-off gap still counts', () => {
+        // A stretched tick lands during a 1 s stall (readyState < 2: not
+        // `playing`, but `mediaActive`). Playback resumes at once; the next tick
+        // is 30 s later. That whole gap used to be thrown away.
+        const { c, flushes } = clock({ backgroundKind: 'relisten' });
+        c.tick(0, WALL0, bg(0));
+        c.tick(30_000, WALL0 + 30_000, bg(30_000, { playing: false, mediaActive: true }));
+        c.tick(60_000, WALL0 + 60_000, bg(59_000));
+        c.flush();
+        expect(flushes.map((f) => f.engagedMs)).toEqual([59_000]);
+    });
+
+    it('a long stall earns nothing — short ticks during it are credited by media advance only', () => {
+        const { c } = clock({ foregroundKind: 'relisten' });
+        const stalled = (t: number) =>
+            inputs({ playing: false, mediaActive: true, mediaTimeMs: 10_000, lastInteractionAt: t });
+        c.tick(0, WALL0, inputs({ playing: true, mediaTimeMs: 10_000 }));
+        for (let t = 1_000; t <= 120_000; t += 1_000) c.tick(t, WALL0 + t, stalled(t));
+        // 1 s of "playing" before the first stalled tick, then nothing for the
+        // 119 s of stall.
+        expect(c.openMs).toBe(1_000);
+    });
+
+    it('a paused tick still drops the anchor (mediaActive false)', () => {
+        const { c } = clock();
+        c.tick(0, WALL0, bg(0));
+        c.tick(30_000, WALL0 + 30_000, bg(30_000, { playing: false, mediaActive: false }));
+        c.tick(60_000, WALL0 + 60_000, bg(60_000));
+        // The first gap is credited (it started playing); the second started paused.
+        expect(c.openMs).toBe(0);
+    });
+
     it('without mediaTimeMs, behaviour is exactly as before (surfaces that omit it)', () => {
         const { c } = clock();
         c.tick(0, WALL0, inputs({ playing: true }));

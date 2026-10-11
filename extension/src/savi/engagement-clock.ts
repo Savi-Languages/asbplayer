@@ -49,6 +49,13 @@ export interface ClockInputs {
     mediaTimeMs?: number;
     /** `playbackRate`, to turn media advance back into wall time. Default 1. */
     playbackRate?: number;
+    /** The media is MEANT to be playing — not paused, not ended — even if it is
+     *  momentarily stalled (buffering, `readyState < 2`). Keeps the gap anchor
+     *  alive through a stall: a stretched tick that happens to land mid-stall
+     *  must not throw away the whole next screen-off gap. Media advance stays
+     *  the evidence, so a stall itself still earns nothing. Optional, default
+     *  `playing`. */
+    mediaActive?: boolean;
 }
 
 /** A closed block, ready for an adapter to stamp and send. */
@@ -112,8 +119,13 @@ export function activeKind(
     const attended = inputs.visible && inputs.focused;
 
     // Playing: attended means they're watching it; unattended means the audio is
-    // still reaching them, which is a real (shallower) kind of exposure.
-    if (inputs.playing) return attended ? opts.foregroundKind : opts.backgroundKind;
+    // still reaching them, which is a real (shallower) kind of exposure. A
+    // buffering stall (`mediaActive`, not `playing`) keeps the same kind, so a
+    // tick that lands mid-stall doesn't close the block — the clock credits a
+    // stalled interval only by media advance, so the stall itself earns nothing.
+    if (inputs.playing || inputs.mediaActive === true) {
+        return attended ? opts.foregroundKind : opts.backgroundKind;
+    }
 
     // Paused and away: nothing is reaching them at all.
     if (!attended) return null;
@@ -143,9 +155,12 @@ export function activeKind(
 export class EngagementClock {
     private readonly opts: Required<Omit<EngagementClockOptions, 'onFlush'>> & Pick<EngagementClockOptions, 'onFlush'>;
     private lastTickAt: number | null = null;
-    /** Media position + rate at the last tick, held only while it was PLAYING —
-     *  the anchor a long gap is measured against. */
+    /** Media position + rate at the last tick, held only while the media was
+     *  active (playing, or meant to be and stalled) — the anchor a long gap is
+     *  measured against. */
     private lastMedia: { atMs: number; rate: number } | null = null;
+    /** The last tick was a stall: meant to play (`mediaActive`), not playing. */
+    private lastStalled = false;
     private open: OpenSession | null = null;
 
     constructor(options: EngagementClockOptions) {
@@ -172,9 +187,10 @@ export class EngagementClock {
         if (this.open) this.credit(this.creditFor(delta, inputs), wallNow);
         this.lastTickAt = now;
         this.lastMedia =
-            inputs.playing && inputs.mediaTimeMs !== undefined
+            (inputs.mediaActive ?? inputs.playing) && inputs.mediaTimeMs !== undefined
                 ? { atMs: inputs.mediaTimeMs, rate: inputs.playbackRate ?? 1 }
                 : null;
+        this.lastStalled = !inputs.playing && inputs.mediaActive === true;
 
         // 2. Re-evaluate, and close the block if what they're doing changed
         //    (including changing to "nothing").
@@ -200,6 +216,7 @@ export class EngagementClock {
         this.flushOpen();
         this.lastTickAt = null;
         this.lastMedia = null;
+        this.lastStalled = false;
     }
 
     /** Drop whatever has accrued WITHOUT emitting it (e.g. the user switched to
@@ -208,6 +225,7 @@ export class EngagementClock {
         this.open = null;
         this.lastTickAt = null;
         this.lastMedia = null;
+        this.lastStalled = false;
     }
 
     /** Accrued ms in the block currently open — for tests and diagnostics. */
@@ -218,12 +236,20 @@ export class EngagementClock {
     /** How much of an elapsed `delta` is creditable. */
     private creditFor(delta: number, inputs: ClockInputs): number {
         if (delta <= 0) return 0;
+        // An interval that STARTED stalled earns only what actually played in it
+        // — otherwise a long buffering stall would be credited tick by tick.
+        if (this.lastStalled) return this.mediaAdvance(delta, inputs);
         if (delta <= this.opts.maxTickDeltaMs) return delta;
         // An oversized gap. Credit it only when the media was playing at its start
         // and its position says how much of it really played — capped at the wall
         // time, so a forward seek or a condensed skip can never mint extra. The
         // END needn't be playing: a pause event landing after a frozen stretch is
         // exactly how that stretch gets reported.
+        return this.mediaAdvance(delta, inputs);
+    }
+
+    /** Media advance since the anchor, in wall ms, clamped to [0, delta]. */
+    private mediaAdvance(delta: number, inputs: ClockInputs): number {
         if (this.lastMedia === null || inputs.mediaTimeMs === undefined) return 0;
         const rate = this.lastMedia.rate > 0 ? this.lastMedia.rate : 1;
         const played = (inputs.mediaTimeMs - this.lastMedia.atMs) / rate;
