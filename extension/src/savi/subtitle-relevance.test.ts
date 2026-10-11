@@ -19,7 +19,10 @@ describe('titlesOverlap', () => {
     // because nothing compared the result back to what was asked for.
     it('rejects the unrelated film that started this', () => {
         expect(
-            titlesOverlap('Garfunkel and Oates - Pregnant Women Are Smug', 'Hussain_ Who Said No HD (English . +20 Subs)')
+            titlesOverlap(
+                'Garfunkel and Oates - Pregnant Women Are Smug',
+                'Hussain_ Who Said No HD (English . +20 Subs)'
+            )
         ).toBe(false);
     });
 

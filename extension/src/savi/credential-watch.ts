@@ -160,7 +160,11 @@ export const noteTokenResolution = async (hasToken: boolean, readCloudUrl: () =>
     // dictionary lookup, and watched-line report; in the steady state (no
     // edge) it must cost nothing, and a settings read per request is not
     // nothing. Only a rising edge pays for the read, and it pays once.
-    reacting = reacting ?? readCloudUrl().then(rearm).finally(() => (reacting = undefined));
+    reacting =
+        reacting ??
+        readCloudUrl()
+            .then(rearm)
+            .finally(() => (reacting = undefined));
     await reacting;
 };
 
