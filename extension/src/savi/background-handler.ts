@@ -869,6 +869,11 @@ export default class SaviCommandHandler implements CommandHandler {
                     // daemon may have finished it already. The SAME episode needs
                     // nothing — the start below resumes that session.
                     void finishCapture(config, existing.captureId).catch(() => {});
+                }
+
+                // Never target this tab: an SPA may reuse its video src and
+                // deliver the old notification after its new recorder starts.
+                if (existing.tabId !== tabId) {
                     // A frozen tab can still have a live controller. Clear its
                     // recording state when it thaws, without an idle restart
                     // competing with the new owner. Neither message delivery
@@ -880,7 +885,7 @@ export default class SaviCommandHandler implements CommandHandler {
                             src: existing.src,
                             ok: false,
                             expired: false,
-                            errorMessage: 'Recording moved to another episode.',
+                            errorMessage: 'Recording moved to another tab.',
                         },
                     };
                     void browser.tabs.sendMessage(existing.tabId, ended).catch(() => {});

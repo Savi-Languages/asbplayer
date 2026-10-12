@@ -27,7 +27,7 @@ const oldSession = {
     seq: 0,
 };
 const sendMessage = jest.fn();
-const requestStart = (episodeId = 'netflix:222') => {
+const requestStart = (episodeId = 'netflix:222', tabId = 9, src = 'blob:new-video') => {
     const handler = new SaviCommandHandler({
         get: async () => ({
             saviDaemonUrl: 'http://localhost:4030',
@@ -42,13 +42,13 @@ const requestStart = (episodeId = 'netflix:222') => {
                 message: {
                     command: 'savi-start-capture',
                     episodeId,
-                    src: 'blob:new-video',
+                    src,
                     lang: 'ja',
                     subtitles: '',
                     subtitleFormat: 'srt',
                 },
             },
-            { tab: { id: 9 } } as any,
+            { tab: { id: tabId } } as any,
             resolve
         );
     });
@@ -87,7 +87,7 @@ describe('capture ownership after a frozen tab', () => {
                 src: oldSession.src,
                 ok: false,
                 expired: false,
-                errorMessage: 'Recording moved to another episode.',
+                errorMessage: 'Recording moved to another tab.',
             },
         });
         expect(setCaptureSession).toHaveBeenCalledWith(expect.objectContaining({ tabId: 9, episodeId: 'netflix:222' }));
@@ -104,12 +104,25 @@ describe('capture ownership after a frozen tab', () => {
         );
     });
 
-    it('resumes the same episode without finishing it or sending an ended event', async () => {
+    it('resumes the same episode while stopping its previous tab controller', async () => {
         const result = requestStart(oldSession.episodeId);
         await jest.advanceTimersByTimeAsync(2000);
         expect(await result).toMatchObject({ started: true });
         expect(finishCapture).not.toHaveBeenCalled();
-        expect(sendMessage).toHaveBeenCalledTimes(1); // only the ownership ping
+        expect(sendMessage).toHaveBeenCalledWith(
+            7,
+            expect.objectContaining({
+                message: expect.objectContaining({ command: 'savi-capture-ended', expired: false }),
+            })
+        );
+    });
+
+    it('does not send a delayed ended event to a new recorder in the same tab with a reused src', async () => {
+        const result = requestStart('netflix:222', oldSession.tabId, oldSession.src);
+        await jest.advanceTimersByTimeAsync(2000);
+        expect(await result).toMatchObject({ started: true });
+        expect(finishCapture).toHaveBeenCalled();
+        expect(sendMessage.mock.calls.some(([, m]) => m.message.command === 'savi-capture-ended')).toBe(false);
     });
 
     it('does not replace a responsive owner', async () => {

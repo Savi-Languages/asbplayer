@@ -338,3 +338,29 @@ it('minimizes and reopens the menu without stopping an active recording', async 
     expect(close.hidden).toBe(false);
     f.p.stop();
 });
+
+it('stops the matching controller on ownership handoff without reclaiming or finishing the new owner', async () => {
+    const f = await autoFixture();
+    f.play();
+    await f.advance(12);
+    expect(f.p.isCapturing()).toBe(true);
+    f.p.captureEnded({
+        command: 'savi-capture-ended',
+        src: 'https://open.spotify.com/track/abcdefghijklmnopqrstuv',
+        ok: false,
+        expired: false,
+    });
+    expect(f.p.isCapturing()).toBe(true);
+    f.p.captureEnded({
+        command: 'savi-capture-ended',
+        src: `https://open.spotify.com/track/${id}`,
+        ok: false,
+        expired: false,
+    });
+    expect(f.p.isCapturing()).toBe(false);
+    expect(Array.from(f.root.querySelectorAll('button')).some((b) => b.textContent === 'Record audio')).toBe(true);
+    await f.advance(140);
+    expect(sent.filter((m) => m.command === 'savi-start-capture')).toHaveLength(1);
+    expect(sent.filter((m) => m.command === 'savi-stop-capture')).toHaveLength(0);
+    f.p.stop();
+});
