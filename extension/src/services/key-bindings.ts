@@ -13,6 +13,10 @@ import { ensureStoragePersisted } from '@project/common/util';
 
 type Unbinder = (() => void) | false;
 
+export function adjustedBaseSubtitleOffset(baseOffset: number, increase: boolean): number {
+    return baseOffset + (increase ? 20 : -20);
+}
+
 export default class KeyBindings {
     private _keyBinder: DefaultKeyBinder | undefined;
 
@@ -336,8 +340,7 @@ export default class KeyBindings {
                 event.preventDefault();
                 event.stopImmediatePropagation();
 
-                const currentOffset = context.subtitleController.bottomSubtitlePositionOffset;
-                const newOffset = currentOffset + (increase ? 20 : -20);
+                const newOffset = adjustedBaseSubtitleOffset(context.saviControlsClearance.baseOffsetPx, increase);
 
                 context.settings
                     .set({ subtitlePositionOffset: newOffset })

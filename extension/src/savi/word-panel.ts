@@ -5,10 +5,19 @@
 // lives HERE (behind a deliberate tap) so it can never delay or destabilize the
 // hover popup. Inline-styled + appended to document.body, like the toast/popup.
 
+import { hostOverlay } from '@/services/top-layer';
 import { SaviDictEntry, SaviKanjiFull, SaviKanjiInfo, SaviToken } from './daemon-client';
+import { headwordReading } from './headword';
 import { SaviAiUnavailable } from './messages';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
+
+// The panel's own chrome that lifting it into the top layer must not take
+// away (the popover UA reset drops both — see hostOverlay).
+const PANEL_CHROME: Partial<CSSStyleDeclaration> = {
+    maxHeight: '72vh',
+    border: '1px solid #2a313c',
+};
 
 /** What to tell the user when an AI section is empty. Each case has a different
  *  fix, and only one of them is about a provider — the old copy claimed "provider
@@ -328,6 +337,7 @@ export class SaviWordPanel {
     private _breakdownBody: HTMLDivElement | null = null; // whole-line AI breakdown
     private _explainBody: HTMLDivElement | null = null; // the rich "explain like a sensei" note
     private _kanjiBody: HTMLDivElement | null = null; // kanji section (compact → full RTK view)
+    private _inTopLayer = false; // lifted over a bare fullscreen video (SV-44)
 
     /** @param _onClose called when the user dismisses the panel (×) so the owner
      *  can resume the video it paused. */
@@ -347,10 +357,11 @@ export class SaviWordPanel {
         const head = document.createElement('div');
         Object.assign(head.style, { fontSize: '22px', fontWeight: '700', lineHeight: '1.25' });
         head.textContent = input.term;
-        if (input.token.reading && input.token.reading !== input.term) {
+        const headReading = headwordReading(input.term, input.token, input.entries);
+        if (headReading) {
             const r = document.createElement('span');
             Object.assign(r.style, { fontSize: '15px', color: '#4cc2ff', marginLeft: '10px', fontWeight: '400' });
-            r.textContent = input.token.reading;
+            r.textContent = headReading;
             head.appendChild(r);
         }
         scroll.appendChild(head);
@@ -546,9 +557,21 @@ export class SaviWordPanel {
         this._onClose?.();
     }
 
+    /** Keep the panel paintable under the current fullscreen state (SV-44):
+     *  inside the fullscreen element on streaming sites, in the top layer over
+     *  a bare fullscreen video. Runs on every show, and the hover dictionary
+     *  calls it on fullscreenchange — the panel stays up across the toggle,
+     *  since it paused the video and must remain dismissable. */
+    rehost() {
+        if (this._el) {
+            this._inTopLayer = hostOverlay(this._el, this._inTopLayer, PANEL_CHROME);
+        }
+    }
+
     destroy() {
         this._el?.remove();
         this._el = null;
+        this._inTopLayer = false;
         this._scroll = null;
         this._ctxBody = null;
         this._breakdownBody = null;
@@ -558,6 +581,7 @@ export class SaviWordPanel {
 
     private _ensure(): HTMLDivElement {
         if (this._el) {
+            this.rehost();
             return this._el;
         }
         const el = document.createElement('div');
@@ -569,17 +593,16 @@ export class SaviWordPanel {
             transform: 'translateX(-50%)',
             zIndex: '2147483647',
             width: 'min(94vw, 560px)',
-            maxHeight: '72vh',
             display: 'flex',
             flexDirection: 'column',
             padding: '14px 16px',
             borderRadius: '14px',
-            border: '1px solid #2a313c',
             background: 'rgba(20, 22, 28, 0.98)',
             color: '#fff',
             font: '400 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
             boxShadow: '0 10px 36px rgba(0, 0, 0, 0.6)',
             pointerEvents: 'auto',
+            ...PANEL_CHROME,
         });
         el.style.display = 'none'; // hidden until show() flips it to flex
 
@@ -614,9 +637,9 @@ export class SaviWordPanel {
         Object.assign(scroll.style, { overflowY: 'auto', paddingRight: '4px' });
         el.appendChild(scroll);
 
-        document.body.appendChild(el);
         this._el = el;
         this._scroll = scroll;
+        this.rehost();
         return el;
     }
 }
