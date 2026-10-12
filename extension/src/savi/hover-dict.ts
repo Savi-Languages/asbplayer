@@ -736,7 +736,7 @@ export class SaviHoverDictionary {
     }
 
     private _tokenize(text: string): SaviToken[] | Promise<SaviToken[]> {
-        return subtitleTokens.peek(LANG, text) ?? subtitleTokens.get(LANG, text).catch(() => []);
+        return subtitleTokens.peek(LANG, text) ?? subtitleTokens.get(LANG, text);
     }
 
     /** Warm at most two primary cues within five seconds of the playhead.
