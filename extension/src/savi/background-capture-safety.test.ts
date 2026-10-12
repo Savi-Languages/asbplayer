@@ -19,6 +19,7 @@ jest.mock('./daemon-client', () => ({
 }));
 let stored: any;
 let retired: any;
+let sequence: number | undefined;
 let handler: any;
 let send: jest.Mock;
 const owner = { tab: { id: 7 }, frameId: 0, documentId: 'original' };
@@ -39,12 +40,22 @@ beforeEach(() => {
     Object.defineProperty(crypto, 'randomUUID', { configurable: true, value: jest.fn(() => 'new-generation') });
     stored = oldSession();
     retired = undefined;
+    sequence = undefined;
     send = jest.fn().mockResolvedValue(undefined);
     (globalThis as any).browser = {
         tabs: { get: async () => ({ id: 7 }), query: async () => [{ id: 7 }], sendMessage: send },
         storage: {
+            local: {
+                get: async () => ({ saviPlaybackSequence: sequence }),
+                set: async (v: any) => {
+                    sequence = v.saviPlaybackSequence;
+                },
+            },
             session: {
-                get: async () => ({ saviCaptureSession: stored, saviCaptureRetirement: retired }),
+                get: async () => ({
+                    saviCaptureSession: stored,
+                    saviCaptureRetirement: retired,
+                }),
                 set: async (v: any) => {
                     if ('saviCaptureSession' in v) stored = v.saviCaptureSession;
                     if ('saviCaptureRetirement' in v) retired = v.saviCaptureRetirement;
@@ -307,4 +318,54 @@ it('honors a signed-out Stop received while a playback expiry response was in fl
         expect.objectContaining({ message: expect.objectContaining({ expired: false }) }),
         { documentId: 'original' }
     );
+});
+
+// The daemon keeps last_seq on same-capture start/re-arm. A new local owner
+// generation does not reset that audio-engine sequence.
+it('continues the daemon sequence after a same-episode document reload', async () => {
+    stored.seq = 42;
+    const reloaded = { ...owner, documentId: 'reloaded' };
+    const response = await handler._startCapture(message, reloaded);
+    expect(response.started).toBe(true);
+    await handler._playbackState({ episodeId: message.episodeId, generation: response.generation, ops: [] }, reloaded);
+    expect(postPlaybackState).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ seq: 43 }));
+});
+
+it('preserves an allocated batch while reload replaces its owner and its HTTP request is in flight', async () => {
+    stored.seq = 42;
+    let acknowledge!: (value: any) => void;
+    let reached!: () => void;
+    const sent = new Promise<void>((resolve) => {
+        reached = resolve;
+    });
+    (postPlaybackState as jest.Mock).mockImplementationOnce(() => {
+        reached();
+        return new Promise((resolve) => {
+            acknowledge = resolve;
+        });
+    });
+    const oldPlayback = handler._playbackState(
+        { episodeId: message.episodeId, generation: stored.generation, ops: [] },
+        owner
+    );
+    await sent;
+    const reloaded = { ...owner, documentId: 'reloaded' };
+    const response = await handler._startCapture(message, reloaded);
+    const newPlayback = handler._playbackState(
+        { episodeId: message.episodeId, generation: response.generation, ops: [] },
+        reloaded
+    );
+    acknowledge({ ok: true });
+    await Promise.all([oldPlayback, newPlayback]);
+    expect((postPlaybackState as jest.Mock).mock.calls.map((call) => call[1].seq)).toEqual([43, 44]);
+});
+
+it('keeps the sequence through a failed resume handshake and its retry', async () => {
+    stored.seq = 42;
+    (postSubtitles as jest.Mock).mockRejectedValueOnce(new Error('lost reply'));
+    const reloaded = { ...owner, documentId: 'reloaded' };
+    expect(await handler._startCapture(message, reloaded)).toMatchObject({ started: false });
+    const response = await handler._startCapture(message, reloaded);
+    await handler._playbackState({ episodeId: message.episodeId, generation: response.generation, ops: [] }, reloaded);
+    expect(postPlaybackState).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ seq: 43 }));
 });

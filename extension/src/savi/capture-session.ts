@@ -2,7 +2,8 @@
 // daemon records audio, so the extension's only session state is bookkeeping).
 // Lives in storage.session so it survives MV3 service-worker restarts —
 // in-memory state does not — and dies with the browser session, like a capture
-// should. Written only by the background service worker.
+// should. The sequence cursor alone is durable across browser/extension
+// reloads. Written only by the background service worker.
 //
 // One session at a time, mirroring the daemon's one-tap-per-system rule.
 // Replaces the old per-tab recording-intent marker: intent existed solely
@@ -26,7 +27,7 @@ export interface CaptureSessionRecord {
     readonly captureId: string;
     readonly episodeId: string;
     readonly title?: string;
-    /** Last playback-state batch number sent — monotonic per capture. */
+    /** Last allocated playback batch number; global monotonic cursor. */
     readonly seq: number;
     /** Explicit Stop awaiting credentials so the daemon can safely finish. */
     readonly stopRequested?: boolean;
@@ -35,6 +36,12 @@ export interface CaptureSessionRecord {
 
 const KEY = 'saviCaptureSession';
 const RETIRED_KEY = 'saviCaptureRetirement';
+// The daemon retains last_seq when capture/start resumes/re-arms the same
+// captureId. A document generation is only an extension ownership fence.
+// Keep one bounded durable high-water mark across owner retirement, failed
+// starts, MV3 worker restarts and extension/browser reloads. Ownership stays
+// in session storage. New daemon sessions accept gaps/a nonzero first seq.
+const SEQUENCE_KEY = 'saviPlaybackSequence';
 
 export const getCaptureRetirement = async (): Promise<(CaptureSessionRecord & { expired: boolean }) | undefined> =>
     (await browser.storage.session.get(RETIRED_KEY))?.[RETIRED_KEY] as
@@ -54,8 +61,26 @@ const mutate = <T>(operation: () => Promise<T>): Promise<T> => {
     mutationChain = run.catch(() => {});
     return run;
 };
+// Called only inside mutate. Existing records seed the cursor when available.
+// Read here, not from a start-handshake snapshot:
+// a concurrent playback allocation may have advanced the old owner's seq.
+const playbackSequenceFloor = async (): Promise<number> => {
+    const [current, retired, cursor] = await Promise.all([
+        getCaptureSession(),
+        getCaptureRetirement(),
+        browser.storage.local.get(SEQUENCE_KEY),
+    ]);
+    const persisted = cursor?.[SEQUENCE_KEY];
+    const sequence = typeof persisted === 'number' && Number.isSafeInteger(persisted) && persisted >= 0 ? persisted : 0;
+    return Math.max(current?.seq ?? 0, retired?.seq ?? 0, sequence);
+};
+
 export const setCaptureSession = (record: CaptureSessionRecord): Promise<void> =>
-    mutate(() => browser.storage.session.set({ [KEY]: record }));
+    mutate(async () => {
+        const seq = Math.max(record.seq, await playbackSequenceFloor());
+        await browser.storage.local.set({ [SEQUENCE_KEY]: seq });
+        await browser.storage.session.set({ [KEY]: { ...record, seq } });
+    });
 
 const retireCaptureSession = (
     expected?: CaptureSessionRecord,
@@ -78,6 +103,8 @@ const retireCaptureSession = (
         // An intervening recording replaces this slot and ends older recovery.
         // Persist the reason before removal, within the mutation chain.
         const retirement = { expired: expired && !current?.stopRequested };
+        // Retirement/Stop must not require another durable write. Allocation
+        // already reserved the cursor; the retirement record also retains seq.
         if (current) await browser.storage.session.set({ [RETIRED_KEY]: { ...current, ...retirement } });
         await browser.storage.session.remove(KEY);
         return retirement;
@@ -98,8 +125,11 @@ export const nextPlaybackSeq = (
     mutate(async () => {
         const session = await getCaptureSession();
         if (session === undefined || !owns(session)) return undefined;
-        const seq = session.seq + 1;
+        const seq = (await playbackSequenceFloor()) + 1;
         const updated = { ...session, seq };
+        // Reserve durably before exposing the allocation or dispatching HTTP.
+        // A worker killed between writes skips a number; it never reuses one.
+        await browser.storage.local.set({ [SEQUENCE_KEY]: seq });
         await browser.storage.session.set({ [KEY]: updated });
         return { session: updated, seq };
     });

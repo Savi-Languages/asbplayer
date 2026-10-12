@@ -19,11 +19,19 @@ const record = (seq = 0): CaptureSessionRecord => ({
 
 describe('capture-session', () => {
     let store: Record<string, unknown>;
+    let local: Record<string, unknown>;
 
     beforeEach(() => {
         store = {};
+        local = {};
         (globalThis as any).browser = {
             storage: {
+                local: {
+                    get: async (key: string) => (key in local ? { [key]: local[key] } : {}),
+                    set: async (items: Record<string, unknown>) => {
+                        Object.assign(local, items);
+                    },
+                },
                 session: {
                     get: async (key: string) => (key in store ? { [key]: store[key] } : {}),
                     set: async (items: Record<string, unknown>) => {
@@ -70,6 +78,83 @@ describe('capture-session', () => {
     it('cannot resurrect a cleared recording during a concurrent sequence allocation', async () => {
         await setCaptureSession(record());
         await Promise.all([nextPlaybackSeq(), clearCaptureSession(record())]);
+        expect(await getCaptureSession()).toBeUndefined();
+    });
+    it('carries the latest concurrent allocation through retirement and owner replacement', async () => {
+        await setCaptureSession(record(42));
+        const [allocated] = await Promise.all([
+            nextPlaybackSeq(),
+            clearCaptureSession(record(42)),
+            setCaptureSession({ ...record(), generation: 'reloaded' }),
+        ]);
+        expect(allocated?.seq).toBe(43);
+        expect((await nextPlaybackSeq())?.seq).toBe(44);
+    });
+    it('survives a fresh service-worker module after clearing the old owner', async () => {
+        await setCaptureSession(record(42));
+        await nextPlaybackSeq();
+        await clearCaptureSession();
+        let restarted!: typeof import('./capture-session');
+        jest.isolateModules(() => {
+            restarted = require('./capture-session');
+        });
+        await restarted.setCaptureSession({ ...record(), generation: 'reloaded' });
+        expect((await restarted.nextPlaybackSeq())?.seq).toBe(44);
+    });
+    it('uses increasing numbers even for a genuinely new daemon session, which accepts any higher positive seq', async () => {
+        await setCaptureSession(record(42));
+        await clearCaptureSession();
+        await setCaptureSession({ ...record(), captureId: 'new-capture', episodeId: 'new-episode' });
+        expect((await nextPlaybackSeq())?.seq).toBe(43);
+    });
+    it('keeps the high water mark after intervening retirement replaces the recovery slot', async () => {
+        await setCaptureSession(record(42));
+        await clearCaptureSession();
+        await setCaptureSession({ ...record(), captureId: 'other-capture' });
+        await nextPlaybackSeq();
+        await clearCaptureSession();
+        await setCaptureSession(record());
+        expect((await nextPlaybackSeq())?.seq).toBe(44);
+    });
+    it('retains the sequence when extension reload clears all session storage', async () => {
+        await setCaptureSession(record(42));
+        await nextPlaybackSeq();
+        store = {};
+        let restarted!: typeof import('./capture-session');
+        jest.isolateModules(() => {
+            restarted = require('./capture-session');
+        });
+        await restarted.setCaptureSession({ ...record(), generation: 'after-extension-reload' });
+        expect((await restarted.nextPlaybackSeq())?.seq).toBe(44);
+    });
+    it('does not allocate a usable batch if durable cursor persistence fails', async () => {
+        await setCaptureSession(record(42));
+        (globalThis as any).browser.storage.local.set = async () => {
+            throw new Error('storage unavailable');
+        };
+        await expect(nextPlaybackSeq()).rejects.toThrow('storage unavailable');
+        expect((await getCaptureSession())?.seq).toBe(42);
+    });
+    it('skips rather than reuses an allocation when the worker loses its session write', async () => {
+        await setCaptureSession(record(42));
+        const writeSession = (globalThis as any).browser.storage.session.set;
+        (globalThis as any).browser.storage.session.set = async () => {
+            throw new Error('worker interrupted');
+        };
+        await expect(nextPlaybackSeq()).rejects.toThrow('worker interrupted');
+        (globalThis as any).browser.storage.session.set = writeSession;
+        let restarted!: typeof import('./capture-session');
+        jest.isolateModules(() => {
+            restarted = require('./capture-session');
+        });
+        expect((await restarted.nextPlaybackSeq())?.seq).toBe(44);
+    });
+    it('can retire and finish an existing recording when durable storage writes fail', async () => {
+        await setCaptureSession(record(42));
+        (globalThis as any).browser.storage.local.set = async () => {
+            throw new Error('quota exceeded');
+        };
+        expect(await clearCaptureSession(record(42))).toBe(true);
         expect(await getCaptureSession()).toBeUndefined();
     });
     it('preserves a Stop queued while daemon expiry was in flight', async () => {

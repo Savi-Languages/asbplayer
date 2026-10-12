@@ -982,6 +982,8 @@ export default class SaviCommandHandler implements CommandHandler {
             captureId,
             episodeId: message.episodeId,
             title: message.title,
+            // setCaptureSession carries the persisted sequence floor forward,
+            // including same-daemon-capture resumes after owner retirement.
             seq: 0,
             audio,
         });

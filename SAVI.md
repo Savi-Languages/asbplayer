@@ -272,3 +272,21 @@ localhost. It uses the production panel with a synthetic media clock and fake
 API responses, never the personal account, database, or real audio. This fixture
 is not evidence of live Spotify capture. Live verification needs Spotify sign-in
 and a reload of the installed extension.
+
+### Playback sequence across capture recovery
+
+The extension persists one playback sequence high-water mark in `storage.local`;
+capture ownership stays in `storage.session`. Retiring or replacing an owner
+does not reset the sequence: the daemon can resume/re-arm the same capture ID
+with its previous sequence still active. The mutation queue preserves allocations
+made during a reload handshake. Failed starts, service-worker restarts, extension
+reloads/updates and browser restarts retain the durable number. Each allocation
+is persisted before its HTTP request; interruption between storage writes can
+skip a number but cannot reuse one. A genuinely new daemon capture accepts a
+higher first sequence, so no API change or daemon-side reset is needed.
+
+This does not coordinate separate extension profiles/IDs or recover a sequence
+after extension removal/data clearing. On the first upgrade from a build without
+a durable cursor, finish active recording before reloading the extension: the
+browser clears the old session bookkeeping on update, so the new build cannot
+reconstruct a sequence that was already lost.
