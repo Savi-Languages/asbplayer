@@ -820,6 +820,21 @@ export default class SaviCommandHandler implements CommandHandler {
                     // daemon may have finished it already. The SAME episode needs
                     // nothing — the start below resumes that session.
                     void finishCapture(config, existing.captureId).catch(() => {});
+                    // A frozen tab can still have a live controller. Clear its
+                    // recording state when it thaws, without an idle restart
+                    // competing with the new owner. Neither message delivery
+                    // nor the daemon finish may block the new capture.
+                    const ended: SaviCommand<SaviCaptureEndedToVideoMessage> = {
+                        sender: 'savi-extension-to-video',
+                        message: {
+                            command: 'savi-capture-ended',
+                            src: existing.src,
+                            ok: false,
+                            expired: false,
+                            errorMessage: 'Recording moved to another episode.',
+                        },
+                    };
+                    void browser.tabs.sendMessage(existing.tabId, ended).catch(() => {});
                 }
             } else {
                 // One session at a time (the daemon has one tap). Say WHERE it
