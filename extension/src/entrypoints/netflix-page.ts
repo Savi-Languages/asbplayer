@@ -1,5 +1,6 @@
 import { VideoData, VideoDataSubtitleTrack } from '@project/common';
 import { poll, trackFromDef } from '@/pages/util';
+import { subtitleSourceMatchesUrl } from '@/savi/subtitle-source';
 
 declare const netflix: any | undefined;
 
@@ -224,7 +225,7 @@ export default defineUnlistedScript(() => {
             request.np !== undefined &&
             player() === request.np &&
             request.np.getMovieId() === request.titleId &&
-            window.location.href === request.sourceUrl &&
+            subtitleSourceMatchesUrl(request.sourceUrl, window.location.href) &&
             (request.expectedEpisodeId === undefined || request.expectedEpisodeId === `netflix:${request.titleId}`);
         const emptyResponse = (request: RequestContext): VideoData => ({
             requestId: request.requestId,

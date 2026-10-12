@@ -37,6 +37,7 @@ import { titlesOverlap } from '@/savi/subtitle-relevance';
 import { mutedEpisodes } from '@/savi/muted-episodes';
 import { mutedSites, siteKeyForUrl } from '@/savi/muted-sites';
 import { deriveEpisodeId } from '@/savi/episode';
+import { subtitleSourceMatchesUrl } from '@/savi/subtitle-source';
 import { displayNameFor, localVideoName, videoFilenameFromUrl, type ParsedVideoName } from '@/savi/local-video';
 import { getCachedRoamingSettings, SaviRoamingSettings } from '@/savi/cloud-settings';
 import {
@@ -111,6 +112,8 @@ const fetchDataForLanguageOnDemand = (language: string, episodeId?: string): Pro
         document.dispatchEvent(new CustomEvent('asbplayer-get-synced-language-data', { detail: payload }));
     });
 };
+
+class StaleSubtitleResponse extends Error {}
 
 const globalStateProvider = new ExtensionGlobalStateProvider();
 
@@ -501,7 +504,7 @@ export default class VideoDataSyncController {
         if (data.requestId !== undefined && data.requestId !== this._syncedDataRequestId) {
             return;
         }
-        if (data.stale || (data.sourceUrl !== undefined && data.sourceUrl !== window.location.href)) {
+        if (data.stale || !subtitleSourceMatchesUrl(data.sourceUrl, window.location.href)) {
             console.info('[savi subtitle sync] discarding response after Netflix page/player changed');
             this._scheduleEpisodeSyncRetry();
             return;
@@ -1146,15 +1149,20 @@ export default class VideoDataSyncController {
                     localFile,
                     sourceEpisodeId,
                     sourceUrl
-                );
+                ).catch(async (error) => {
+                    if (i === 0 || error instanceof StaleSubtitleResponse) throw error;
+                    console.warn('[savi subtitle sync] optional subtitle track failed', (error as Error).message);
+                    return undefined;
+                });
                 if (subtitleFiles === undefined) {
-                    return false;
+                    if (i === 0) return false;
+                    continue;
                 }
                 subtitles.push(...subtitleFiles);
             }
 
             if (
-                (sourceUrl !== undefined && sourceUrl !== window.location.href) ||
+                !subtitleSourceMatchesUrl(sourceUrl, window.location.href) ||
                 (sourceRequestId !== undefined && sourceRequestId !== this._syncedDataRequestId)
             ) {
                 console.info(
@@ -1171,6 +1179,7 @@ export default class VideoDataSyncController {
             );
             return true;
         } catch (error) {
+            if (error instanceof StaleSubtitleResponse) return false;
             if (typeof (error as Error).message !== 'undefined') {
                 await this._reportError(`Data Sync failed: ${(error as Error).message}`);
             }
@@ -1196,15 +1205,20 @@ export default class VideoDataSyncController {
                     localFile,
                     sourceEpisodeId,
                     sourceUrl
-                );
+                ).catch(async (error) => {
+                    if (i === 0 || error instanceof StaleSubtitleResponse) throw error;
+                    console.warn('[savi subtitle sync] optional subtitle track failed', (error as Error).message);
+                    return undefined;
+                });
                 if (subtitleFiles === undefined) {
-                    return false;
+                    if (i === 0) return false;
+                    continue;
                 }
                 subtitles.push(...subtitleFiles);
             }
 
             if (
-                (sourceUrl !== undefined && sourceUrl !== window.location.href) ||
+                !subtitleSourceMatchesUrl(sourceUrl, window.location.href) ||
                 (sourceRequestId !== undefined && sourceRequestId !== this._syncedDataRequestId)
             ) {
                 console.info(
@@ -1221,6 +1235,7 @@ export default class VideoDataSyncController {
             );
             return true;
         } catch (error) {
+            if (error instanceof StaleSubtitleResponse) return false;
             if (typeof (error as Error).message !== 'undefined') {
                 await this._reportError(`Data Sync failed: ${(error as Error).message}`);
             }
@@ -1261,8 +1276,7 @@ export default class VideoDataSyncController {
 
         if (url === 'lazy') {
             if (language === undefined) {
-                await this._reportError('Unable to determine language');
-                return undefined;
+                throw new Error('Unable to determine language');
             }
 
             const data = await fetchDataForLanguageOnDemand(language, sourceEpisodeId);
@@ -1270,36 +1284,32 @@ export default class VideoDataSyncController {
             if (
                 data.stale ||
                 !videoDataMatchesEpisode(data.episodeId, sourceEpisodeId) ||
-                (data.sourceUrl !== undefined && data.sourceUrl !== window.location.href) ||
-                (sourceUrl !== undefined && sourceUrl !== window.location.href)
+                !subtitleSourceMatchesUrl(data.sourceUrl, window.location.href) ||
+                !subtitleSourceMatchesUrl(sourceUrl, window.location.href)
             ) {
                 console.info('[savi subtitle sync] discarding stale lazy subtitle response');
-                return undefined;
+                throw new StaleSubtitleResponse();
             }
 
             if (data.error) {
-                await this._reportError(data.error);
-                return undefined;
+                throw new Error(data.error);
             }
 
             const lazilyFetchedUrl = data.subtitles?.find((t) => t.language === language)?.url;
 
             if (lazilyFetchedUrl === undefined) {
-                await this._reportError('Failed to fetch subtitles for specified language');
-                return undefined;
+                throw new Error('Failed to fetch subtitles for specified language');
             }
 
             url = lazilyFetchedUrl;
         }
 
         if (typeof url === 'string') {
-            const response = await fetch(url)
-                .catch((error) => this._reportError(error.message))
-                .finally(() => {
-                    if (localFile) {
-                        URL.revokeObjectURL(url);
-                    }
-                });
+            const response = await fetch(url).finally(() => {
+                if (localFile) {
+                    URL.revokeObjectURL(url);
+                }
+            });
 
             if (!response) {
                 return undefined;

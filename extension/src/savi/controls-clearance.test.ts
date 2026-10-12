@@ -1,3 +1,4 @@
+import { adjustedBaseSubtitleOffset } from '../services/key-bindings';
 import {
     ClearanceStore,
     MeasuredLifts,
@@ -169,6 +170,19 @@ describe('SaviControlsClearance — the subtitles rest above the control strip a
         start();
         await tick();
         expect(offset).toBe(170); // 17% of the player — not the 75px that sits on the progress bar
+    });
+
+    it('moves upward on the first nudge even when the saved offset is below automatic clearance', async () => {
+        const controller = start();
+        await tick();
+        const before = offset;
+        controller.baseOffsetPx = adjustedBaseSubtitleOffset(
+            controller.baseOffsetPx,
+            true,
+            controller.effectiveOffsetPx()
+        );
+        await tick();
+        expect(offset).toBe(before + 20);
     });
 
     it('does not move when the controls come and go', async () => {

@@ -1,3 +1,4 @@
+/** @jest-environment-options {"url":"https://www.netflix.com/watch/111?trackId=old"} */
 /** Exercise the real injected Netflix script with a fake player API. */
 let runScript: () => void;
 (globalThis as any).defineUnlistedScript = (fn: () => void) => {
@@ -130,6 +131,29 @@ describe('Netflix page response identity', () => {
         expect(response).toHaveBeenCalledWith(
             expect.objectContaining({ requestId: 'old', stale: true, subtitles: [] })
         );
+    });
+
+    it('accepts a tracking-query change while the same player metadata loads', async () => {
+        const originalUrl = window.location.href;
+        const response = jest.fn();
+        document.addEventListener('asbplayer-synced-data', (e) => response((e as CustomEvent).detail));
+        metadataReady = false;
+        request('asbplayer-get-synced-data', { requestId: 'tracking-query' });
+        window.history.replaceState({}, '', '/watch/111?trackId=new');
+        metadataReady = true;
+        try {
+            await jest.advanceTimersByTimeAsync(1000);
+            expect(response).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    requestId: 'tracking-query',
+                    episodeId: 'netflix:playable-999',
+                    basename: 'Show',
+                })
+            );
+            expect(response.mock.calls[0][0].stale).not.toBe(true);
+        } finally {
+            window.history.replaceState({}, '', originalUrl);
+        }
     });
 
     it('rejects a lazy request for a different player before changing its track', async () => {
