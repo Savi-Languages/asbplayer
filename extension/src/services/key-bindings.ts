@@ -14,7 +14,11 @@ import { ensureStoragePersisted } from '@project/common/util';
 type Unbinder = (() => void) | false;
 
 export function adjustedBaseSubtitleOffset(baseOffset: number, increase: boolean, visibleOffset = baseOffset): number {
-    return increase ? Math.max(baseOffset, visibleOffset) + 20 : baseOffset - 20;
+    const base = Math.max(0, baseOffset);
+    if (increase) return Math.max(base, visibleOffset) + 20;
+    // Below the controls floor, repeated Down presses must not silently ruin
+    // the global preference used by sites without automatic clearance.
+    return visibleOffset > base ? base : Math.max(0, base - 20);
 }
 
 export default class KeyBindings {
@@ -345,6 +349,8 @@ export default class KeyBindings {
                     increase,
                     context.saviControlsClearance.effectiveOffsetPx()
                 );
+
+                if (newOffset === context.saviControlsClearance.baseOffsetPx) return;
 
                 context.settings
                     .set({ subtitlePositionOffset: newOffset })

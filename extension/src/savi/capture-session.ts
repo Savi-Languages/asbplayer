@@ -19,6 +19,9 @@ export interface SaviCaptureAudio {
 export interface CaptureSessionRecord {
     readonly tabId: number;
     readonly src: string;
+    /** Browser-supplied owner identity; optional for older sessions/browsers. */
+    readonly documentId?: string;
+    readonly frameId?: number;
     readonly captureId: string;
     readonly episodeId: string;
     readonly title?: string;

@@ -111,7 +111,7 @@ import { captureVisibleTab } from '@/services/capture-visible-tab';
 import { OpenSubtitlesClient } from '@/services/subtitle-sources';
 import { getCachedRoamingSettings, loadRoamingSettings, putRoamingSetting } from './cloud-settings';
 import { mutedSites, resetMutedSitesMemo } from './muted-sites';
-import { isStaleCaptureSession, ownerIsCapturing } from './capture-staleness';
+import { isStaleCaptureSession } from './capture-staleness';
 
 export default class SaviCommandHandler implements CommandHandler {
     private readonly _settings: SettingsProvider;
@@ -853,7 +853,20 @@ export default class SaviCommandHandler implements CommandHandler {
         }
     }
 
-    private async _startCapture(
+    private _captureStartChain: Promise<unknown> = Promise.resolve();
+
+    private _startCapture(
+        message: SaviStartCaptureMessage,
+        sender: Browser.runtime.MessageSender
+    ): Promise<SaviStartCaptureResponse> {
+        // Reserve ownership in order, including the daemon start/subtitle
+        // handshake. Two callers cannot both observe an empty session.
+        const run = this._captureStartChain.then(() => this._startCaptureOnce(message, sender));
+        this._captureStartChain = run.catch(() => {});
+        return run;
+    }
+
+    private async _startCaptureOnce(
         message: SaviStartCaptureMessage,
         sender: Browser.runtime.MessageSender
     ): Promise<SaviStartCaptureResponse> {
@@ -876,17 +889,23 @@ export default class SaviCommandHandler implements CommandHandler {
         const existing = await getCaptureSession();
 
         if (existing !== undefined) {
-            if (await isStaleCaptureSession(existing, message.episodeId, tabId, config)) {
-                await clearCaptureSession();
-
+            if (await isStaleCaptureSession(existing, message.episodeId, tabId, config, sender)) {
                 if (existing.episodeId !== message.episodeId) {
-                    // Nobody is feeding it and this start will not resume it, so
-                    // finish it now rather than leave it open on the daemon (and
-                    // on its one tap) until the orphan sweep. Best-effort: the
-                    // daemon may have finished it already. The SAME episode needs
-                    // nothing — the start below resumes that session.
-                    void finishCapture(config, existing.captureId).catch(() => {});
+                    const active = await captureState(config);
+                    if (active === undefined || active.includes(existing.episodeId)) {
+                        // Save and notify the confirmed old owner before handing
+                        // the daemon's one capture slot to a new episode.
+                        if (!(await this._finishAndNotify(config, existing))) {
+                            return {
+                                started: false,
+                                errorCode: 'other',
+                                errorMessage:
+                                    'Could not finish the previous recording. Retry after the daemon reconnects.',
+                            };
+                        }
+                    }
                 }
+                await clearCaptureSession();
             } else {
                 // One session at a time (the daemon has one tap). Say WHERE it
                 // is: the bare message left no way to find the capture to stop.
@@ -947,6 +966,8 @@ export default class SaviCommandHandler implements CommandHandler {
         await setCaptureSession({
             tabId,
             src: message.src,
+            documentId: sender.documentId,
+            frameId: sender.frameId,
             captureId,
             episodeId: message.episodeId,
             title: message.title,
@@ -985,7 +1006,7 @@ export default class SaviCommandHandler implements CommandHandler {
         return { stopped: true };
     }
 
-    private async _finishAndNotify(config: SaviDaemonConfig, session: CaptureSessionRecord): Promise<void> {
+    private async _finishAndNotify(config: SaviDaemonConfig, session: CaptureSessionRecord): Promise<boolean> {
         let ended: SaviCaptureEndedToVideoMessage;
 
         try {
@@ -1004,7 +1025,14 @@ export default class SaviCommandHandler implements CommandHandler {
             sender: 'savi-extension-to-video',
             message: ended,
         };
-        browser.tabs.sendMessage(session.tabId, command).catch(() => {});
+        // Delivery is best-effort; an unresponsive document must not hold
+        // the capture queue after the daemon has saved the recording.
+        if (session.documentId) {
+            void browser.tabs.sendMessage(session.tabId, command, { documentId: session.documentId }).catch(() => {});
+        } else {
+            void browser.tabs.sendMessage(session.tabId, command).catch(() => {});
+        }
+        return ended.ok;
     }
 
     // Playback-state relay: per-batch seq allocated (and persisted) up front,
@@ -1112,14 +1140,8 @@ export default class SaviCommandHandler implements CommandHandler {
             }
         }
 
-        // The daemon keeps listing a capture whose page reloaded until its
-        // orphan sweep, so it alone cannot vouch for the record — the owning
-        // tab can. Report an unfed capture as not recording, but leave the
-        // record for the next start to reconcile (it resumes or finishes it).
-        if (!(await ownerIsCapturing(session.tabId))) {
-            return { active: false };
-        }
-
+        // A silent owner can be frozen or still starting. Keep its recording
+        // visible; a new document's Start can recover a confirmed reload.
         return { active: true, episodeId: session.episodeId, title: session.title, tabId: session.tabId };
     }
 

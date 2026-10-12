@@ -198,7 +198,7 @@ describe('SaviControlsClearance — the subtitles rest above the control strip a
             );
             await tick();
         }
-        expect(controller.baseOffsetPx).toBe(base - 40);
+        expect(controller.baseOffsetPx).toBe(base);
         expect(offset).toBe(before);
     });
 
@@ -318,5 +318,17 @@ describe('SaviControlsClearance — the subtitles rest above the control strip a
         await tick();
         c.stop();
         expect(c.effectiveOffsetPx()).toBe(75);
+    });
+});
+
+describe('global subtitle position lower bound', () => {
+    it('never saves negative offsets after repeated downward nudges on sites without a floor', () => {
+        let base = 75;
+        for (let i = 0; i < 20; i++) base = adjustedBaseSubtitleOffset(base, false);
+        expect(base).toBe(0);
+    });
+    it('repairs a pre-existing negative preference on the next nudge', () => {
+        expect(adjustedBaseSubtitleOffset(-45, false, 170)).toBe(0);
+        expect(adjustedBaseSubtitleOffset(-45, true, 170)).toBe(190);
     });
 });
