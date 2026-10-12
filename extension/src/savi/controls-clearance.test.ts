@@ -185,6 +185,23 @@ describe('SaviControlsClearance — the subtitles rest above the control strip a
         expect(offset).toBe(before + 20);
     });
 
+    it('does not raise the saved preference when moving down below automatic clearance', async () => {
+        const controller = start();
+        await tick();
+        const before = offset;
+        const base = controller.baseOffsetPx;
+        for (let i = 0; i < 2; i++) {
+            controller.baseOffsetPx = adjustedBaseSubtitleOffset(
+                controller.baseOffsetPx,
+                false,
+                controller.effectiveOffsetPx()
+            );
+            await tick();
+        }
+        expect(controller.baseOffsetPx).toBe(base - 40);
+        expect(offset).toBe(before);
+    });
+
     it('does not move when the controls come and go', async () => {
         // The regression: hovering a word brought the controls up and the text
         // jumped out from under the cursor, then jumped back when they hid.

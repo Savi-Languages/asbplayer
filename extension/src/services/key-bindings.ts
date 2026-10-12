@@ -14,7 +14,7 @@ import { ensureStoragePersisted } from '@project/common/util';
 type Unbinder = (() => void) | false;
 
 export function adjustedBaseSubtitleOffset(baseOffset: number, increase: boolean, visibleOffset = baseOffset): number {
-    return Math.max(baseOffset, visibleOffset) + (increase ? 20 : -20);
+    return increase ? Math.max(baseOffset, visibleOffset) + 20 : baseOffset - 20;
 }
 
 export default class KeyBindings {

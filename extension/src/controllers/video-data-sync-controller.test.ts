@@ -468,6 +468,29 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
             }
         );
 
+        it.each(['_syncData', '_syncDataArray'])(
+            'reports failure of the first real track after an empty slot in %s',
+            async (method) => {
+                controller._reportError = jest.fn().mockResolvedValue(undefined);
+                const empty = { ...track('0', '-', 'None'), name: 'None', url: '-' };
+                const primary = { ...track('1', 'ja', 'Japanese'), name: 'Japanese', url: 'lazy' };
+                const listener = (e: Event) =>
+                    document.dispatchEvent(
+                        new CustomEvent('asbplayer-synced-language-data', {
+                            detail: { requestId: (e as CustomEvent).detail.requestId, error: 'Track unavailable' },
+                        })
+                    );
+                document.addEventListener('asbplayer-get-synced-language-data', listener);
+                try {
+                    expect(await controller[method]([empty, primary, empty])).toBe(false);
+                    expect(loadSubtitles).not.toHaveBeenCalled();
+                    expect(controller._reportError).toHaveBeenCalledWith(expect.stringContaining('Track unavailable'));
+                } finally {
+                    document.removeEventListener('asbplayer-get-synced-language-data', listener);
+                }
+            }
+        );
+
         it('does not replace a failed primary track with the native track', async () => {
             controller._subtitlesForUrl = jest
                 .fn()

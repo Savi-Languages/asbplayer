@@ -1134,6 +1134,7 @@ export default class VideoDataSyncController {
     private async _syncData(data: VideoDataSubtitleTrack[], language?: string) {
         try {
             let subtitles: SerializedSubtitleFile[] = [];
+            let realTrackLoaded = false;
             const sourceBasename = this._syncedData?.basename;
             const sourceEpisodeId = this._syncedData?.episodeId;
             const sourceUrl = this._syncedData?.sourceUrl;
@@ -1150,15 +1151,16 @@ export default class VideoDataSyncController {
                     sourceEpisodeId,
                     sourceUrl
                 ).catch(async (error) => {
-                    if (i === 0 || error instanceof StaleSubtitleResponse) throw error;
+                    if (!realTrackLoaded || error instanceof StaleSubtitleResponse) throw error;
                     console.warn('[savi subtitle sync] optional subtitle track failed', (error as Error).message);
                     return undefined;
                 });
                 if (subtitleFiles === undefined) {
-                    if (i === 0) return false;
+                    if (!realTrackLoaded) return false;
                     continue;
                 }
                 subtitles.push(...subtitleFiles);
+                if (url !== '-' && subtitleFiles.length > 0) realTrackLoaded = true;
             }
 
             if (
@@ -1191,6 +1193,7 @@ export default class VideoDataSyncController {
     private async _syncDataArray(data: ConfirmedVideoDataSubtitleTrack[], syncWithAsbplayerId?: string) {
         try {
             let subtitles: SerializedSubtitleFile[] = [];
+            let realTrackLoaded = false;
             const sourceEpisodeId = this._syncedData?.episodeId;
             const sourceUrl = this._syncedData?.sourceUrl;
             const sourceRequestId = this._syncedData?.requestId;
@@ -1206,15 +1209,16 @@ export default class VideoDataSyncController {
                     sourceEpisodeId,
                     sourceUrl
                 ).catch(async (error) => {
-                    if (i === 0 || error instanceof StaleSubtitleResponse) throw error;
+                    if (!realTrackLoaded || error instanceof StaleSubtitleResponse) throw error;
                     console.warn('[savi subtitle sync] optional subtitle track failed', (error as Error).message);
                     return undefined;
                 });
                 if (subtitleFiles === undefined) {
-                    if (i === 0) return false;
+                    if (!realTrackLoaded) return false;
                     continue;
                 }
                 subtitles.push(...subtitleFiles);
+                if (url !== '-' && subtitleFiles.length > 0) realTrackLoaded = true;
             }
 
             if (
