@@ -47,11 +47,14 @@ export interface SaviStartCaptureMessage {
 
 export interface SaviStopCaptureMessage {
     readonly command: 'savi-stop-capture';
+    readonly episodeId?: string;
+    readonly generation?: string;
 }
 
 export interface SaviStartCaptureResponse {
     readonly started: boolean;
     readonly captureId?: string;
+    readonly generation?: string;
     /** The daemon's audio report (SV-18): whether ITS tap is recording for
      *  this session. `legacy` means an old daemon that ignored the field. */
     readonly audio?: SaviCaptureAudio;
@@ -75,11 +78,13 @@ export interface SaviStopCaptureResponse {
 // are low-frequency, so waking a sleeping service worker per batch is fine.
 export interface SaviPlaybackStateMessage {
     readonly command: 'savi-playback-state';
+    readonly generation?: string;
     readonly episodeId?: string;
     readonly ops: SaviSegmentOp[];
 }
 
 export interface SaviPlaybackStateResponse {
+    readonly notOwner?: boolean;
     readonly ok: boolean;
     /** The daemon's current audio state for the session ('recording' | 'idle'
      *  | 'off'), when known. */
@@ -577,6 +582,8 @@ export interface SaviNotifyToVideoMessage {
 
 export interface SaviCaptureEndedToVideoMessage {
     readonly command: 'savi-capture-ended';
+    readonly generation?: string;
+    readonly reason?: 'ownership-transferred';
     readonly src: string;
     readonly ok: boolean;
     readonly info?: CaptureFinishInfo;
@@ -590,18 +597,6 @@ export interface SaviCaptureEndedToVideoMessage {
 
 export interface SaviRequestStartToVideoMessage {
     readonly command: 'savi-request-start';
-}
-
-/** "Is anyone in this tab still feeding a capture?" — how the background tells
- *  a live session record from one orphaned by a page reload (see
- *  capture-staleness.ts). Broadcast to every frame; ONLY a controller that is
- *  capturing answers, so silence means the record has no owner. */
-export interface SaviCapturePingToVideoMessage {
-    readonly command: 'savi-capture-ping';
-}
-
-export interface SaviCapturePingResponse {
-    readonly capturing: true;
 }
 
 export interface SaviCommand<M> {

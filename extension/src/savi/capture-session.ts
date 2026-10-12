@@ -22,6 +22,7 @@ export interface CaptureSessionRecord {
     /** Browser-supplied owner identity; optional for older sessions/browsers. */
     readonly documentId?: string;
     readonly frameId?: number;
+    readonly generation?: string;
     readonly captureId: string;
     readonly episodeId: string;
     readonly title?: string;

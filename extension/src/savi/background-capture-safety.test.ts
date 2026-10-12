@@ -22,6 +22,7 @@ let send: jest.Mock;
 const owner = { tab: { id: 7 }, frameId: 0, documentId: 'original' };
 const message = { episodeId: 'episode-a', src: 'video', subtitles: 'test', subtitleFormat: 'srt' };
 const oldSession = () => ({
+    generation: 'original-generation',
     tabId: 7,
     frameId: 0,
     documentId: 'original',
@@ -33,6 +34,7 @@ const oldSession = () => ({
 });
 beforeEach(() => {
     jest.clearAllMocks();
+    Object.defineProperty(crypto, 'randomUUID', { configurable: true, value: jest.fn(() => 'new-generation') });
     stored = oldSession();
     send = jest.fn().mockResolvedValue(undefined);
     (globalThis as any).browser = {
@@ -118,4 +120,54 @@ it('does not wait for a notification reply after the old recording was saved', a
         await handler._startCapture({ ...message, episodeId: 'episode-b' }, { ...owner, documentId: 'reloaded' })
     ).toMatchObject({ started: true });
     expect(finishCapture).toHaveBeenCalledTimes(1);
+});
+
+it.each([undefined, 'episode-a'])(
+    'rejects a stale other-tab Stop, with or without episode id (%s)',
+    async (episode) => {
+        expect(await handler._stopCapture(episode, { ...owner, tab: { id: 9 } })).toMatchObject({ stopped: false });
+        expect(stored).toEqual(oldSession());
+        expect(finishCapture).not.toHaveBeenCalled();
+    }
+);
+it.each([{ documentId: 'old-document' }, { frameId: 3 }])(
+    'rejects same-tab Stops from a different document/frame: %j',
+    async (context) => {
+        expect(await handler._stopCapture(undefined, { ...owner, ...context })).toMatchObject({ stopped: false });
+        expect(stored).toEqual(oldSession());
+    }
+);
+it('rejects an old generation Stop even within the current document and episode', async () => {
+    expect(await handler._stopCapture('episode-a', owner, 'previous-generation')).toMatchObject({ stopped: false });
+    expect(stored).toEqual(oldSession());
+});
+it.each([owner, {}])('accepts current owner and explicit popup Stop: %j', async (sender) => {
+    expect(await handler._stopCapture(undefined, sender)).toMatchObject({ stopped: true });
+    expect(stored).toBeUndefined();
+    expect(finishCapture).toHaveBeenCalledTimes(1);
+});
+it('notifies a swept owner and rejects its later unscoped Stop without ending the new recording', async () => {
+    (captureState as jest.Mock).mockResolvedValue([]);
+    expect(
+        await handler._startCapture(
+            { ...message, episodeId: 'episode-b' },
+            { ...owner, tab: { id: 9 }, documentId: 'new-tab' }
+        )
+    ).toMatchObject({ started: true });
+    expect(send).toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({
+            message: expect.objectContaining({ reason: 'ownership-transferred', generation: 'original-generation' }),
+        }),
+        { documentId: 'original' }
+    );
+    expect(await handler._stopCapture(undefined, owner)).toMatchObject({ stopped: false });
+    expect(stored.episodeId).toBe('episode-b');
+    expect(finishCapture).not.toHaveBeenCalled();
+});
+it('returns notOwner to stale playback rather than letting it feed a newer recording', async () => {
+    expect(await handler._playbackState({ episodeId: 'episode-a', ops: [] }, { ...owner, tab: { id: 9 } })).toEqual({
+        ok: false,
+        notOwner: true,
+    });
 });

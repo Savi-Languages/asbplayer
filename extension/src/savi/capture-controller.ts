@@ -163,6 +163,8 @@ export class SaviCaptureController {
     private readonly _guard = new SaviRecordingGuard(this._recordButton);
     private _segmenter?: Segmenter;
     private _active = false;
+    private _captureEpisodeId?: string;
+    private _captureGeneration?: string;
     private _starting = false;
     private _notifiedUnsupportedRate?: number;
     /** Whether this session has already said its ops are being discarded. */
@@ -228,15 +230,6 @@ export class SaviCaptureController {
                     sendResponse({ requested: true });
                     return true;
                 }
-            } else if (request.message.command === 'savi-capture-ping') {
-                // The background asking whether its session record still has
-                // an owner (capture-staleness.ts). Answer ONLY while capturing:
-                // the ping reaches every frame, and silence from all of them is
-                // how a record orphaned by a page reload is recognised.
-                if (this._active) {
-                    sendResponse({ capturing: true });
-                    return true;
-                }
             } else if (request.message.command === 'savi-notify') {
                 // Sent to the top frame only, when a start request reached no
                 // frame that could act on it (see savi/request-start.ts).
@@ -246,6 +239,14 @@ export class SaviCaptureController {
                 // out-of-band; see SaviStopCaptureResponse), so don't gate
                 // on _active.
                 if (request.message.src === this._host.videoSrc()) {
+                    // Delayed results for a previous take must not stop a newer
+                    // recording of the same video in this document.
+                    if (
+                        this._active &&
+                        request.message.generation !== undefined &&
+                        request.message.generation !== this._captureGeneration
+                    )
+                        return;
                     if (this._active) {
                         this._deactivate();
                     }
@@ -472,6 +473,8 @@ export class SaviCaptureController {
                 const segmenter = new Segmenter();
                 this._segmenter = segmenter;
                 this._active = true;
+                this._captureEpisodeId = episodeId;
+                this._captureGeneration = response.generation;
                 this._warnedDroppedOps = false;
                 this._notifiedUnsupportedRate = undefined;
                 this._attachVideoListeners();
@@ -679,6 +682,8 @@ export class SaviCaptureController {
             }
         }
 
+        const episodeId = this._captureEpisodeId;
+        const generation = this._captureGeneration;
         const segmenter = this._segmenter;
 
         if (segmenter !== undefined) {
@@ -690,9 +695,12 @@ export class SaviCaptureController {
         try {
             const command: SaviCommand<SaviStopCaptureMessage> = {
                 sender: 'savi-video',
-                message: { command: 'savi-stop-capture' },
+                message: { command: 'savi-stop-capture', episodeId, generation },
             };
-            const response = (await browser.runtime.sendMessage(command)) as SaviStopCaptureResponse;
+            let response: SaviStopCaptureResponse | undefined;
+            await sendWithRetry(async () => {
+                response = (await browser.runtime.sendMessage(command)) as SaviStopCaptureResponse;
+            });
 
             if (response?.stopped) {
                 // The episode summary toast follows via 'savi-capture-ended'
@@ -709,6 +717,8 @@ export class SaviCaptureController {
 
     private _deactivate() {
         this._active = false;
+        this._captureEpisodeId = undefined;
+        this._captureGeneration = undefined;
         this._segmenter = undefined;
         this._detachVideoListeners();
         this._recordButton.setState('idle');
@@ -891,7 +901,13 @@ export class SaviCaptureController {
         // to be sent. Re-applying is safe: the daemon registers segments
         // idempotently by id, and a duplicate end with nothing open is a
         // no-op.
+        const generation = this._captureGeneration;
         void this._deliverOps(ops).then((response) => {
+            if (response?.notOwner && generation === this._captureGeneration) {
+                this._deactivate();
+                this._host.notify('Savi: this tab no longer owns the recording.');
+                return;
+            }
             const warning = droppedOpsWarning(response, this._warnedDroppedOps);
             if (warning !== undefined) {
                 this._warnedDroppedOps = true;
@@ -909,6 +925,8 @@ export class SaviCaptureController {
             sender: 'savi-video',
             message: {
                 command: 'savi-playback-state',
+                episodeId: this._captureEpisodeId,
+                generation: this._captureGeneration,
                 ops,
             },
         };

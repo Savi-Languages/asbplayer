@@ -100,6 +100,7 @@ export class SpotifyPanel {
     private startedAt = 0;
     private creditedId = '';
     private captureId = '';
+    private captureGeneration?: string;
     private segmenter?: Segmenter;
     private captureBusy = false;
     private captureFinishing = false;
@@ -807,6 +808,7 @@ export class SpotifyPanel {
             }
             this.autoRetryAt = 0;
             this.captureId = state.identity.id;
+            this.captureGeneration = r.generation;
             if (r.audio?.state !== 'recording') {
                 this.notice(
                     `Audio unavailable: ${r.audio?.reason ?? r.audio?.state ?? 'unknown status'}. Stop and retry after checking Savi.`
@@ -882,9 +884,10 @@ export class SpotifyPanel {
         }
         if (!ops.length) return;
         const episodeId = this.captureId;
+        const generation = this.captureGeneration;
         this.captureChain = this.captureChain
             .then(async () => {
-                const r = await this.deps.send({ command: 'savi-playback-state', episodeId, ops });
+                const r = await this.deps.send({ command: 'savi-playback-state', episodeId, generation, ops });
                 if (!r?.ok || r.audio === 'off') this.notice('Audio capture interrupted. Stop and retry in Savi.');
             })
             .catch(() => this.notice('Audio connection interrupted. Stop and retry.'));
@@ -893,13 +896,14 @@ export class SpotifyPanel {
         if (!this.captureId) return;
         this.captureFinishing = true;
         const episodeId = this.captureId;
+        const generation = this.captureGeneration;
         this.enqueueOps(this.segmenter?.pause() ?? []);
         this.segmenter = undefined;
         this.captureId = '';
         this.captureButton.textContent = 'Record audio';
         await this.captureChain;
         try {
-            const r = await this.deps.send({ command: 'savi-stop-capture', episodeId });
+            const r = await this.deps.send({ command: 'savi-stop-capture', episodeId, generation });
             this.notice(
                 r?.stopped
                     ? 'Saving recorded audio in Savi…'
@@ -911,13 +915,28 @@ export class SpotifyPanel {
             this.captureFinishing = false;
         }
     }
-    /** Whether this panel is feeding a capture right now — its answer to the
-     *  background's 'savi-capture-ping' (capture-staleness.ts). */
+    /** Whether this panel is capturing or draining its final playback batch. */
     isCapturing(): boolean {
         return this.captureFinishing || (!this.disposed && this.captureId !== '');
     }
     captureEnded(message: any) {
-        if (message.command === 'savi-capture-ended' && spotifyIdentity(message.src)) {
+        const identity = spotifyIdentity(message.src);
+        if (message.command === 'savi-capture-ended' && identity) {
+            if (
+                this.captureId === identity.id &&
+                message.reason === 'ownership-transferred' &&
+                (message.generation === undefined || message.generation === this.captureGeneration)
+            ) {
+                // Ownership moved to another tab. Drop local recording state
+                // without stopping the daemon session now owned by that tab,
+                // and do not automatically compete for it on the next tick.
+                this.deliberatelyStopped.add(this.captureId);
+                if (this.deliberatelyStopped.size > 100)
+                    this.deliberatelyStopped.delete(this.deliberatelyStopped.values().next().value!);
+                this.captureId = '';
+                this.segmenter = undefined;
+                this.captureButton.textContent = 'Record audio';
+            }
             this.notice(
                 message.ok
                     ? finishNotice(message.info ?? {}).text
