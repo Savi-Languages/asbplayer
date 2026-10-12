@@ -304,6 +304,10 @@ export class SaviCaptureController {
         // The Replay control is a playback aid, independent of capture — surface
         // it whenever there are subtitles to replay.
         this._replayButton.show();
+        // Auto-capture controls automatic starts, not access to manual
+        // recording. Show synchronously so a delayed settings read cannot
+        // recreate this control after subtitle reset or unbind.
+        this._recordButton.show();
         this._host.settings
             .get(['saviCaptureEnabled', 'saviHideNativeSubtitles', 'saviDaemonUrl'])
             .then(({ saviCaptureEnabled, saviHideNativeSubtitles }) => {
@@ -319,12 +323,7 @@ export class SaviCaptureController {
                 }
 
                 if (saviCaptureEnabled) {
-                    // Surface the Record control whenever capture is on offer,
-                    // and auto-start for the no-friction case — unless the user
-                    // deliberately stopped this episode earlier in the session.
-                    this._recordButton.show();
-                    // The speed selector rides with the Record control: both are
-                    // capture affordances, and SAVI.md documents them together.
+                    // Keep the speed selector's existing auto-capture setting.
                     // This is the ONLY speed picker — MobileVideoOverlay used to
                     // render its own identical row, which showed up as a second
                     // panel over the video whenever capture was enabled.
@@ -343,7 +342,6 @@ export class SaviCaptureController {
                         this.start(false);
                     }
                 } else {
-                    this._recordButton.hide();
                     this._speedControl.hide();
                 }
             });
