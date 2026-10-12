@@ -10,7 +10,7 @@ import { prepareTargets, queueTargetFeedback, queueTargetMines, drainTargetMines
 // module) so it survives MV3 service-worker restarts. No offscreen document
 // and no tabCapture are involved anymore.
 
-import { SettingsProvider } from '@project/common/settings';
+import { defaultSettings, SettingsProvider } from '@project/common/settings';
 import { CommandHandler } from '@/handlers/command-handler';
 import {
     SaviCaptureEndedToVideoMessage,
@@ -60,7 +60,7 @@ import {
     SaviWatchedLineResponse,
     SaviEngagementSessionMessage,
 } from './messages';
-import { currentAccessToken, daemonCredentials } from './account';
+import { currentAccessToken, daemonCredentials, storedAccount } from './account';
 import {
     DEFAULT_GLOSS_THRESHOLD,
     glossThreshold as cloudGlossThreshold,
@@ -744,6 +744,12 @@ export default class SaviCommandHandler implements CommandHandler {
         if (!config) {
             return { ok: false, reason: 'not-configured' };
         }
+        const { saviDaemonToken, saviDaemonUrl } = await this._settings.get(['saviDaemonToken', 'saviDaemonUrl']);
+        const account = (await storedAccount())?.userId;
+        const seenKey = `saviDaemonSeen:${JSON.stringify([account ?? '', config.baseUrl])}`;
+        const explicit =
+            Boolean(saviDaemonToken.trim()) ||
+            normalizedBaseUrl(saviDaemonUrl) !== normalizedBaseUrl(defaultSettings.saviDaemonUrl);
         try {
             await postWatchedLine(config, {
                 lang: message.lang,
@@ -753,11 +759,22 @@ export default class SaviCommandHandler implements CommandHandler {
                 glossedWords: message.glossedWords,
                 hoverGlossedWords: message.hoverGlossedWords,
             });
-            return { ok: true };
         } catch (e) {
             // Fire-and-forget contract: a dropped line loses one line's exposure.
-            return { ok: false, reason: isDaemonResponseError(e) ? 'rejected' : 'unreachable' };
+            if (isDaemonResponseError(e)) return { ok: false, reason: 'rejected' };
+            const seen = (await browser.storage.local.get(seenKey))[seenKey] === true;
+            return { ok: false, reason: explicit || seen ? 'unreachable' : 'not-configured' };
         }
+        // A storage failure must not turn an acknowledged heard line into a
+        // delivery failure. This flag only controls future warning visibility.
+        try {
+            if ((await storedAccount())?.userId === account) {
+                await browser.storage.local.set({ [seenKey]: true });
+            }
+        } catch {
+            /* best-effort reachability history */
+        }
+        return { ok: true };
     }
 
     private async _engagementSession(message: SaviEngagementSessionMessage): Promise<{ ok: boolean }> {

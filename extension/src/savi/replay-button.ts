@@ -4,7 +4,7 @@
 // play, mirroring asbplayer's "S" key. Because it's revealed on hover, it never
 // clutters passive watching and its per-line repositioning is never seen.
 //
-// Appended to document.body; styled by video.css (.savi-replay-button). The
+// Mounted inside the fullscreen player (or body); styled by video.css. The
 // replay logic lives in the capture controller, which owns the video + subtitle
 // list; this class only handles the button + its hover-gated placement.
 
@@ -31,12 +31,15 @@ export class SaviReplayButton {
             return;
         }
         this._active = true;
+        this._fullscreenChanged();
+        document.addEventListener('fullscreenchange', this._fullscreenChanged);
         this._mouseMove = (event) => this._handleMove(event);
         document.addEventListener('mousemove', this._mouseMove, true);
     }
 
     hide() {
         this._active = false;
+        document.removeEventListener('fullscreenchange', this._fullscreenChanged);
         if (this._mouseMove) {
             document.removeEventListener('mousemove', this._mouseMove, true);
             this._mouseMove = undefined;
@@ -49,6 +52,19 @@ export class SaviReplayButton {
         this.hide();
         this._button?.remove();
         this._button = null;
+    }
+
+    private _fullscreenChanged = () => {
+        if (this._button) {
+            (document.fullscreenElement ?? document.body).appendChild(this._button);
+        }
+        // Coordinates change with the player; reveal again on the next hover.
+        this._cancelHide();
+        this._conceal();
+    };
+
+    private _subtitleContainer() {
+        return (document.fullscreenElement ?? document).querySelector(BOTTOM_SUBTITLES);
     }
 
     private _handleMove(event: MouseEvent) {
@@ -106,7 +122,7 @@ export class SaviReplayButton {
      *  span — falling back to the whole bottom container. `null` when nothing is
      *  on screen. */
     private _lineRect(): DOMRect | null {
-        const container = document.querySelector(BOTTOM_SUBTITLES);
+        const container = this._subtitleContainer();
         if (!(container instanceof HTMLElement)) {
             return null;
         }
@@ -117,7 +133,7 @@ export class SaviReplayButton {
     }
 
     private _overSubtitle(x: number, y: number): boolean {
-        const container = document.querySelector(BOTTOM_SUBTITLES);
+        const container = this._subtitleContainer();
         if (!(container instanceof HTMLElement)) {
             return false;
         }

@@ -14,6 +14,8 @@ interface Sources {
     metadata(): { episodeId?: string; title: string; show?: string };
     send(message: unknown): Promise<any>;
     replay?(startMs: number): Promise<void>;
+    seek?(seconds: number): void;
+    play?(): void;
     onModeChange?(mode: string, hideText: boolean): void;
 }
 const normalize = (text: string) =>
@@ -32,6 +34,8 @@ export class SaviWatchInterest {
     private lang = '';
     private mode = 'watch';
     private revealed = false;
+    private toolbarEnabled = false;
+    private configRevision = 0;
     private toolbar?: HTMLElement;
     private toolbarHost?: HTMLElement;
     private revealButton?: HTMLButtonElement;
@@ -67,7 +71,7 @@ export class SaviWatchInterest {
         window.addEventListener('blur', this.clear);
         for (const event of ['play', 'seeking']) this.deps.video.addEventListener(event, this.clear);
         this.deps.video.addEventListener('pause', this.arm);
-        this.mountControls();
+        if (this.toolbarEnabled) this.mountControls();
         this.deps.video.addEventListener('timeupdate', this.updateControls);
         this.deps.video.addEventListener('seeked', this.updateControls);
         this.controlRefresh = setInterval(this.updateControls, 500);
@@ -81,16 +85,13 @@ export class SaviWatchInterest {
         this.deps.video.removeEventListener('seeked', this.updateControls);
         this.savingMode = false;
         this.savingBookmark = false;
-        this.toolbarHost?.remove();
-        this.anchor?.destroy();
-        this.anchor = undefined;
-        this.toolbarHost = undefined;
-        this.toolbar = undefined;
+        this.unmountControls();
         this.mode = 'watch';
         this.revealed = false;
         document.removeEventListener('fullscreenchange', this.fullscreen);
         this.deps.onModeChange?.('watch', false);
         this.generation++;
+        this.configRevision++;
         this.modeRevision++;
         this.enabled = false;
         this.account = '';
@@ -106,14 +107,40 @@ export class SaviWatchInterest {
         for (const event of ['play', 'seeking']) this.deps.video.removeEventListener(event, this.clear);
         this.deps.video.removeEventListener('pause', this.arm);
     }
+    /** Hiding the only Reveal control restores text without changing the saved mode. */
+    setToolbarEnabled(enabled: boolean) {
+        if (this.toolbarEnabled === enabled) return;
+        this.toolbarEnabled = enabled;
+        if (!this.bound) return;
+        if (enabled) this.mountControls();
+        else this.unmountControls();
+        this.updateMode();
+    }
+    private unmountControls() {
+        clearTimeout(this.controlTimer);
+        this.controlTimer = undefined;
+        document.removeEventListener('pointerdown', this.outsidePointer, true);
+        this.toolbarHost?.remove();
+        this.anchor?.destroy();
+        this.anchor = undefined;
+        this.toolbarHost = undefined;
+        this.toolbar = undefined;
+        this.revealButton = undefined;
+        this.detailsButton = undefined;
+        this.status = undefined;
+        this.availability = undefined;
+        this.replayButton = undefined;
+        this.bookmarkButton = undefined;
+    }
     private async config() {
         const generation = this.generation;
         // A refresh begun during a save can read the previous preference, even
         // if its response arrives after the save succeeds.
         const revision = this.savingMode ? undefined : this.modeRevision;
+        const configRevision = ++this.configRevision;
         try {
             const result = await this.deps.send({ command: 'savi-watch-interest-config' });
-            if (!this.bound || generation !== this.generation) return;
+            if (!this.bound || generation !== this.generation || configRevision !== this.configRevision) return;
             if (this.account !== result?.account) {
                 this.clear();
                 this.saved.clear();
@@ -127,7 +154,13 @@ export class SaviWatchInterest {
             this.showControls();
             if (!this.enabled) this.clear();
         } catch {
-            if (revision !== this.modeRevision) return;
+            if (
+                !this.bound ||
+                generation !== this.generation ||
+                configRevision !== this.configRevision ||
+                revision !== this.modeRevision
+            )
+                return;
             this.enabled = false;
             this.showControls();
             this.clear();
@@ -140,7 +173,7 @@ export class SaviWatchInterest {
         }
     };
     private updateMode() {
-        this.deps.onModeChange?.(this.mode, this.mode === 'listen' && !this.revealed);
+        this.deps.onModeChange?.(this.mode, this.toolbarEnabled && this.mode === 'listen' && !this.revealed);
         this.toolbar?.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) => {
             b.setAttribute('aria-pressed', String(b.dataset.mode === this.mode));
             b.style.background = b.dataset.mode === this.mode ? '#225d75' : '#20252d';
@@ -260,7 +293,10 @@ export class SaviWatchInterest {
         }
         try {
             if (this.deps.replay) await this.deps.replay(cue.start);
-            else {
+            else if (this.deps.seek && this.deps.play) {
+                this.deps.seek(cue.start / 1000);
+                this.deps.play();
+            } else {
                 this.deps.video.currentTime = cue.start / 1000;
                 await this.deps.video.play();
             }
@@ -453,8 +489,8 @@ export class SaviWatchInterest {
                 episodeId: meta.episodeId,
                 show: meta.show ?? '',
                 episodeTitle: meta.title,
-                lineStartMs: cue.start,
-                lineEndMs: cue.end,
+                lineStartMs: Math.round(cue.start),
+                lineEndMs: Math.round(cue.end),
                 lineText: cue.text,
                 kind: 'bookmark',
                 context: this.deps

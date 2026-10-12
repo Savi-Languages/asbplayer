@@ -276,6 +276,7 @@ export const defaultSettings: AsbplayerSettings = {
     },
     webSocketClientEnabled: false,
     webSocketServerUrl: 'ws://127.0.0.1:8766/ws',
+    saviStudyToolbar: false,
     saviCaptureEnabled: false,
     saviDaemonUrl: 'http://127.0.0.1:4030',
     saviDaemonToken: '',

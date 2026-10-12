@@ -423,3 +423,50 @@ describe('hover dictionary preparation', () => {
         expect(send).not.toHaveBeenCalled();
     });
 });
+
+it('clears stale hover UI when shared tokenization fails instead of rejecting the hover task', async () => {
+    const { subtitleTokens } = await import('./token-cache');
+    const tokenize = jest.spyOn(subtitleTokens, 'get').mockRejectedValue(new Error('offline'));
+    const dict = new SaviHoverDictionary();
+    const line = document.createElement('span');
+    line.textContent = '猫';
+    document.body.append(line);
+    const range = document.createRange();
+    range.setStart(line.firstChild!, 0);
+    Object.defineProperty(document, 'caretRangeFromPoint', { configurable: true, value: () => range });
+    const highlight = (dict as any)._ensureHighlight();
+    highlight.style.display = 'block';
+    const popup = (dict as any)._ensurePopup();
+    popup.style.display = 'block';
+    try {
+        await expect((dict as any)._handleHover(line, 1, 1)).resolves.toBeUndefined();
+        expect(highlight.style.display).toBe('none');
+        expect(popup.style.display).toBe('none');
+    } finally {
+        tokenize.mockRestore();
+        delete (document as any).caretRangeFromPoint;
+        dict.stop();
+        line.remove();
+    }
+});
+
+it('resumes the study panel through the guarded host playback path', () => {
+    const video = document.createElement('video');
+    video.play = jest.fn().mockResolvedValue(undefined);
+    const resume = jest.fn();
+    const dict = new (SaviHoverDictionary as any)(
+        () => video,
+        () => [],
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        resume
+    );
+    dict._pausedForPanel = true;
+    dict._panelPlayback = video;
+    dict._panelEpisode = dict._episodeId();
+    dict._onPanelClosed();
+    expect(resume).toHaveBeenCalledTimes(1);
+    expect(video.play).not.toHaveBeenCalled();
+});

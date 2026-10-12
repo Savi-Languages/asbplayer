@@ -2,13 +2,13 @@ export interface AsbplayerHoverPauseState {
     overSubtitleText: boolean;
     pauseOnHoverEnabled: boolean;
     videoPaused: boolean;
-    saviGlossHoverActive: boolean;
+    saviHoverPauseActive: boolean;
 }
 
 export const shouldPauseForAsbplayerHover = ({
     overSubtitleText,
     pauseOnHoverEnabled,
     videoPaused,
-    saviGlossHoverActive,
+    saviHoverPauseActive,
 }: AsbplayerHoverPauseState): boolean =>
-    overSubtitleText && pauseOnHoverEnabled && !videoPaused && !saviGlossHoverActive;
+    overSubtitleText && pauseOnHoverEnabled && !videoPaused && !saviHoverPauseActive;

@@ -28,7 +28,6 @@ import {
     SaviKanjiMessage,
     SaviKanjiResponse,
     SaviTokenizeMessage,
-    SaviTokenizeResponse,
     SaviAiUnavailable,
 } from './messages';
 import { serializeToSrt, SerializableSubtitle } from './subtitle-serializer';
@@ -482,7 +481,8 @@ export class SaviHoverDictionary {
         private readonly _onReveal?: (lineText: string, word: string, gloss: string) => void,
         private readonly _onRevealEnd?: (lineText: string, word: string) => void,
         private readonly _onRetract?: (lineText: string, word: string) => void,
-        private readonly _adapter?: SaviHoverAdapter
+        private readonly _adapter?: SaviHoverAdapter,
+        private readonly _resumePlayback?: () => void
     ) {}
 
     private _episodeId() {
@@ -715,7 +715,7 @@ export class SaviHoverDictionary {
     }
 
     private _tokenize(text: string): SaviToken[] | Promise<SaviToken[]> {
-        return subtitleTokens.peek(LANG, text) ?? subtitleTokens.get(LANG, text);
+        return subtitleTokens.peek(LANG, text) ?? subtitleTokens.get(LANG, text).catch(() => []);
     }
 
     /** Warm at most two primary cues within five seconds of the playhead.
@@ -980,7 +980,8 @@ export class SaviHoverDictionary {
             this._pausedForPanel = false;
             const video = this._playback();
             if (video && video === this._panelPlayback && this._episodeId() === this._panelEpisode && video.paused) {
-                void video.play().catch(() => {});
+                if (this._resumePlayback) this._resumePlayback();
+                else void video.play().catch(() => {});
             }
             this._panelPlayback = null;
         }

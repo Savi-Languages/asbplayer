@@ -1,7 +1,7 @@
 import type { SaviToken } from './daemon-client';
 import type { SaviTokenizeResponse } from './messages';
 
-type Tokenizations = { tokens: SaviToken[]; rawTokens?: SaviToken[] };
+type Tokenizations = { tokens: SaviToken[]; rawTokens?: SaviToken[]; nextRawProbeAt?: number };
 
 /** One local tokenizer cache for hover, target decoration and heard-line mining.
  *  Language belongs in the key. Failed/offline responses never poison it. */
@@ -21,13 +21,13 @@ export class SharedTokenCache {
         const pending = this.fetch(lang, text)
             .then((value) => {
                 const result = Array.isArray(value) ? { tokens: value } : value;
-                if (
-                    [result.tokens, ...(result.rawTokens ? [result.rawTokens] : [])].some(
-                        (tokens) => tokens.map((token) => token.text).join('') !== text
-                    )
-                )
+                if (result.tokens.map((token) => token.text).join('') !== text)
                     throw new Error('Tokenizer surface mismatch');
+                // Target analysis is optional. A malformed raw token stream
+                // must not disable the existing hover dictionary.
+                if (result.rawTokens?.map((token) => token.text).join('') !== text) result.rawTokens = undefined;
                 if (this.entries.size >= this.limit) this.entries.delete(this.entries.keys().next().value!);
+                if (!result.rawTokens) result.nextRawProbeAt = Date.now() + 30_000;
                 this.entries.set(key, result);
                 return result;
             })
@@ -43,11 +43,12 @@ export class SharedTokenCache {
         return (await this.load(lang, text)).tokens;
     }
     async getRaw(lang: string, text: string): Promise<SaviToken[]> {
-        const result = await this.load(lang, text);
-        if (!result.rawTokens) {
+        let result = await this.load(lang, text);
+        if (!result.rawTokens && Date.now() >= (result.nextRawProbeAt ?? 0)) {
             this.entries.delete(JSON.stringify([lang, text]));
-            throw new Error('Update the daemon to enable target analysis');
+            result = await this.load(lang, text);
         }
+        if (!result.rawTokens) throw new Error('Update the daemon to enable target analysis');
         return result.rawTokens;
     }
 }

@@ -332,7 +332,10 @@ export default class Binding {
         });
         this.saviWatchInterest = new SaviWatchInterest({
             video,
-            replay: (startMs) => replayFrom(this.video, startMs, (seconds) => this.seek(seconds), netflix),
+            replay: (startMs) => {
+                this.saviTargetController?.skipPrewatchCard();
+                return replayFrom(this.video, startMs, (seconds) => this.seek(seconds), netflix);
+            },
             onModeChange: (mode, hideText) => {
                 this.saviTargetController?.setImmersionMode(mode);
                 this.subtitleController.immersionHideSubtitles = hideText;
@@ -365,7 +368,9 @@ export default class Binding {
             (lineText, word) => this.saviEncounterReporter.noteHoverRevealEnd(lineText, word),
             // Mining is collection, not failed recall: withdraw the reveal so
             // adding a card never lapses the card you just added.
-            (lineText, word) => this.saviEncounterReporter.noteHoverRetract(lineText, word)
+            (lineText, word) => this.saviEncounterReporter.noteHoverRetract(lineText, word),
+            undefined,
+            () => void this.play()
         );
         // Glossing (SV-12/13): supplies gloss-ruby HTML to the subtitle controller;
         // a resolved gloss asks the controller to re-render the showing lines. The
@@ -1025,7 +1030,7 @@ export default class Binding {
                     overSubtitleText: overText,
                     pauseOnHoverEnabled: this.pauseOnHoverMode !== PauseOnHoverMode.disabled,
                     videoPaused: this.video.paused,
-                    saviGlossHoverActive: this.saviGlossHover.isActive(),
+                    saviHoverPauseActive: this._saviLanguageActive && !this.subtitleController.immersionHideSubtitles,
                 })
             ) {
                 this.video.pause();
@@ -1490,6 +1495,7 @@ export default class Binding {
 
     async _refreshSettings() {
         const currentSettings = await this.settings.getAll();
+        this.saviWatchInterest.setToolbarEnabled(currentSettings.saviStudyToolbar);
         this._seekDuration = currentSettings.seekDuration;
         this._speedChangeStep = currentSettings.speedChangeStep;
         this.seekableTracks = currentSettings.seekableTracks;
@@ -1907,6 +1913,7 @@ export default class Binding {
     }
 
     async play() {
+        this.saviTargetController?.skipPrewatchCard();
         if (netflix) {
             await this._playNetflix();
             return;
