@@ -116,15 +116,20 @@ it('automatically records verified playback once, pauses segments, and respects 
     const f = await autoFixture();
     await f.advance();
     expect(sent.some((m) => m.command === 'savi-start-capture')).toBe(false);
+    expect(f.p.isCapturing()).toBe(false);
     f.play();
     await f.advance(12);
     expect(sent.filter((m) => m.command === 'savi-start-capture')).toEqual([
         expect.objectContaining({ manuallyRequested: false }),
     ]);
+    // What the background's ownership ping reads: a paused capture is still
+    // owned, a stopped one is not.
+    expect(f.p.isCapturing()).toBe(true);
     Object.defineProperty(f.media, 'paused', { value: true, writable: true });
     jest.advanceTimersByTime(250);
     await settle();
     expect(sent.filter((m) => m.command === 'savi-playback-state').at(-1)?.ops).toContainEqual({ op: 'segment-end' });
+    expect(f.p.isCapturing()).toBe(true);
     f.play();
     await f.advance(12);
     expect(sent.filter((m) => m.command === 'savi-start-capture')).toHaveLength(1);
@@ -133,6 +138,7 @@ it('automatically records verified playback once, pauses segments, and respects 
         .click();
     await f.advance(12);
     expect(sent.filter((m) => m.command === 'savi-start-capture')).toHaveLength(1);
+    expect(f.p.isCapturing()).toBe(false);
     document.querySelector('a')!.href = '/episode/abcdefghijklmnopqrstuv';
     await f.advance(1);
     f.importLines();
@@ -330,5 +336,49 @@ it('minimizes and reopens the menu without stopping an active recording', async 
     toggle.click();
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
     expect(close.hidden).toBe(false);
+    f.p.stop();
+});
+
+it('stops the matching controller on ownership handoff without reclaiming or finishing the new owner', async () => {
+    const f = await autoFixture();
+    f.play();
+    await f.advance(12);
+    expect(f.p.isCapturing()).toBe(true);
+    f.p.captureEnded({
+        command: 'savi-capture-ended',
+        src: 'https://open.spotify.com/track/abcdefghijklmnopqrstuv',
+        ok: false,
+        expired: false,
+        reason: 'ownership-transferred',
+    });
+    expect(f.p.isCapturing()).toBe(true);
+    f.p.captureEnded({
+        command: 'savi-capture-ended',
+        src: `https://open.spotify.com/track/${id}`,
+        ok: false,
+        expired: false,
+        reason: 'ownership-transferred',
+    });
+    expect(f.p.isCapturing()).toBe(false);
+    expect(Array.from(f.root.querySelectorAll('button')).some((b) => b.textContent === 'Record audio')).toBe(true);
+    await f.advance(140);
+    expect(sent.filter((m) => m.command === 'savi-start-capture')).toHaveLength(1);
+    expect(sent.filter((m) => m.command === 'savi-stop-capture')).toHaveLength(0);
+    f.p.stop();
+});
+
+it.each([true, false])('preserves a newer same-item recording when the old save result arrives (ok=%s)', async (ok) => {
+    const f = await autoFixture();
+    f.play();
+    await f.advance(12);
+    f.p.captureEnded({
+        command: 'savi-capture-ended',
+        src: `https://open.spotify.com/track/${id}`,
+        ok,
+        info: { totalLines: 1 },
+    });
+    expect(f.p.isCapturing()).toBe(true);
+    await f.advance(12);
+    expect(sent.filter((m) => m.command === 'savi-start-capture')).toHaveLength(1);
     f.p.stop();
 });

@@ -911,8 +911,25 @@ export class SpotifyPanel {
             this.captureFinishing = false;
         }
     }
+    /** Whether this panel is feeding a capture right now — its answer to the
+     *  background's 'savi-capture-ping' (capture-staleness.ts). */
+    isCapturing(): boolean {
+        return !this.disposed && this.captureId !== '';
+    }
     captureEnded(message: any) {
-        if (message.command === 'savi-capture-ended' && spotifyIdentity(message.src)) {
+        const identity = spotifyIdentity(message.src);
+        if (message.command === 'savi-capture-ended' && identity) {
+            if (this.captureId === identity.id && message.reason === 'ownership-transferred') {
+                // Ownership moved to another tab. Drop local recording state
+                // without stopping the daemon session now owned by that tab,
+                // and do not automatically compete for it on the next tick.
+                this.deliberatelyStopped.add(this.captureId);
+                if (this.deliberatelyStopped.size > 100)
+                    this.deliberatelyStopped.delete(this.deliberatelyStopped.values().next().value!);
+                this.captureId = '';
+                this.segmenter = undefined;
+                this.captureButton.textContent = 'Record audio';
+            }
             this.notice(
                 message.ok
                     ? finishNotice(message.info ?? {}).text
