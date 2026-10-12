@@ -164,8 +164,12 @@ export default defineUnlistedScript(() => {
             return [basename, false];
         }
 
-        async function determineBasenameWithRetries(titleId: string, retries: number): Promise<string> {
-            if (retries <= 0) {
+        async function determineBasenameWithRetries(
+            titleId: string,
+            retries: number,
+            stillCurrent: () => boolean
+        ): Promise<string> {
+            if (retries <= 0 || !stillCurrent()) {
                 return `${titleId}`;
             }
 
@@ -173,7 +177,7 @@ export default defineUnlistedScript(() => {
 
             if (shouldRetry) {
                 await new Promise((resolve) => setTimeout(resolve, 1000));
-                return await determineBasenameWithRetries(titleId, --retries);
+                return await determineBasenameWithRetries(titleId, --retries, stillCurrent);
             }
 
             return basename;
@@ -201,125 +205,128 @@ export default defineUnlistedScript(() => {
             });
         };
 
-        const buildResponse = async () => {
-            const response: VideoData = { error: '', basename: '', subtitles: [] };
+        // Capture both namespaces at request receipt, before queued/async work.
+        // A playable id (trailer/extra) can legitimately differ from /watch/<id>.
+        const requestContext = (e: Event) => {
+            const detail = (e as CustomEvent).detail;
             const np = player();
-            const titleId = np?.getMovieId();
+            return {
+                np,
+                titleId: np?.getMovieId(),
+                sourceUrl: window.location.href,
+                requestId: detail?.requestId as string | undefined,
+                language: detail?.language as string | undefined,
+                expectedEpisodeId: detail?.episodeId as string | undefined,
+            };
+        };
+        type RequestContext = ReturnType<typeof requestContext>;
+        const isCurrent = (request: RequestContext) =>
+            request.np !== undefined &&
+            player() === request.np &&
+            request.np.getMovieId() === request.titleId &&
+            window.location.href === request.sourceUrl &&
+            (request.expectedEpisodeId === undefined || request.expectedEpisodeId === `netflix:${request.titleId}`);
+        const emptyResponse = (request: RequestContext): VideoData => ({
+            requestId: request.requestId,
+            sourceUrl: request.sourceUrl,
+            episodeId: request.titleId ? `netflix:${request.titleId}` : undefined,
+            error: '',
+            basename: '',
+            subtitles: [],
+        });
+        const staleResponse = (request: RequestContext): VideoData => ({ ...emptyResponse(request), stale: true });
 
-            if (!np || !titleId) {
+        const buildResponse = async (request: RequestContext): Promise<VideoData> => {
+            const response = emptyResponse(request);
+            if (!request.np || !request.titleId) {
                 response.error = 'Netflix Player or Title Id not found...';
                 return response;
             }
-
-            response.basename = await determineBasenameWithRetries(titleId, 5);
+            if (!isCurrent(request)) {
+                return staleResponse(request);
+            }
+            response.basename = await determineBasenameWithRetries(request.titleId, 5, () => isCurrent(request));
+            if (!isCurrent(request)) {
+                return staleResponse(request);
+            }
             const urlsByTrackId = timedTextUrls();
-            response.subtitles = (np.getTimedTextTrackList() ?? [])
+            response.subtitles = (request.np.getTimedTextTrackList() ?? [])
                 .map((track: any) => dataForTrack(track, urlsByTrackId))
                 .filter((data: VideoDataSubtitleTrack | undefined) => data !== undefined);
-            return response;
+            return isCurrent(request) ? response : staleResponse(request);
         };
 
         document.addEventListener(
             'asbplayer-get-synced-data',
-            async () => {
-                const response: VideoData = await buildResponse();
-
-                document.dispatchEvent(
-                    new CustomEvent('asbplayer-synced-data', {
-                        detail: response,
-                    })
-                );
+            async (e) => {
+                const response = await buildResponse(requestContext(e));
+                document.dispatchEvent(new CustomEvent('asbplayer-synced-data', { detail: response }));
             },
             false
         );
 
-        const fetchDataForLanguage = async (e: Event) => {
-            const fail = (message?: string) => {
-                document.dispatchEvent(
-                    new CustomEvent('asbplayer-synced-language-data', {
-                        detail: {
-                            error: message ?? 'Failed to fetch subtitles for requested language',
-                            basename: '',
-                            subtitles: [],
-                        },
-                    })
-                );
-            };
-
-            const np = player();
-
-            if (np === undefined) {
-                fail();
+        const fetchDataForLanguage = async (request: RequestContext) => {
+            const reply = (response: VideoData) =>
+                document.dispatchEvent(new CustomEvent('asbplayer-synced-language-data', { detail: response }));
+            const fail = (message?: string) =>
+                reply({
+                    ...emptyResponse(request),
+                    error: message ?? 'Failed to fetch subtitles for requested language',
+                });
+            if (!isCurrent(request)) {
+                reply(staleResponse(request));
                 return;
             }
-
+            const np = request.np;
             const previousTrack = np.getTimedTextTrack();
             let shouldRevert = false;
-
             try {
-                const event = e as CustomEvent;
-                const language = event.detail as string;
                 const track = np
                     .getTimedTextTrackList()
-                    ?.find((track: any) => dataForTrack(track)?.language === language);
-
+                    ?.find((track: any) => dataForTrack(track)?.language === request.language);
                 if (track === undefined) {
                     fail();
                     return;
                 }
-
-                if (timedTextUrls().has(track.trackId)) {
-                    // URL is already present in player state (e.g. from a previous request)
-                    // so send the response now and early-out
-                    document.dispatchEvent(
-                        new CustomEvent('asbplayer-synced-language-data', {
-                            detail: await buildResponse(),
-                        })
-                    );
-                    return;
+                if (!timedTextUrls().has(track.trackId)) {
+                    // Only one lazy request changes Netflix's active track at a time.
+                    await np.setTimedTextTrack(track);
+                    shouldRevert = true;
+                    const succeeded = await poll(() => !isCurrent(request) || timedTextUrls().has(track.trackId));
+                    if (!isCurrent(request)) {
+                        reply(staleResponse(request));
+                        return;
+                    }
+                    if (!succeeded) {
+                        fail();
+                        return;
+                    }
                 }
-
-                // This track has no URL yet. Temporarily set it as the active text track to
-                // make Netflix fetch one.
-                await np.setTimedTextTrack(track);
-                shouldRevert = true;
-
-                // Wait for the URL to appear in player state
-                const succeeded = await poll(() => timedTextUrls().has(track.trackId));
-
-                if (!succeeded) {
-                    fail();
-                    return;
-                }
-
-                document.dispatchEvent(
-                    new CustomEvent('asbplayer-synced-language-data', {
-                        detail: await buildResponse(),
-                    })
-                );
+                reply(await buildResponse(request));
             } catch (e) {
-                fail(e instanceof Error ? e.message : String(e));
+                if (!isCurrent(request)) {
+                    reply(staleResponse(request));
+                } else {
+                    fail(e instanceof Error ? e.message : String(e));
+                }
             } finally {
-                if (shouldRevert && previousTrack !== undefined) {
+                // A stale request must never restore its old track on a new player.
+                if (shouldRevert && previousTrack !== undefined && isCurrent(request)) {
                     await np.setTimedTextTrack(previousTrack);
                 }
             }
         };
 
-        let currentFetchForLanguagePromise: Promise<void> | undefined;
-
+        let languageQueue = Promise.resolve();
         document.addEventListener(
             'asbplayer-get-synced-language-data',
-            // Fetch data for specific language, since Netflix does not provide all URLs in the initial data sync
-            async (e) => {
-                if (currentFetchForLanguagePromise === undefined) {
-                    currentFetchForLanguagePromise = fetchDataForLanguage(e);
-                } else {
-                    currentFetchForLanguagePromise.then(() => fetchDataForLanguage(e));
-                }
-
-                await currentFetchForLanguagePromise;
-                currentFetchForLanguagePromise = undefined;
+            (e) => {
+                const request = requestContext(e);
+                languageQueue = languageQueue
+                    .then(() => fetchDataForLanguage(request))
+                    .catch((error) => {
+                        console.error('[savi subtitle sync] Netflix track request failed', error);
+                    });
             },
             false
         );

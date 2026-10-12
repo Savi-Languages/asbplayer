@@ -212,6 +212,15 @@ export interface VideoData {
     basename: string;
     error?: string;
     subtitles?: VideoDataSubtitleTrack[];
+    /** Netflix player identity, compared only with another player identity.
+     * It need not equal the title id in the watch URL (e.g. trailers/extras). */
+    episodeId?: string;
+    /** Correlates Netflix page-script replies with their originating request. */
+    requestId?: string;
+    /** Page URL captured synchronously when the Netflix request arrives. */
+    sourceUrl?: string;
+    /** The player or page changed while producing this Netflix reply. */
+    stale?: boolean;
     /** BCP-47 tag of the language actually SPOKEN, when the page can tell
      *  (YouTube: the `kind:"asr"` caption track, which is derived FROM the
      *  audio). Distinct from `subtitles`, which merely lists what is on offer —
