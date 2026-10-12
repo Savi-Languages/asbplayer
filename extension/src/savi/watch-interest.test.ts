@@ -163,6 +163,20 @@ describe('study controls', () => {
         expect(button('Replay line').disabled).toBe(true);
         expect(shadow.textContent).toContain('Load subtitles');
     });
+    test('the collapsed control hides with player inactivity and returns on movement', () => {
+        const host = document.querySelector<HTMLElement>('[data-savi-immersion]')!;
+        button('−').click();
+        jest.advanceTimersByTime(3000);
+        expect(host.style.display).toBe('none');
+        document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true }));
+        expect(host.style.display).not.toBe('none');
+    });
+    test('an outside interaction collapses the menu before it can cover another popup', () => {
+        document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+        expect(button('Savi modes')).toBeDefined();
+        jest.advanceTimersByTime(3000);
+        expect((document.querySelector('[data-savi-immersion]') as HTMLElement).style.display).toBe('none');
+    });
     test('mode changes take effect immediately and cannot be undone by a stale config reply', async () => {
         let finish: (value: unknown) => void = () => {};
         send.mockImplementation((message: any) =>

@@ -28,6 +28,11 @@ describe('placeInVideo', () => {
         expect(left + speed.width / 2).not.toBe(VIEWPORT.width / 2);
     });
 
+    it('puts a top-left control inside the video without covering the playhead', () => {
+        const modes = { width: 92, height: 32 };
+        expect(placeInVideo(YOUTUBE_VIDEO, modes, 'top-left', 18, VIEWPORT)).toEqual({ left: 34, top: 86 });
+    });
+
     it('tracks a full-bleed player (fullscreen) to the viewport corner', () => {
         const full = { x: 0, y: 0, width: 1440, height: 900 };
         const { left, top } = placeInVideo(full, RECORD, 'top-right', 18, VIEWPORT);

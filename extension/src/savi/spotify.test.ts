@@ -81,6 +81,11 @@ it('parses actual VTT/SRT/LRC times and never fabricates plain-text timing', () 
     ]);
     expect(parseSpotifyText('00:00:05.000 --> 00:00:01.000\nbad')).toEqual([]);
 });
+it('decodes safe subtitle entities after stripping markup', () => {
+    expect(parseSpotifyText('Tom &amp; Hana &#x65E5;&#26412; <img src=x onerror=alert(1)>')).toEqual([
+        { text: 'Tom & Hana 日本', timing: 'untimed' },
+    ]);
+});
 it('counts real forward playback, not pause, seek, duplicate ticks, remote device or item changes', () => {
     const a = { id: 'one', positionMs: 1000, playing: true, rate: 1, local: true, at: 1000 };
     expect(playbackDelta(a, { ...a, positionMs: 2000, at: 2000 })).toBe(1000);

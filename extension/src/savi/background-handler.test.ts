@@ -26,24 +26,46 @@ jest.mock('./cloud-client', () => ({
 import SaviCommandHandler from './background-handler';
 import { warmProjections as mockWarmProjections, translate as mockTranslate } from './cloud-client';
 
-describe('English subtitle translation', () => {
+describe('native-language subtitle translation', () => {
     beforeEach(() => (mockTranslate as jest.Mock).mockReset());
-    const handler = () => new SaviCommandHandler({ get: async () => ({ saviCloudUrl: 'https://cloud.example' }) } as any);
-    it('translates the full sentence into English with neighboring context', async () => {
+    const handler = () =>
+        new SaviCommandHandler({ get: async () => ({ saviCloudUrl: 'https://cloud.example' }) } as any);
+    it('translates the full sentence into the requested native language with neighboring context', async () => {
         (mockTranslate as jest.Mock).mockResolvedValue({ text: 'It was a one-week trip.', provider: 'deepl' });
-        const result = await (handler() as any)._subtitleTranslate({ command: 'savi-subtitle-translate', text: '1週間の旅行でした。', sourceLang: 'ja', context: 'スペインに行きました。' });
-        expect(mockTranslate).toHaveBeenCalledWith('https://cloud.example', '1週間の旅行でした。', 'en', 'ja', 'スペインに行きました。');
+        const result = await (handler() as any)._subtitleTranslate({
+            command: 'savi-subtitle-translate',
+            text: '1週間の旅行でした。',
+            sourceLang: 'ja',
+            targetLang: 'de',
+            context: 'スペインに行きました。',
+        });
+        expect(mockTranslate).toHaveBeenCalledWith(
+            'https://cloud.example',
+            '1週間の旅行でした。',
+            'de',
+            'ja',
+            'スペインに行きました。'
+        );
         expect(result.text).toBe('It was a one-week trip.');
     });
     it('rejects oversized input before calling the translation provider', async () => {
-        expect(await (handler() as any)._subtitleTranslate({ text: 'a'.repeat(4001), sourceLang: 'ja' })).toEqual({});
+        expect(
+            await (handler() as any)._subtitleTranslate({ text: 'a'.repeat(4001), sourceLang: 'ja', targetLang: 'en' })
+        ).toEqual({});
         expect(mockTranslate).not.toHaveBeenCalled();
     });
     it('answers unavailable when the service fails rather than leaving the subtitle pending', async () => {
         (mockTranslate as jest.Mock).mockRejectedValue(Error('offline'));
         const reply = jest.fn();
-        handler().handle({ sender: 'savi-video', message: { command: 'savi-subtitle-translate', text: '旅行', sourceLang: 'ja' } }, {} as any, reply);
-        await new Promise(resolve => setTimeout(resolve, 0));
+        handler().handle(
+            {
+                sender: 'savi-video',
+                message: { command: 'savi-subtitle-translate', text: '旅行', sourceLang: 'ja', targetLang: 'en' },
+            },
+            {} as any,
+            reply
+        );
+        await new Promise((resolve) => setTimeout(resolve, 0));
         expect(reply).toHaveBeenCalledWith({});
     });
 });
@@ -93,16 +115,29 @@ describe('SaviCommandHandler._warmProjections', () => {
     });
 });
 
-describe('Savi screenshot tab identity',()=>{
- afterEach(()=>{delete (globalThis as any).browser;});
- it('refuses an inactive sender tab',async()=>{
-  const capture=jest.fn();(globalThis as any).browser={tabs:{get:async()=>({active:false,windowId:1}),captureVisibleTab:capture}};
-  const handler=new SaviCommandHandler({} as any);
-  expect(await (handler as any)._captureFrame({tab:{id:5}})).toEqual({});expect(capture).not.toHaveBeenCalled();
- });
- it('drops captured pixels if the active tab changed during capture',async()=>{
-  (globalThis as any).browser={tabs:{get:async()=>({active:true,windowId:1}),captureVisibleTab:async()=> 'private-other-tab',query:async()=>[{id:6}]},windows:{get:async()=>({focused:true})}};
-  const handler=new SaviCommandHandler({} as any);
-  expect(await (handler as any)._captureFrame({tab:{id:5}})).toEqual({});
- });
+describe('Savi screenshot tab identity', () => {
+    afterEach(() => {
+        delete (globalThis as any).browser;
+    });
+    it('refuses an inactive sender tab', async () => {
+        const capture = jest.fn();
+        (globalThis as any).browser = {
+            tabs: { get: async () => ({ active: false, windowId: 1 }), captureVisibleTab: capture },
+        };
+        const handler = new SaviCommandHandler({} as any);
+        expect(await (handler as any)._captureFrame({ tab: { id: 5 } })).toEqual({});
+        expect(capture).not.toHaveBeenCalled();
+    });
+    it('drops captured pixels if the active tab changed during capture', async () => {
+        (globalThis as any).browser = {
+            tabs: {
+                get: async () => ({ active: true, windowId: 1 }),
+                captureVisibleTab: async () => 'private-other-tab',
+                query: async () => [{ id: 6 }],
+            },
+            windows: { get: async () => ({ focused: true }) },
+        };
+        const handler = new SaviCommandHandler({} as any);
+        expect(await (handler as any)._captureFrame({ tab: { id: 5 } })).toEqual({});
+    });
 });

@@ -50,8 +50,7 @@ const write = async (list: string[]): Promise<void> => {
 /** The muted set, for handing to `decideLanguageGate`. */
 export const mutedEpisodes = async (): Promise<string[]> => [...(await read())];
 
-export const isEpisodeMuted = async (episodeId: string): Promise<boolean> =>
-    (await read()).includes(episodeId);
+export const isEpisodeMuted = async (episodeId: string): Promise<boolean> => (await read()).includes(episodeId);
 
 /** Mute an episode. Most-recent last; oldest dropped past MAX_MUTED. */
 export const muteEpisode = async (episodeId: string): Promise<void> => {

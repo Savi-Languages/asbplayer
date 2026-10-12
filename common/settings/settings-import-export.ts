@@ -688,6 +688,9 @@ const settingsSchema = {
         saviHoverGloss: {
             type: 'boolean',
         },
+        saviSpotifyTranslations: {
+            type: 'boolean',
+        },
         saviCloudUrl: {
             type: 'string',
         },

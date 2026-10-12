@@ -35,7 +35,7 @@ export default defineContentScript({
 
     main(ctx: ContentScriptContext) {
         // Spotify owns a separate audio/media adapter, including video podcasts.
-        if (location.hostname === "open.spotify.com") return;
+        if (location.hostname === 'open.spotify.com') return;
         const extensionSettingsStorage = new ExtensionSettingsStorage();
         const settingsProvider = new SettingsProvider(extensionSettingsStorage);
 

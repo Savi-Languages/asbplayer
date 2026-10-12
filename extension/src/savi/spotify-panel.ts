@@ -26,6 +26,8 @@ export interface SpotifyPanelDeps {
         muted: boolean;
         autoCapture?: boolean;
         pauseOnHoverMode?: PauseOnHoverMode;
+        translate?: boolean;
+        nativeLanguage?: string;
     }>;
 }
 /** One controller owns this document. Reuses Savi's account, outbox and capture API. */
@@ -111,6 +113,8 @@ export class SpotifyPanel {
     private menuButton = document.createElement('button');
     private reading?: SpotifyReadingSurface;
     private pauseOnHoverMode = PauseOnHoverMode.disabled;
+    private translate = false;
+    private nativeLanguage = '';
     constructor(private deps: SpotifyPanelDeps) {}
     start() {
         this.host.dataset.saviSpotify = 'true';
@@ -239,15 +243,18 @@ export class SpotifyPanel {
                     this.confirmedLanguages.get(this.state.identity?.id ?? '') ||
                     this.providerLanguages.get(this.state.identity?.id ?? '') ||
                     this.lang,
+                translationEnabled: this.translate,
+                nativeLanguage: this.nativeLanguage,
             }),
             (line) => {
                 if (this.selected !== line) this.select(line);
             },
-            async (text, sourceLang, context) => {
+            async (text, sourceLang, targetLang, context) => {
                 const response = await this.deps.send({
                     command: 'savi-subtitle-translate',
                     text,
                     sourceLang,
+                    targetLang,
                     context,
                 });
                 return response?.text;
@@ -318,6 +325,8 @@ export class SpotifyPanel {
             this.autoCapture =
                 settings.autoCapture === true && Boolean(this.account) && Boolean(this.lang) && !settings.muted;
             this.pauseOnHoverMode = settings.pauseOnHoverMode ?? PauseOnHoverMode.disabled;
+            this.translate = settings.translate === true;
+            this.nativeLanguage = settings.nativeLanguage?.trim() ?? '';
             this.hoverEnabled = config.enabled === true;
             this.mode = config.mode ?? 'watch';
             this.modeSelect.value = this.mode;
@@ -549,7 +558,7 @@ export class SpotifyPanel {
         this.previous = point;
         if (!next.playing && this.captureId) this.enqueueOps(this.segmenter?.pause() ?? []);
         if (next.playing || changed) this.cancelDwell();
-        this.bookmarkButton.disabled = !this.selected || !this.account;
+        this.updateBookmarkButton();
         this.replayButton.disabled = !this.selected || this.selected.timing !== 'timed' || !next.local;
         this.captureButton.disabled =
             this.captureBusy ||
@@ -651,11 +660,18 @@ export class SpotifyPanel {
         this.cancelDwell();
         this.selected = line;
         this.buttons.forEach((b, i) => b.setAttribute('aria-pressed', String(this.lines[i] === line)));
+        this.updateBookmarkButton();
         this.arm(line);
+    }
+    private updateBookmarkButton() {
+        this.bookmarkButton.disabled = !this.selected || this.selected.timing !== 'timed' || !this.account;
+        this.bookmarkButton.title =
+            this.selected?.timing === 'untimed' ? 'Saving requires timed lyrics or a timed transcript.' : '';
     }
     private arm(line: SpotifyLine) {
         this.cancelDwell();
         if (
+            line.timing !== 'timed' ||
             this.mode !== 'explore' ||
             !this.hoverEnabled ||
             !this.account ||
@@ -692,7 +708,7 @@ export class SpotifyPanel {
     private async save(kind: 'hover' | 'bookmark') {
         const line = this.selected,
             identity = this.state.identity;
-        if (!line || !identity || !this.account) return;
+        if (!line || line.timing !== 'timed' || !identity || !this.account) return;
         const account = this.account,
             key = `${account}:${identity.id}:${line.timing}:${line.start ?? line.text}`;
         if (kind === 'hover' && this.seen.has(key)) return;

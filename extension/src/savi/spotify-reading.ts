@@ -17,6 +17,8 @@ export interface SpotifyReadingSnapshot {
     pauseOnHoverMode: PauseOnHoverMode;
     account?: string;
     sourceLang?: string;
+    translationEnabled?: boolean;
+    nativeLanguage?: string;
 }
 const nativeSelector =
     '#transcript-panel[role="tabpanel"] [data-encore-id="text"][dir="auto"], [data-testid="transcript-segment"], [data-testid="transcript-line"], [data-testid="lyrics-line"]';
@@ -30,6 +32,23 @@ type Annotation = {
     english?: HTMLElement;
 };
 type Translation = { state: 'pending' | 'ready' | 'failed'; text?: string };
+type TranslateLine = (
+    text: string,
+    sourceLang: string,
+    targetLang: string,
+    context: string
+) => Promise<string | undefined>;
+const TRANSLATION_CACHE_PREFIX = 'saviSpotifyTranslation:';
+
+export function translationLanguageLabel(code: string): string {
+    const normalized = code.trim();
+    if (!normalized) return 'your language';
+    try {
+        return new Intl.DisplayNames([navigator.language || 'en'], { type: 'language' }).of(normalized) ?? normalized;
+    } catch {
+        return normalized;
+    }
+}
 
 /** Element bounds include Spotify's full-width rows and padding. Range fragments
  * follow the rendered text across wraps; separate runs exclude whitespace. */
@@ -77,7 +96,7 @@ export class SpotifyReadingSurface {
     constructor(
         private snapshot: () => SpotifyReadingSnapshot,
         private select: (cue: SpotifyLine) => void,
-        private translate?: (text: string, sourceLang: string, context: string) => Promise<string | undefined>
+        private translate?: TranslateLine
     ) {
         this.dictionary = new SaviHoverDictionary(
             () => null,
@@ -103,8 +122,7 @@ export class SpotifyReadingSurface {
         this.caption.dataset.saviSpotifyCaption = '';
         this.caption.title = 'Hover a word for its meaning. Click for details.';
         this.captionEnglish.dataset.saviSpotifyTranslation = '';
-        this.captionEnglish.lang = 'en';
-        this.captionEnglish.hidden = !this.translate;
+        this.captionEnglish.hidden = true;
         this.captions.append(this.caption, this.captionEnglish);
         this.back.type = 'button';
         this.back.dataset.saviSpotifyFollow = '';
@@ -315,12 +333,6 @@ export class SpotifyReadingSurface {
                 info.node.textContent = text;
             }
             el.dataset.saviSpotifyLine = '';
-            if (this.translate) {
-                info.english = document.createElement('span');
-                info.english.dataset.saviSpotifyTranslation = '';
-                info.english.lang = 'en';
-                el.after(info.english);
-            }
             this.annotations.set(el, info);
         }
         const overPopup = !!this.pointer && this.dictionary.isOverHoverSurface(this.pointer.x, this.pointer.y);
@@ -367,7 +379,7 @@ export class SpotifyReadingSurface {
         this.back.style.bottom = `${bottom}px`;
     }
     private scope(s: SpotifyReadingSnapshot) {
-        return JSON.stringify([s.account, s.playback.identity?.id, s.sourceLang ?? s.lang]);
+        return JSON.stringify([s.account, s.playback.identity?.id, s.sourceLang ?? s.lang, s.nativeLanguage]);
     }
     private translationKey(cue: SpotifyLine, s = this.snapshot()) {
         const index = s.lines.indexOf(cue);
@@ -379,15 +391,36 @@ export class SpotifyReadingSurface {
         return this.translations.get(this.translationKey(cue))?.text;
     }
     private updateEnglish(s: SpotifyReadingSnapshot) {
-        if (!this.translate) return;
+        const targetLang = s.nativeLanguage?.trim() ?? '';
+        const sourceLang = (s.sourceLang ?? s.lang).trim();
+        const enabled =
+            this.translate !== undefined &&
+            s.translationEnabled === true &&
+            targetLang.length > 0 &&
+            targetLang.split('-')[0] !== sourceLang.split('-')[0];
+        this.captionEnglish.hidden = !enabled;
+        for (const [element, info] of this.annotations) {
+            if (!enabled) {
+                info.english?.remove();
+                info.english = undefined;
+            } else if (!info.english) {
+                info.english = document.createElement('span');
+                info.english.dataset.saviSpotifyTranslation = '';
+                element.after(info.english);
+            }
+            if (info.english) info.english.lang = targetLang;
+        }
+        if (!enabled || !this.translate) return;
+        this.captionEnglish.lang = targetLang;
+        const language = translationLanguageLabel(targetLang);
         const label = (cue?: SpotifyLine) => {
             if (!cue) return '';
-            if (!s.account) return 'Sign in to Savi for English subtitles.';
+            if (!s.account) return `Sign in to Savi for ${language} subtitles.`;
             const result = this.translations.get(this.translationKey(cue, s));
             if (result?.text) return result.text;
             return this.translationRetryAt > Date.now()
-                ? 'English translation unavailable. Retrying shortly…'
-                : 'Translating to English…';
+                ? `${language} translation unavailable. Retrying shortly…`
+                : `Translating to ${language}…`;
         };
         const render = (element: HTMLElement, cue?: SpotifyLine) => {
             const text = label(cue);
@@ -397,15 +430,15 @@ export class SpotifyReadingSurface {
         render(this.captionEnglish, this.active);
         if (!s.account || !s.playback.identity || !s.visible || !s.lang || this.translationRetryAt > Date.now()) return;
         const current = this.active ? s.lines.indexOf(this.active) : 0;
-        const priority = [
-            this.active,
-            ...Array.from(this.annotations)
-                .filter(([el]) => this.visible(el))
-                .map(([, info]) => info.cue),
-            ...s.lines.slice(Math.max(0, current), Math.max(0, current) + 6),
-            ...Array.from(this.annotations.values()).map((info) => info.cue),
-            ...s.lines,
-        ];
+        const priority = Array.from(
+            new Set([
+                this.active,
+                ...Array.from(this.annotations)
+                    .filter(([el]) => this.visible(el))
+                    .map(([, info]) => info.cue),
+                ...s.lines.slice(Math.max(0, current), Math.max(0, current) + 4),
+            ])
+        );
         for (const cue of priority) {
             if (this.translationRunning >= 2) break;
             if (!cue) continue;
@@ -424,7 +457,8 @@ export class SpotifyReadingSurface {
             const scope = this.translationScope;
             this.translations.set(key, { state: 'pending' });
             this.translationRunning++;
-            void this.translate(cue.text, s.sourceLang ?? s.lang, context)
+            const persistentKey = TRANSLATION_CACHE_PREFIX + JSON.stringify([s.playback.identity.id, targetLang, key]);
+            void this._translateOrLoad(persistentKey, cue.text, sourceLang, targetLang, context)
                 .then((text) => {
                     if (this.disposed || scope !== this.scope(this.snapshot()) || scope !== this.translationScope)
                         return;
@@ -443,6 +477,37 @@ export class SpotifyReadingSurface {
                     if (!this.disposed) this.update();
                 });
         }
+    }
+    private async _translateOrLoad(
+        persistentKey: string,
+        text: string,
+        sourceLang: string,
+        targetLang: string,
+        context: string
+    ): Promise<string | undefined> {
+        try {
+            if (typeof browser !== 'undefined') {
+                const stored = (await browser.storage.local.get(persistentKey))[persistentKey] as
+                    | { text?: unknown }
+                    | undefined;
+                if (typeof stored?.text === 'string' && stored.text.trim() && stored.text.length <= 12000) {
+                    return stored.text;
+                }
+            }
+        } catch {
+            // Storage is an optimization; translation can continue without it.
+        }
+        const translated = await this.translate?.(text, sourceLang, targetLang, context);
+        if (typeof translated === 'string' && translated.trim() && translated.length <= 12000) {
+            try {
+                if (typeof browser !== 'undefined') {
+                    await browser.storage.local.set({ [persistentKey]: { text: translated.trim(), at: Date.now() } });
+                }
+            } catch {
+                // Keep the in-memory result when storage is unavailable/full.
+            }
+        }
+        return translated;
     }
     private followNative(cue: SpotifyLine) {
         const el = Array.from(this.annotations).find(([, info]) => (info.playbackCue ?? info.cue) === cue)?.[0];

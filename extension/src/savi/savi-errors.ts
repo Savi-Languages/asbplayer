@@ -19,10 +19,16 @@ export function friendlySaviError(raw: string | undefined): string {
     if (/url\/token not set|not[- ]configured/.test(m)) {
         return 'Set the savi daemon URL + token in settings';
     }
-    if (/deck was not found|model.*not found|collection is not open|anki.*not (running|open)|ankiconnect|:8765|econnrefused.*8765/.test(m)) {
+    if (
+        /deck was not found|model.*not found|collection is not open|anki.*not (running|open)|ankiconnect|:8765|econnrefused.*8765/.test(
+            m
+        )
+    ) {
         return 'Is Anki open? (AnkiConnect unreachable)';
     }
-    if (/failed to fetch|networkerror|load failed|unreachable|:4030|daemon: \d|connection refused|econnrefused/.test(m)) {
+    if (
+        /failed to fetch|networkerror|load failed|unreachable|:4030|daemon: \d|connection refused|econnrefused/.test(m)
+    ) {
         return "Can't reach the savi daemon — is it running?";
     }
     if (/no such file|episode.*not found|not found/.test(m)) {
