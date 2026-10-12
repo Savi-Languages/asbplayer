@@ -5,6 +5,8 @@ describe('hover holds the current subtitle at its end', () => {
     let paused: boolean;
     let enabled: boolean;
     let onPopup: boolean;
+    let resumeOnLeave: boolean;
+    let panelOpen: boolean;
     let pause: jest.Mock;
     let play: jest.Mock;
     let controller: SaviHoverPause;
@@ -26,6 +28,8 @@ describe('hover holds the current subtitle at its end', () => {
         paused = false;
         enabled = true;
         onPopup = false;
+        resumeOnLeave = true;
+        panelOpen = false;
         cues = [cue];
         video.currentTime = 2;
         Object.defineProperty(video, 'paused', { get: () => paused });
@@ -44,6 +48,8 @@ describe('hover holds the current subtitle at its end', () => {
             pause,
             play,
             overPopup: () => onPopup,
+            resumeOnLeave: () => resumeOnLeave,
+            holdOpen: () => panelOpen,
         });
         controller.start();
     });
@@ -172,5 +178,45 @@ describe('hover holds the current subtitle at its end', () => {
         controller.stop();
         advance(4);
         expect(pause).not.toHaveBeenCalled();
+    });
+    test('pause-only preference never resumes on leave', () => {
+        resumeOnLeave = false;
+        move(line);
+        advance(3.99);
+        move(document.body);
+        expect(pause).toHaveBeenCalledTimes(1);
+        expect(play).not.toHaveBeenCalled();
+    });
+    test('only claims hover events it can actually match', () => {
+        expect(controller.handlesHover(line)).toBe(true);
+        video.currentTime = 4.5; // a held subtitle after its cue deadline
+        expect(controller.handlesHover(line)).toBe(false); // caller uses immediate pause
+        video.currentTime = 2;
+        line.textContent = 'different rendered text';
+        expect(controller.handlesHover(line)).toBe(false);
+    });
+    test('leaving the window does not resume behind an open study panel', () => {
+        move(line);
+        advance(3.99);
+        panelOpen = true;
+        document.dispatchEvent(new MouseEvent('mouseout', { relatedTarget: null }));
+        jest.advanceTimersByTime(100);
+        expect(play).not.toHaveBeenCalled();
+        panelOpen = false;
+        jest.advanceTimersByTime(100);
+        expect(play).toHaveBeenCalledTimes(1);
+    });
+    test('cue HTML is parsed in an inert document', () => {
+        const create = jest.spyOn(document, 'createElement');
+        cues = [{ ...cue, text: '<img src="https://untrusted.invalid/" onerror="alert(1)">私は君を利用している' }];
+        move(line);
+        advance(3.99);
+        expect(create).toHaveBeenCalledWith('template');
+        const template = create.mock.results.find((r) => r.value instanceof HTMLTemplateElement)?.value;
+        expect(template.content.ownerDocument).not.toBe(document);
+        expect(template.content.querySelector('img')).not.toBeNull();
+        expect(document.querySelector('img')).toBeNull();
+        expect(pause).toHaveBeenCalledTimes(1);
+        create.mockRestore();
     });
 });

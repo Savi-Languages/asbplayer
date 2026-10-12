@@ -1,4 +1,5 @@
 // Background-only cloud calls and an account-bound, per-event offline outbox.
+import { SaviDaemonHttpError } from './daemon-client';
 import { currentAccessToken, storedAccount } from './account';
 import { resolveCloudBase } from './cloud-client';
 import { resolveTargetEpisode } from './episode-resolver';
@@ -330,7 +331,7 @@ export function drainTargetMines(
                         }
                     } catch (error) {
                         const status = (error as { status?: unknown })?.status;
-                        if (status === 400 || status === 409) {
+                        if (error instanceof SaviDaemonHttpError && (status === 400 || status === 409)) {
                             // The immutable heard-line request cannot become
                             // valid later, so do not poison the durable queue.
                             await browser.storage.local.remove(key);

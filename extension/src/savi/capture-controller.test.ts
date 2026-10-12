@@ -135,3 +135,17 @@ describe('droppedOpsWarning', () => {
         expect(droppedOpsWarning(undefined, false)).toBeUndefined();
     });
 });
+
+import { SaviCaptureController } from './capture-controller';
+it('inline Replay uses the guarded host replay path', async () => {
+    const video = document.createElement('video');
+    video.currentTime = 1.5;
+    video.play = jest.fn();
+    const replay = jest.fn().mockResolvedValue(undefined);
+    const controller = Object.create(SaviCaptureController.prototype) as any;
+    controller._host = { video, replay, currentSubtitles: () => [{ text: '猫', start: 1000, end: 2000, track: 0 }] };
+    await controller._replayCurrentLine();
+    expect(replay).toHaveBeenCalledWith(1000);
+    expect(video.play).not.toHaveBeenCalled();
+    expect(video.currentTime).toBe(1.5);
+});

@@ -1,9 +1,9 @@
 import { prepareTargets, drainTargetFeedback, drainTargetMines, queueTargetMines } from './target-service';
 import { storedAccount, currentAccessToken } from './account';
-import { mineHeardTarget } from './daemon-client';
+import { mineHeardTarget, SaviDaemonHttpError } from './daemon-client';
 jest.mock('./account', () => ({ storedAccount: jest.fn(), currentAccessToken: jest.fn() }));
 jest.mock('./cloud-client', () => ({ resolveCloudBase: (url: string) => url || 'https://test.invalid' }));
-jest.mock('./daemon-client', () => ({ mineHeardTarget: jest.fn() }));
+jest.mock('./daemon-client', () => ({ ...jest.requireActual('./daemon-client'), mineHeardTarget: jest.fn() }));
 let data: Record<string, any>;
 beforeEach(() => {
     jest.resetAllMocks();
@@ -145,7 +145,7 @@ it.each([400, 409])('drops a permanently invalid target mine after daemon HTTP %
         ok: true,
         json: async () => ({ account: 'alice', eligible: ['関与'], autoMineToAnki: false }),
     }));
-    (mineHeardTarget as jest.Mock).mockRejectedValue(Object.assign(new Error(`daemon ${status}`), { status }));
+    (mineHeardTarget as jest.Mock).mockRejectedValue(new SaviDaemonHttpError(status, `daemon ${status}`));
 
     await drainTargetMines('', async () => ({}) as any);
 
@@ -305,4 +305,15 @@ it('keeps Anki exports retryable after an episode and still caps the total retry
     } finally {
         clock.mockRestore();
     }
+});
+
+it.each([400, 409])('preserves a durable mine when cloud eligibility returns HTTP %s', async (status) => {
+    await queueTargetMines('', 'alice', [mine('関与')]);
+    (global as any).fetch = jest.fn(async () => ({ ok: false, status }));
+    await drainTargetMines('', async () => ({}) as any);
+    const row = Object.values(data).find((row) => row.payload);
+    expect(row).toBeDefined();
+    expect(row.attempts).toBe(1);
+    expect(row.retryAt).toBeGreaterThan(Date.now());
+    expect(mineHeardTarget).not.toHaveBeenCalled();
 });

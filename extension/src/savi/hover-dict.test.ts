@@ -652,3 +652,17 @@ describe('SaviHoverDictionary tap panel — pauses through the binding, not the 
         dict.stop();
     });
 });
+
+it('handles a tokenizer outage during a word tap without an unhandled rejection', async () => {
+    const { subtitleTokens } = await import('./token-cache');
+    const tokenize = jest.spyOn(subtitleTokens, 'get').mockRejectedValue(new Error('offline'));
+    const dict = new SaviHoverDictionary() as any;
+    const toast = jest.spyOn(dict, '_toast').mockImplementation(() => {});
+    try {
+        await expect(dict._openWordDetailAt(document.createElement('span'), '猫', 1, 1)).resolves.toBeUndefined();
+        expect(toast).toHaveBeenCalled();
+    } finally {
+        tokenize.mockRestore();
+        dict.stop();
+    }
+});

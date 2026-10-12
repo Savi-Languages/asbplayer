@@ -338,3 +338,20 @@ it('minimizes and reopens the menu without stopping an active recording', async 
     expect(close.hidden).toBe(false);
     f.p.stop();
 });
+
+it('owns its capture until finishing has drained the pending playback chain', async () => {
+    const f = await autoFixture();
+    f.play();
+    await f.advance(12);
+    expect(f.p.isCapturing()).toBe(true);
+    let release!: () => void;
+    (f.p as any).captureChain = new Promise<void>((resolve) => {
+        release = resolve;
+    });
+    const finish = (f.p as any).finishCapture();
+    expect(f.p.isCapturing()).toBe(true);
+    release();
+    await finish;
+    expect(f.p.isCapturing()).toBe(false);
+    f.p.stop();
+});

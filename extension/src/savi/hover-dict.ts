@@ -559,6 +559,10 @@ export class SaviHoverDictionary {
      *  or the transparent word→popup bridge. The binding uses this to keep the
      *  video paused while the cursor moves from a subtitle word onto the popup
      *  (so reaching "+ Add to Anki" doesn't resume playback). */
+    get panelOpen(): boolean {
+        return this._panelOpen;
+    }
+
     isOverHoverSurface(x: number, y: number): boolean {
         if (this._panelOpen) {
             return true; // study panel up — tell the binding to keep the video paused
@@ -898,11 +902,15 @@ export class SaviHoverDictionary {
     private async _openWordDetailAt(line: HTMLElement, text: string, x: number, y: number) {
         const lifecycle = this._lifecycle;
         const episode = this._episodeId();
-        const tokens = await this._tokenize(text);
-        if (lifecycle !== this._lifecycle || episode !== this._episodeId()) return;
-        const span = tokenSpanAtPoint(line, tokens, x, y, hitPadFor(line));
-        if (span) {
-            await this._openWordDetail(text, span);
+        try {
+            const tokens = await this._tokenize(text);
+            if (lifecycle !== this._lifecycle || episode !== this._episodeId()) return;
+            const span = tokenSpanAtPoint(line, tokens, x, y, hitPadFor(line));
+            if (span) await this._openWordDetail(text, span);
+        } catch {
+            if (lifecycle !== this._lifecycle || episode !== this._episodeId()) return;
+            this._clear();
+            this._toast('Dictionary unavailable. Please try again.', 'warn');
         }
     }
 

@@ -326,16 +326,14 @@ export default class Binding {
             video,
             settings: this.settings,
             currentSubtitles: () => this.subtitleController.subtitles,
+            replay: (startMs) => this._replaySaviLine(startMs),
             videoSrc: () => this._registeredVideoSrc,
             subtitleFileName: () => this.subtitleFileName(),
             notify: (locKey, replacements) => this.subtitleController.notification(locKey, replacements),
         });
         this.saviWatchInterest = new SaviWatchInterest({
             video,
-            replay: (startMs) => {
-                this.saviTargetController?.skipPrewatchCard();
-                return replayFrom(this.video, startMs, (seconds) => this.seek(seconds), netflix);
-            },
+            replay: (startMs) => this._replaySaviLine(startMs),
             onModeChange: (mode, hideText) => {
                 this.saviTargetController?.setImmersionMode(mode);
                 this.subtitleController.immersionHideSubtitles = hideText;
@@ -351,7 +349,7 @@ export default class Binding {
             subtitles: () => this.subtitleController.subtitles,
             pause: () => this.pause(),
             play: () => {
-                void this.play();
+                void this.play(true);
             },
             send: (message) => browser.runtime.sendMessage({ sender: 'savi-video', message }),
         });
@@ -372,7 +370,7 @@ export default class Binding {
             undefined, // no platform adapter — this binding IS the video
             // The tap panel pauses and resumes THROUGH the binding: on Netflix a
             // raw video.pause()/play() fights the player (see pause/_playNetflix).
-            { pause: () => this.pause(), play: () => void this.play() }
+            { pause: () => this.pause(), play: () => void this.play(true) }
         );
         // Glossing (SV-12/13): supplies gloss-ruby HTML to the subtitle controller;
         // a resolved gloss asks the controller to re-render the showing lines. The
@@ -414,8 +412,10 @@ export default class Binding {
                 this.pauseOnHoverMode !== PauseOnHoverMode.disabled &&
                 !this.subtitleController.immersionHideSubtitles,
             pause: () => this.pause(),
-            play: () => void this.play(),
+            play: () => void this.play(true),
             overPopup: (x, y) => this.saviHoverDictionary.isOverHoverSurface(x, y),
+            resumeOnLeave: () => this.pauseOnHoverMode === PauseOnHoverMode.inAndOut,
+            holdOpen: () => this.saviHoverDictionary.panelOpen,
         });
         // Encounter recording (SV-18): every primary-track line that starts
         // showing is posted to the daemon as watch-time exposure, whether or not
@@ -637,7 +637,7 @@ export default class Binding {
 
                         seeking = true;
                         this.seek(subtitle.start / 1000);
-                        await this.play();
+                        await this.play(true);
                         seeking = false;
                     } finally {
                         seeking = false;
@@ -1034,7 +1034,7 @@ export default class Binding {
                     overSubtitleText: overText,
                     pauseOnHoverEnabled: this.pauseOnHoverMode !== PauseOnHoverMode.disabled,
                     videoPaused: this.video.paused,
-                    saviHoverPauseActive: this._saviLanguageActive && !this.subtitleController.immersionHideSubtitles,
+                    saviHoverPauseActive: this.saviHoverPause.handlesHover(mouseEvent.target),
                 })
             ) {
                 this.video.pause();
@@ -1053,7 +1053,7 @@ export default class Binding {
                     const onText = e.target instanceof Element && e.target.closest('[data-track]') !== null;
                     const onHoverSurface = this.saviHoverDictionary.isOverHoverSurface(e.clientX, e.clientY);
                     if (this._shouldAutoResumeOnSubtitlesMouseOut && !onText && !onHoverSurface) {
-                        this.play();
+                        this.play(true);
                         this.pausedDueToHover = false;
                     }
                 };
@@ -1746,7 +1746,7 @@ export default class Binding {
             this.recordingMediaWithScreenshot = this.takeScreenshot;
             const start = Math.max(0, subtitle.start - this.audioPaddingStart);
             this.seek(start / 1000);
-            await this.play();
+            await this.play(true);
         }
 
         if (!text || subtitle.text.includes(text.trim())) {
@@ -1832,7 +1832,7 @@ export default class Binding {
                 this.recordingPostMineAction = postMineAction;
 
                 if (this.video.paused) {
-                    await this.play();
+                    await this.play(true);
                 }
             }
 
@@ -1886,7 +1886,7 @@ export default class Binding {
         this.recordingState = RecordingState.requested;
         this.recordingMediaStartedTimestamp = this.video.currentTime * 1000;
         this.seek(Math.max(0, start - audioPaddingStart) / 1000);
-        await this.play();
+        await this.play(true);
 
         const command: VideoToExtensionCommand<RerecordMediaMessage> = {
             sender: 'asbplayer-video',
@@ -1918,8 +1918,13 @@ export default class Binding {
         }
     }
 
-    async play() {
+    private _replaySaviLine(startMs: number) {
         this.saviTargetController?.skipPrewatchCard();
+        return replayFrom(this.video, startMs, (seconds) => this.seek(seconds), netflix);
+    }
+
+    async play(internal = false) {
+        if (internal) this.saviTargetController?.skipPrewatchCard();
         if (netflix) {
             await this._playNetflix();
             return;

@@ -46,6 +46,7 @@ export interface SaviCaptureHost {
     readonly video: HTMLMediaElement;
     readonly settings: SettingsProvider;
     currentSubtitles: () => SerializableSubtitle[];
+    replay: (startMs: number) => Promise<void>;
     videoSrc: () => string;
     // asbplayer's own detected name for the loaded subtitle track, e.g.
     // "<Show> S<NN>E<NN> <Episode Title>" (films: just "<Show>"). Derived from
@@ -368,8 +369,9 @@ export class SaviCaptureController {
         if (!current) {
             return;
         }
-        video.currentTime = current.start / 1000;
-        void video.play();
+        return this._host.replay(current.start).catch(() => {
+            this._host.notify('Savi: Could not replay this line. Please try again.');
+        });
     }
 
     // Called when subtitles are reset (e.g. SPA navigation to the next
