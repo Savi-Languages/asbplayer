@@ -75,6 +75,7 @@ import {
     clearCaptureSession,
     getCaptureSession,
     getCaptureRetirement,
+    expireCaptureSession,
     markCaptureStopRequested,
     nextPlaybackSeq,
     setCaptureSession,
@@ -1147,10 +1148,15 @@ export default class SaviCommandHandler implements CommandHandler {
                     // stale bookkeeping and tell the tab so the capture
                     // controller restarts — the new take merges with whatever
                     // was already finished.
-                    if (!(await clearCaptureSession(session, true)))
+                    const retirement = await expireCaptureSession(session);
+                    if (!retirement)
                         return (await getCaptureSession())
                             ? { ok: false, notOwner: true }
                             : this._absentCaptureResponse(message, sender);
+                    if (!retirement.expired) {
+                        this._notifyRetiredOwner(session);
+                        return { ok: false, ownerAbsent: true };
+                    }
                     const command: SaviCommand<SaviCaptureEndedToVideoMessage> = {
                         sender: 'savi-extension-to-video',
                         message: {
@@ -1213,8 +1219,9 @@ export default class SaviCommandHandler implements CommandHandler {
             const active = await captureState(config);
 
             if (active !== undefined && !active.includes(session.episodeId)) {
-                if (await clearCaptureSession(session, true)) {
-                    this._notifyRetiredOwner(session, true);
+                const retirement = await expireCaptureSession(session);
+                if (retirement) {
+                    this._notifyRetiredOwner(session, retirement.expired);
                     return { active: false };
                 }
                 const current = await getCaptureSession();

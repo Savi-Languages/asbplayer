@@ -1,5 +1,5 @@
 import SaviCommandHandler from './background-handler';
-import { captureState, finishCapture, startCapture, postSubtitles } from './daemon-client';
+import { captureState, finishCapture, startCapture, postSubtitles, postPlaybackState } from './daemon-client';
 jest.mock('./watch-interest-service', () => ({}));
 jest.mock('./target-service', () => ({}));
 jest.mock('./account', () => ({}));
@@ -14,6 +14,7 @@ jest.mock('./daemon-client', () => ({
     finishCapture: jest.fn(),
     startCapture: jest.fn(),
     postSubtitles: jest.fn(),
+    postPlaybackState: jest.fn(),
     browserHintFromUserAgent: () => 'edge',
 }));
 let stored: any;
@@ -268,4 +269,41 @@ it('persists explicit Stop retirement so late playback cannot restart it', async
     expect(
         await handler._playbackState({ episodeId: 'episode-a', generation: 'original-generation', ops: [] }, owner)
     ).toEqual({ ok: false, ownerAbsent: true });
+});
+
+it.each([false, true])(
+    'preserves signed-out Stop over an idle sweep (Stop arrives during status=%s)',
+    async (duringStatus) => {
+        if (!duringStatus) stored.stopRequested = true;
+        (captureState as jest.Mock).mockImplementation(async () => {
+            if (duringStatus) stored = { ...stored, stopRequested: true };
+            return [];
+        });
+        expect(await handler._captureState()).toEqual({ active: false });
+        expect(retired.expired).toBe(false);
+        expect(send).toHaveBeenCalledWith(
+            7,
+            expect.objectContaining({ message: expect.objectContaining({ expired: false }) }),
+            { documentId: 'original' }
+        );
+        expect(
+            await handler._playbackState({ episodeId: 'episode-a', generation: 'original-generation', ops: [] }, owner)
+        ).toEqual({ ok: false, ownerAbsent: true });
+    }
+);
+
+it('honors a signed-out Stop received while a playback expiry response was in flight', async () => {
+    (postPlaybackState as jest.Mock).mockImplementation(async () => {
+        stored = { ...stored, stopRequested: true };
+        return { ok: false, sessionGone: true };
+    });
+    expect(
+        await handler._playbackState({ episodeId: 'episode-a', generation: 'original-generation', ops: [] }, owner)
+    ).toEqual({ ok: false, ownerAbsent: true });
+    expect(retired.expired).toBe(false);
+    expect(send).toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({ message: expect.objectContaining({ expired: false }) }),
+        { documentId: 'original' }
+    );
 });

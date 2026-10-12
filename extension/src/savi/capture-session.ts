@@ -57,7 +57,10 @@ const mutate = <T>(operation: () => Promise<T>): Promise<T> => {
 export const setCaptureSession = (record: CaptureSessionRecord): Promise<void> =>
     mutate(() => browser.storage.session.set({ [KEY]: record }));
 
-export const clearCaptureSession = (expected?: CaptureSessionRecord, expired = false): Promise<boolean> =>
+const retireCaptureSession = (
+    expected?: CaptureSessionRecord,
+    expired = false
+): Promise<{ expired: boolean } | undefined> =>
     mutate(async () => {
         const current = await getCaptureSession();
         if (expected) {
@@ -68,14 +71,25 @@ export const clearCaptureSession = (expected?: CaptureSessionRecord, expired = f
                 current.tabId !== expected.tabId ||
                 current.documentId !== expected.documentId
             )
-                return false;
+                return undefined;
         }
         // A single bounded retirement record distinguishes a real idle expiry
         // from an explicit Stop even when message delivery is reordered/lost.
-        if (current) await browser.storage.session.set({ [RETIRED_KEY]: { ...current, expired } });
+        // An intervening recording replaces this slot and ends older recovery.
+        // Persist the reason before removal, within the mutation chain.
+        const retirement = { expired: expired && !current?.stopRequested };
+        if (current) await browser.storage.session.set({ [RETIRED_KEY]: { ...current, ...retirement } });
         await browser.storage.session.remove(KEY);
-        return true;
+        return retirement;
     });
+
+export const clearCaptureSession = async (expected?: CaptureSessionRecord): Promise<boolean> =>
+    (await retireCaptureSession(expected)) !== undefined;
+
+/** Return the actual retirement reason, including a Stop received while a
+ * daemon status/playback request was in flight. */
+export const expireCaptureSession = (expected: CaptureSessionRecord): Promise<{ expired: boolean } | undefined> =>
+    retireCaptureSession(expected, true);
 
 /** Allocate only for the current owner, atomically with respect to clears. */
 export const nextPlaybackSeq = (

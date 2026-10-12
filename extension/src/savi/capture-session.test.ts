@@ -1,6 +1,7 @@
 import {
     clearCaptureSession,
     markCaptureStopRequested,
+    expireCaptureSession,
     getCaptureSession,
     nextPlaybackSeq,
     setCaptureSession,
@@ -70,6 +71,12 @@ describe('capture-session', () => {
         await setCaptureSession(record());
         await Promise.all([nextPlaybackSeq(), clearCaptureSession(record())]);
         expect(await getCaptureSession()).toBeUndefined();
+    });
+    it('preserves a Stop queued while daemon expiry was in flight', async () => {
+        const original = { ...record(), generation: 'current' };
+        await setCaptureSession(original);
+        await markCaptureStopRequested(original);
+        expect(await expireCaptureSession(original)).toEqual({ expired: false });
     });
     it('does not clear a newer take when an old response arrives', async () => {
         const old = { ...record(), generation: 'old' };

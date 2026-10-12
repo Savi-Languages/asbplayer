@@ -85,7 +85,7 @@ export interface SaviPlaybackStateMessage {
 }
 
 export interface SaviPlaybackStateResponse {
-    /** No record remains. Await the reason; absence alone is not an expiry. */
+    /** No record or matching expiry remains; stop locally without restarting. */
     readonly ownerAbsent?: boolean;
     readonly notOwner?: boolean;
     readonly ok: boolean;
