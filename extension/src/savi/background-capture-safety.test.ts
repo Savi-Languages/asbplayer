@@ -171,3 +171,41 @@ it('returns notOwner to stale playback rather than letting it feed a newer recor
         notOwner: true,
     });
 });
+
+it('reports idle expiry rather than an ownership handoff when reconciling popup state', async () => {
+    (captureState as jest.Mock).mockResolvedValue([]);
+    expect(await handler._captureState()).toEqual({ active: false });
+    expect(send).toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({
+            message: expect.objectContaining({ expired: true, reason: undefined, generation: 'original-generation' }),
+        }),
+        { documentId: 'original' }
+    );
+});
+it('cannot clear a newer recording when an old popup status request finishes late', async () => {
+    (captureState as jest.Mock).mockImplementation(async () => {
+        stored = { ...oldSession(), generation: 'newer', episodeId: 'episode-b' };
+        return ['episode-b'];
+    });
+    expect(await handler._captureState()).toMatchObject({ active: true, episodeId: 'episode-b' });
+    expect(stored.generation).toBe('newer');
+    expect(send).not.toHaveBeenCalled();
+});
+it.each([{ documentId: 'old' }, { frameId: 3 }])(
+    'rejects non-owner playback context before mutating sequence: %j',
+    async (context) => {
+        expect(await handler._playbackState({ episodeId: 'episode-a', ops: [] }, { ...owner, ...context })).toEqual({
+            ok: false,
+            notOwner: true,
+        });
+        expect(stored.seq).toBe(0);
+    }
+);
+it('rejects old-generation playback without changing the new take sequence', async () => {
+    expect(await handler._playbackState({ episodeId: 'episode-a', generation: 'old', ops: [] }, owner)).toEqual({
+        ok: false,
+        notOwner: true,
+    });
+    expect(stored.seq).toBe(0);
+});

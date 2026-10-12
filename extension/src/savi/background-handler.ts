@@ -908,7 +908,7 @@ export default class SaviCommandHandler implements CommandHandler {
                     }
                 }
                 if (!notified) this._notifyRetiredOwner(existing);
-                await clearCaptureSession();
+                await clearCaptureSession(existing);
             } else {
                 // One session at a time (the daemon has one tap). Say WHERE it
                 // is: the bare message left no way to find the capture to stop.
@@ -1004,12 +1004,13 @@ export default class SaviCommandHandler implements CommandHandler {
             return { stopped: false, errorMessage: 'Another tab owns this capture.' };
         }
         const config = await this._daemonConfig();
-        await clearCaptureSession();
-
         if (!config) {
             // The daemon keeps the session resumable; nothing to finish now.
             return { stopped: false, errorMessage: 'sign in to savi (or set a daemon token) to finish' };
         }
+
+        if (!(await clearCaptureSession(session)))
+            return { stopped: false, errorMessage: 'Another recording now owns this capture.' };
 
         // Acknowledge immediately; the finish result (stitching can take a
         // while) travels out-of-band as savi-capture-ended. The pending fetch
@@ -1048,16 +1049,16 @@ export default class SaviCommandHandler implements CommandHandler {
         return ended.ok;
     }
 
-    private _notifyRetiredOwner(session: CaptureSessionRecord) {
+    private _notifyRetiredOwner(session: CaptureSessionRecord, expired = false) {
         const command: SaviCommand<SaviCaptureEndedToVideoMessage> = {
             sender: 'savi-extension-to-video',
             message: {
                 command: 'savi-capture-ended',
                 src: session.src,
                 generation: session.generation,
-                reason: 'ownership-transferred',
+                reason: expired ? undefined : 'ownership-transferred',
                 ok: false,
-                expired: false,
+                expired,
                 errorMessage: 'This tab no longer owns the recording. Use Record to start again.',
             },
         };
@@ -1078,18 +1079,15 @@ export default class SaviCommandHandler implements CommandHandler {
     ): Promise<SaviPlaybackStateResponse> {
         const tabId = sender.tab?.id;
         const run = this._playbackChain.then(async (): Promise<SaviPlaybackStateResponse> => {
-            const allocated = await nextPlaybackSeq();
-
-            if (
-                allocated === undefined ||
-                (tabId !== undefined && allocated.session.tabId !== tabId) ||
-                (message.episodeId !== undefined && allocated.session.episodeId !== message.episodeId) ||
-                (message.generation !== undefined && allocated.session.generation !== message.generation) ||
-                (allocated.session.documentId !== undefined && allocated.session.documentId !== sender.documentId) ||
-                (allocated.session.frameId !== undefined && allocated.session.frameId !== sender.frameId)
-            ) {
-                return { ok: false, notOwner: true };
-            }
+            const allocated = await nextPlaybackSeq(
+                (session) =>
+                    (tabId === undefined || session.tabId === tabId) &&
+                    (message.episodeId === undefined || session.episodeId === message.episodeId) &&
+                    (message.generation === undefined || session.generation === message.generation) &&
+                    (session.documentId === undefined || session.documentId === sender.documentId) &&
+                    (session.frameId === undefined || session.frameId === sender.frameId)
+            );
+            if (!allocated) return { ok: false, notOwner: true };
 
             const config = await this._daemonConfig();
 
@@ -1118,7 +1116,7 @@ export default class SaviCommandHandler implements CommandHandler {
                     // stale bookkeeping and tell the tab so the capture
                     // controller restarts — the new take merges with whatever
                     // was already finished.
-                    await clearCaptureSession();
+                    if (!(await clearCaptureSession(session))) return { ok: false, notOwner: true };
                     const command: SaviCommand<SaviCaptureEndedToVideoMessage> = {
                         sender: 'savi-extension-to-video',
                         message: {
@@ -1181,9 +1179,14 @@ export default class SaviCommandHandler implements CommandHandler {
             const active = await captureState(config);
 
             if (active !== undefined && !active.includes(session.episodeId)) {
-                this._notifyRetiredOwner(session);
-                await clearCaptureSession();
-                return { active: false };
+                if (await clearCaptureSession(session)) {
+                    this._notifyRetiredOwner(session, true);
+                    return { active: false };
+                }
+                const current = await getCaptureSession();
+                return current
+                    ? { active: true, episodeId: current.episodeId, title: current.title, tabId: current.tabId }
+                    : { active: false };
             }
         }
 
@@ -1216,7 +1219,7 @@ export const finishCaptureForClosedTab = async (tabId: number, settings: Setting
         return;
     }
 
-    await clearCaptureSession();
+    if (!(await clearCaptureSession(session))) return;
     const { saviDaemonUrl, saviDaemonToken } = await settings.get(['saviDaemonUrl', 'saviDaemonToken']);
     const { bearer, accountJwt } = await daemonCredentials(saviDaemonToken);
 

@@ -399,3 +399,19 @@ it.each([true, false])('preserves a newer same-item recording when the old save 
     expect(sent.filter((m) => m.command === 'savi-start-capture')).toHaveLength(1);
     f.p.stop();
 });
+
+it('allows automatic capture again after idle expiry without treating it as a deliberate stop', async () => {
+    const f = await autoFixture();
+    f.play();
+    await f.advance(12);
+    f.p.captureEnded({
+        command: 'savi-capture-ended',
+        src: `https://open.spotify.com/track/${id}`,
+        ok: false,
+        expired: true,
+    });
+    expect(f.p.isCapturing()).toBe(false);
+    await f.advance(140);
+    expect(sent.filter((m) => m.command === 'savi-start-capture').length).toBeGreaterThan(1);
+    f.p.stop();
+});

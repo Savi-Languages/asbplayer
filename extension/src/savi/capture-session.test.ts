@@ -60,4 +60,21 @@ describe('capture-session', () => {
     it('yields no seq without a live session', async () => {
         expect(await nextPlaybackSeq()).toBeUndefined();
     });
+    it('does not allocate or write a sequence for a rejected owner', async () => {
+        await setCaptureSession(record());
+        expect(await nextPlaybackSeq(() => false)).toBeUndefined();
+        expect(await getCaptureSession()).toEqual(record());
+    });
+    it('cannot resurrect a cleared recording during a concurrent sequence allocation', async () => {
+        await setCaptureSession(record());
+        await Promise.all([nextPlaybackSeq(), clearCaptureSession(record())]);
+        expect(await getCaptureSession()).toBeUndefined();
+    });
+    it('does not clear a newer take when an old response arrives', async () => {
+        const old = { ...record(), generation: 'old' };
+        const newer = { ...record(), generation: 'new' };
+        await setCaptureSession(newer);
+        expect(await clearCaptureSession(old)).toBe(false);
+        expect(await getCaptureSession()).toEqual(newer);
+    });
 });

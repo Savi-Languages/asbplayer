@@ -888,6 +888,8 @@ export class SpotifyPanel {
         this.captureChain = this.captureChain
             .then(async () => {
                 const r = await this.deps.send({ command: 'savi-playback-state', episodeId, generation, ops });
+                if (r?.notOwner && this.captureId === episodeId && this.captureGeneration === generation)
+                    this.releaseLocalCapture(true);
                 if (!r?.ok || r.audio === 'off') this.notice('Audio capture interrupted. Stop and retry in Savi.');
             })
             .catch(() => this.notice('Audio connection interrupted. Stop and retry.'));
@@ -919,29 +921,38 @@ export class SpotifyPanel {
     isCapturing(): boolean {
         return this.captureFinishing || (!this.disposed && this.captureId !== '');
     }
+    private releaseLocalCapture(blockAutomaticRestart: boolean) {
+        if (blockAutomaticRestart) {
+            this.deliberatelyStopped.add(this.captureId);
+            if (this.deliberatelyStopped.size > 100)
+                this.deliberatelyStopped.delete(this.deliberatelyStopped.values().next().value!);
+        }
+        this.captureId = '';
+        this.captureGeneration = undefined;
+        this.segmenter = undefined;
+        this.captureButton.textContent = 'Record audio';
+    }
     captureEnded(message: any) {
         const identity = spotifyIdentity(message.src);
-        if (message.command === 'savi-capture-ended' && identity) {
+        if (message.command !== 'savi-capture-ended' || !identity) return;
+        if (message.expired || message.reason === 'ownership-transferred') {
             if (
-                this.captureId === identity.id &&
-                message.reason === 'ownership-transferred' &&
-                (message.generation === undefined || message.generation === this.captureGeneration)
-            ) {
-                // Ownership moved to another tab. Drop local recording state
-                // without stopping the daemon session now owned by that tab,
-                // and do not automatically compete for it on the next tick.
-                this.deliberatelyStopped.add(this.captureId);
-                if (this.deliberatelyStopped.size > 100)
-                    this.deliberatelyStopped.delete(this.deliberatelyStopped.values().next().value!);
-                this.captureId = '';
-                this.segmenter = undefined;
-                this.captureButton.textContent = 'Record audio';
-            }
+                this.captureId !== identity.id ||
+                (message.generation !== undefined && message.generation !== this.captureGeneration)
+            )
+                return;
+            this.releaseLocalCapture(!message.expired);
             this.notice(
-                message.ok
-                    ? finishNotice(message.info ?? {}).text
-                    : (message.errorMessage ?? 'Audio save failed; retry in Savi.')
+                message.expired
+                    ? 'Recording expired while idle. Automatic capture can resume with playback.'
+                    : (message.errorMessage ?? 'Recording moved to another tab.')
             );
+            return;
         }
+        this.notice(
+            message.ok
+                ? finishNotice(message.info ?? {}).text
+                : (message.errorMessage ?? 'Audio save failed; retry in Savi.')
+        );
     }
 }

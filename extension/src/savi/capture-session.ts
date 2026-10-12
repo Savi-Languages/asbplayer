@@ -38,24 +38,43 @@ export const getCaptureSession = async (): Promise<CaptureSessionRecord | undefi
     return (result?.[KEY] as CaptureSessionRecord) ?? undefined;
 };
 
-export const setCaptureSession = async (record: CaptureSessionRecord): Promise<void> => {
-    await browser.storage.session.set({ [KEY]: record });
+// Serialize read-modify-write operations so a late sequence allocation cannot
+// resurrect a cleared session. Conditional clears cannot delete a newer take.
+let mutationChain: Promise<unknown> = Promise.resolve();
+const mutate = <T>(operation: () => Promise<T>): Promise<T> => {
+    const run = mutationChain.then(operation);
+    mutationChain = run.catch(() => {});
+    return run;
 };
+export const setCaptureSession = (record: CaptureSessionRecord): Promise<void> =>
+    mutate(() => browser.storage.session.set({ [KEY]: record }));
 
-export const clearCaptureSession = async (): Promise<void> => {
-    await browser.storage.session.remove(KEY);
-};
+export const clearCaptureSession = (expected?: CaptureSessionRecord): Promise<boolean> =>
+    mutate(async () => {
+        if (expected) {
+            const current = await getCaptureSession();
+            if (
+                !current ||
+                current.generation !== expected.generation ||
+                current.captureId !== expected.captureId ||
+                current.tabId !== expected.tabId ||
+                current.documentId !== expected.documentId
+            )
+                return false;
+        }
+        await browser.storage.session.remove(KEY);
+        return true;
+    });
 
-/** Allocate the next playback-state seq for the session, persisting it BEFORE
- *  it is used so a service-worker restart can never reuse a seq (the daemon
- *  drops replays). Returns undefined when no session is live. */
-export const nextPlaybackSeq = async (): Promise<{ session: CaptureSessionRecord; seq: number } | undefined> => {
-    const session = await getCaptureSession();
-    if (session === undefined) {
-        return undefined;
-    }
-    const seq = session.seq + 1;
-    const updated = { ...session, seq };
-    await setCaptureSession(updated);
-    return { session: updated, seq };
-};
+/** Allocate only for the current owner, atomically with respect to clears. */
+export const nextPlaybackSeq = (
+    owns: (session: CaptureSessionRecord) => boolean = () => true
+): Promise<{ session: CaptureSessionRecord; seq: number } | undefined> =>
+    mutate(async () => {
+        const session = await getCaptureSession();
+        if (session === undefined || !owns(session)) return undefined;
+        const seq = session.seq + 1;
+        const updated = { ...session, seq };
+        await browser.storage.session.set({ [KEY]: updated });
+        return { session: updated, seq };
+    });

@@ -239,6 +239,14 @@ export class SaviCaptureController {
                 // out-of-band; see SaviStopCaptureResponse), so don't gate
                 // on _active.
                 if (request.message.src === this._host.videoSrc()) {
+                    if (
+                        (request.message.expired || request.message.reason === 'ownership-transferred') &&
+                        (!this._active ||
+                            (request.message.generation !== undefined &&
+                                request.message.generation !== this._captureGeneration))
+                    )
+                        return;
+
                     // Delayed results for a previous take must not stop a newer
                     // recording of the same video in this document.
                     if (
@@ -901,13 +909,7 @@ export class SaviCaptureController {
         // to be sent. Re-applying is safe: the daemon registers segments
         // idempotently by id, and a duplicate end with nothing open is a
         // no-op.
-        const generation = this._captureGeneration;
         void this._deliverOps(ops).then((response) => {
-            if (response?.notOwner && generation === this._captureGeneration) {
-                this._deactivate();
-                this._host.notify('Savi: this tab no longer owns the recording.');
-                return;
-            }
             const warning = droppedOpsWarning(response, this._warnedDroppedOps);
             if (warning !== undefined) {
                 this._warnedDroppedOps = true;
@@ -921,6 +923,7 @@ export class SaviCaptureController {
     /** Deliver a batch and hand back the daemon's answer (`undefined` when it
      *  could not be delivered at all). */
     private async _deliverOps(ops: SaviSegmentOp[]): Promise<SaviPlaybackStateResponse | undefined> {
+        const generation = this._captureGeneration;
         const command: SaviCommand<SaviPlaybackStateMessage> = {
             sender: 'savi-video',
             message: {
@@ -940,6 +943,10 @@ export class SaviCaptureController {
             // A silent failure here is what made this take days to find.
             console.warn('savi: could not deliver segment ops after retries; coverage may overstate', ops);
             return undefined;
+        }
+        if (response?.notOwner && this._active && generation === this._captureGeneration) {
+            this._deactivate();
+            this._host.notify('Savi: this tab no longer owns the recording.');
         }
         return response;
     }

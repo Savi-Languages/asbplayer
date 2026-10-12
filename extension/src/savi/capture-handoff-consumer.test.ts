@@ -94,3 +94,42 @@ it('ignores a delayed finish from an older take of the same video', () => {
     expect(controller.active).toBe(false);
     controller.unbind();
 });
+
+it('deactivates on notOwner delivered through the direct keepalive transport', async () => {
+    (globalThis as any).browser = {
+        runtime: { sendMessage: jest.fn().mockResolvedValue({ ok: false, notOwner: true }) },
+    };
+    const controller = new SaviCaptureController({
+        video: document.createElement('video'),
+        settings: {} as any,
+        videoSrc: () => 'blob:x',
+        currentSubtitles: () => [],
+        subtitleFileName: () => '',
+        notify: jest.fn(),
+        replay: jest.fn(),
+    });
+    (controller as any)._active = true;
+    (controller as any)._captureGeneration = 'current';
+    await (controller as any)._deliverOps([{ op: 'segment-end' }]);
+    expect(controller.active).toBe(false);
+});
+it('retries Stop with the original recording identity', async () => {
+    const send = jest.fn().mockRejectedValueOnce(new Error('Worker restarted')).mockResolvedValue({ stopped: true });
+    (globalThis as any).browser = { runtime: { sendMessage: send } };
+    const controller = new SaviCaptureController({
+        video: document.createElement('video'),
+        settings: {} as any,
+        videoSrc: () => 'blob:x',
+        currentSubtitles: () => [],
+        subtitleFileName: () => '',
+        notify: jest.fn(),
+        replay: jest.fn(),
+    });
+    (controller as any)._active = true;
+    (controller as any)._captureEpisodeId = 'episode-a';
+    (controller as any)._captureGeneration = 'original';
+    await controller.stop();
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[0][0]).toEqual(send.mock.calls[1][0]);
+    expect(send.mock.calls[1][0].message).toMatchObject({ episodeId: 'episode-a', generation: 'original' });
+});
