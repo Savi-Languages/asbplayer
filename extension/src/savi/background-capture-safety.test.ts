@@ -56,6 +56,7 @@ beforeEach(() => {
         },
     };
     (captureState as jest.Mock).mockResolvedValue(['episode-a']);
+    (postPlaybackState as jest.Mock).mockReset().mockResolvedValue({ ok: true });
     (startCapture as jest.Mock).mockImplementation(async (_config, body) => ({
         captureId: body.episodeId,
         audio: { state: 'disabled' },
