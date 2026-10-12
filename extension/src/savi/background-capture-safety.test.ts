@@ -17,6 +17,7 @@ jest.mock('./daemon-client', () => ({
     browserHintFromUserAgent: () => 'edge',
 }));
 let stored: any;
+let retired: any;
 let handler: any;
 let send: jest.Mock;
 const owner = { tab: { id: 7 }, frameId: 0, documentId: 'original' };
@@ -36,14 +37,16 @@ beforeEach(() => {
     jest.clearAllMocks();
     Object.defineProperty(crypto, 'randomUUID', { configurable: true, value: jest.fn(() => 'new-generation') });
     stored = oldSession();
+    retired = undefined;
     send = jest.fn().mockResolvedValue(undefined);
     (globalThis as any).browser = {
         tabs: { get: async () => ({ id: 7 }), query: async () => [{ id: 7 }], sendMessage: send },
         storage: {
             session: {
-                get: async () => ({ saviCaptureSession: stored }),
+                get: async () => ({ saviCaptureSession: stored, saviCaptureRetirement: retired }),
                 set: async (v: any) => {
-                    stored = v.saviCaptureSession;
+                    if ('saviCaptureSession' in v) stored = v.saviCaptureSession;
+                    if ('saviCaptureRetirement' in v) retired = v.saviCaptureRetirement;
                 },
                 remove: async () => {
                     stored = undefined;
@@ -208,4 +211,61 @@ it('rejects old-generation playback without changing the new take sequence', asy
         notOwner: true,
     });
     expect(stored.seq).toBe(0);
+});
+
+it('distinguishes absent ownership from a competing owner during idle recovery', async () => {
+    stored = undefined;
+    expect(await handler._playbackState({ generation: 'old', ops: [] }, owner)).toEqual({
+        ok: false,
+        ownerAbsent: true,
+    });
+});
+it('remembers a Stop while signed out and finishes it before the next same-episode start', async () => {
+    handler._daemonConfig = async () => undefined;
+    expect(await handler._stopCapture('episode-a', owner, 'original-generation')).toMatchObject({ stopped: false });
+    expect(stored.stopRequested).toBe(true);
+    handler._daemonConfig = async () => ({ baseUrl: 'http://localhost:14074', token: 'test' });
+    expect(await handler._startCapture(message, owner)).toMatchObject({ started: true });
+    expect(finishCapture).toHaveBeenCalledTimes(1);
+    expect(stored.stopRequested).toBeUndefined();
+});
+it('preserves a pending signed-out Stop when the later finish fails', async () => {
+    stored.stopRequested = true;
+    (finishCapture as jest.Mock).mockRejectedValue(new Error('offline'));
+    expect(await handler._startCapture(message, owner)).toMatchObject({ started: false });
+    expect(stored.stopRequested).toBe(true);
+    expect(finishCapture).toHaveBeenCalledTimes(1);
+    expect(startCapture).not.toHaveBeenCalled();
+});
+it('returns a typed already-stopped result for an idempotent Stop retry', async () => {
+    stored = undefined;
+    expect(await handler._stopCapture('episode-a', owner, 'original-generation')).toMatchObject({
+        stopped: false,
+        alreadyStopped: true,
+    });
+});
+
+it('recovers an expired take after the notification is lost or reordered, but not an explicit Stop', async () => {
+    (captureState as jest.Mock).mockResolvedValue([]);
+    await handler._captureState();
+    expect(stored).toBeUndefined();
+    expect(
+        await handler._playbackState({ episodeId: 'episode-a', generation: 'original-generation', ops: [] }, owner)
+    ).toEqual({ ok: false, sessionGone: true });
+    retired.expired = false;
+    expect(
+        await handler._playbackState({ episodeId: 'episode-a', generation: 'original-generation', ops: [] }, owner)
+    ).toEqual({ ok: false, ownerAbsent: true });
+    retired.expired = true;
+    expect(await handler._playbackState({ episodeId: 'episode-a', generation: 'other', ops: [] }, owner)).toEqual({
+        ok: false,
+        ownerAbsent: true,
+    });
+});
+it('persists explicit Stop retirement so late playback cannot restart it', async () => {
+    await handler._stopCapture('episode-a', owner, 'original-generation');
+    expect(retired.expired).toBe(false);
+    expect(
+        await handler._playbackState({ episodeId: 'episode-a', generation: 'original-generation', ops: [] }, owner)
+    ).toEqual({ ok: false, ownerAbsent: true });
 });

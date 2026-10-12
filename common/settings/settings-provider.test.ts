@@ -290,3 +290,10 @@ it('targets correct values for text subtitle ', () => {
         subtitleCustomStyles: [],
     });
 });
+
+it('defaults Auto-capture on without overriding an explicit off preference', async () => {
+    const provider = new SettingsProvider(new MockSettingsStorage());
+    expect(await provider.getSingle('saviCaptureEnabled')).toBe(true);
+    await provider.set({ saviCaptureEnabled: false });
+    expect(await provider.getSingle('saviCaptureEnabled')).toBe(false);
+});

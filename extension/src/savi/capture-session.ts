@@ -28,10 +28,18 @@ export interface CaptureSessionRecord {
     readonly title?: string;
     /** Last playback-state batch number sent — monotonic per capture. */
     readonly seq: number;
+    /** Explicit Stop awaiting credentials so the daemon can safely finish. */
+    readonly stopRequested?: boolean;
     readonly audio: SaviCaptureAudio;
 }
 
 const KEY = 'saviCaptureSession';
+const RETIRED_KEY = 'saviCaptureRetirement';
+
+export const getCaptureRetirement = async (): Promise<(CaptureSessionRecord & { expired: boolean }) | undefined> =>
+    (await browser.storage.session.get(RETIRED_KEY))?.[RETIRED_KEY] as
+        | (CaptureSessionRecord & { expired: boolean })
+        | undefined;
 
 export const getCaptureSession = async (): Promise<CaptureSessionRecord | undefined> => {
     const result = await browser.storage.session.get(KEY);
@@ -49,10 +57,10 @@ const mutate = <T>(operation: () => Promise<T>): Promise<T> => {
 export const setCaptureSession = (record: CaptureSessionRecord): Promise<void> =>
     mutate(() => browser.storage.session.set({ [KEY]: record }));
 
-export const clearCaptureSession = (expected?: CaptureSessionRecord): Promise<boolean> =>
+export const clearCaptureSession = (expected?: CaptureSessionRecord, expired = false): Promise<boolean> =>
     mutate(async () => {
+        const current = await getCaptureSession();
         if (expected) {
-            const current = await getCaptureSession();
             if (
                 !current ||
                 current.generation !== expected.generation ||
@@ -62,6 +70,9 @@ export const clearCaptureSession = (expected?: CaptureSessionRecord): Promise<bo
             )
                 return false;
         }
+        // A single bounded retirement record distinguishes a real idle expiry
+        // from an explicit Stop even when message delivery is reordered/lost.
+        if (current) await browser.storage.session.set({ [RETIRED_KEY]: { ...current, expired } });
         await browser.storage.session.remove(KEY);
         return true;
     });
@@ -77,4 +88,20 @@ export const nextPlaybackSeq = (
         const updated = { ...session, seq };
         await browser.storage.session.set({ [KEY]: updated });
         return { session: updated, seq };
+    });
+
+/** Retain Stop intent without overwriting a newer owner or sequence. */
+export const markCaptureStopRequested = (expected: CaptureSessionRecord): Promise<boolean> =>
+    mutate(async () => {
+        const current = await getCaptureSession();
+        if (
+            !current ||
+            current.generation !== expected.generation ||
+            current.captureId !== expected.captureId ||
+            current.tabId !== expected.tabId ||
+            current.documentId !== expected.documentId
+        )
+            return false;
+        await browser.storage.session.set({ [KEY]: { ...current, stopRequested: true } });
+        return true;
     });

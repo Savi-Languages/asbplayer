@@ -255,28 +255,11 @@ export class SaviCaptureController {
                         request.message.generation !== this._captureGeneration
                     )
                         return;
-                    if (this._active) {
-                        this._deactivate();
-                    }
-
                     if (request.message.expired) {
-                        // The daemon auto-finished the session while we were
-                        // idle (or restarted). The user is clearly watching
-                        // again — restart the capture; the new take merges
-                        // with what was already finished. A deliberate stop
-                        // stays stopped.
-                        const { episodeId } = this._pageMetadata();
-                        if (
-                            allowsAutomaticCapture() &&
-                            episodeId !== undefined &&
-                            !this._starting &&
-                            !this._deliberatelyStopped.has(episodeId)
-                        ) {
-                            this._host.notify('Savi: capture restarted after idle timeout');
-                            this.start(false);
-                        }
+                        this._recoverExpiredCapture();
                         return;
                     }
+                    if (this._active) this._deactivate();
 
                     this._notifyFinished(request.message);
                 }
@@ -706,7 +689,9 @@ export class SaviCaptureController {
                 message: { command: 'savi-stop-capture', episodeId, generation },
             };
             let response: SaviStopCaptureResponse | undefined;
+            let attempts = 0;
             await sendWithRetry(async () => {
+                attempts += 1;
                 response = (await browser.runtime.sendMessage(command)) as SaviStopCaptureResponse;
             });
 
@@ -714,12 +699,34 @@ export class SaviCaptureController {
                 // The episode summary toast follows via 'savi-capture-ended'
                 // once the daemon finishes stitching.
                 this._host.notify('Savi: finishing episode…');
+            } else if (attempts > 1 && response?.alreadyStopped) {
+                // The first reply may have been lost. Only the asynchronous
+                // finish summary can confirm that the recording was saved.
+                this._host.notify('Savi: recording already stopped.');
             } else {
                 this._host.notify(`Savi: capture failed — ${response?.errorMessage ?? 'unknown error'}`);
             }
         } catch (e) {
             console.error('savi: failed to stop capture', e);
             this._host.notify(`Savi: capture failed — ${e instanceof Error ? e.message : String(e)}`);
+        }
+    }
+
+    private _recoverExpiredCapture() {
+        this._deactivate();
+        // Resume the existing recording intent, including a manually started
+        // take. A deliberate Stop has already deactivated the controller.
+        const { episodeId } = this._pageMetadata();
+        if (
+            allowsAutomaticCapture() &&
+            episodeId !== undefined &&
+            !this._starting &&
+            !this._deliberatelyStopped.has(episodeId)
+        ) {
+            this._host.notify('Savi: capture restarted after idle timeout');
+            void this.start(false);
+        } else {
+            this._host.notify('Savi: recording expired. Press Record to continue.');
         }
     }
 
@@ -944,7 +951,12 @@ export class SaviCaptureController {
             console.warn('savi: could not deliver segment ops after retries; coverage may overstate', ops);
             return undefined;
         }
-        if (response?.notOwner && this._active && generation === this._captureGeneration) {
+        if (response?.sessionGone && this._active && generation === this._captureGeneration) {
+            this._recoverExpiredCapture();
+        } else if (response?.ownerAbsent && this._active && generation === this._captureGeneration) {
+            this._deactivate();
+            this._host.notify('Savi: recording stopped.');
+        } else if (response?.notOwner && this._active && generation === this._captureGeneration) {
             this._deactivate();
             this._host.notify('Savi: this tab no longer owns the recording.');
         }

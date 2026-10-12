@@ -415,3 +415,34 @@ it('allows automatic capture again after idle expiry without treating it as a de
     expect(sent.filter((m) => m.command === 'savi-start-capture').length).toBeGreaterThan(1);
     f.p.stop();
 });
+
+it.each(['sessionGone', 'ownerAbsent', 'notOwner'])(
+    'handles reordered playback ownership response %s without confusing expiry and transfer',
+    async (result) => {
+        const f = await autoFixture();
+        f.play();
+        await f.advance(12);
+        const panel = f.p as any;
+        panel.deps.send = async () => ({ ok: false, [result]: true });
+        panel.enqueueOps([{ type: 'segment-end' }]);
+        await panel.captureChain;
+        expect(f.p.isCapturing()).toBe(false);
+        if (result === 'sessionGone')
+            f.p.captureEnded({
+                command: 'savi-capture-ended',
+                src: `https://open.spotify.com/track/${id}`,
+                ok: false,
+                expired: true,
+            });
+        // Restore the real fixture's start responses before checking re-arming.
+        panel.deps.send = async (message: any) => {
+            await send(message);
+            return message.command === 'savi-start-capture'
+                ? { started: true, audio: { state: 'recording' } }
+                : { ok: true };
+        };
+        await f.advance(140);
+        expect(sent.filter((m) => m.command === 'savi-start-capture').length > 1).toBe(result === 'sessionGone');
+        f.p.stop();
+    }
+);

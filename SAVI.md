@@ -9,6 +9,15 @@ in the `savi` repo; this doc covers the _watching_ side.
 Most of what people want from Language Reactor is already in asbplayer — it's
 just behind keybinds. This is the map.
 
+## Automatic and manual recording
+
+Auto-capture episodes defaults to on for settings that have not been saved yet.
+An explicitly saved Off remains off after upgrading. Change it in Savi settings;
+the Record button remains available for manual recording either way. Stopping a
+recording manually prevents automatic restart for that episode in the current
+page session. For video, idle recovery continues an existing recording intent when the context permits it.
+Spotify idle recovery requires Auto-capture to be on.
+
 ## Hover dictionary — built-in Japanese lookup and optional Yomitan
 
 Savi's built-in Japanese hover dictionary uses the Savi daemon's tokenizer and

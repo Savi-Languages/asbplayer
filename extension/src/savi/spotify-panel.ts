@@ -888,8 +888,23 @@ export class SpotifyPanel {
         this.captureChain = this.captureChain
             .then(async () => {
                 const r = await this.deps.send({ command: 'savi-playback-state', episodeId, generation, ops });
-                if (r?.notOwner && this.captureId === episodeId && this.captureGeneration === generation)
-                    this.releaseLocalCapture(true);
+                if (this.captureId === episodeId && this.captureGeneration === generation) {
+                    if (r?.ownerAbsent) {
+                        this.releaseLocalCapture(true);
+                        this.notice('Recording stopped.');
+                        return;
+                    }
+                    if (r?.sessionGone) {
+                        this.releaseLocalCapture(false);
+                        this.notice(
+                            this.autoCapture
+                                ? 'Recording expired. Auto-capture can resume.'
+                                : 'Recording expired. Press Record to continue.'
+                        );
+                        return;
+                    }
+                    if (r?.notOwner) this.releaseLocalCapture(true);
+                }
                 if (!r?.ok || r.audio === 'off') this.notice('Audio capture interrupted. Stop and retry in Savi.');
             })
             .catch(() => this.notice('Audio connection interrupted. Stop and retry.'));
@@ -944,7 +959,9 @@ export class SpotifyPanel {
             this.releaseLocalCapture(!message.expired);
             this.notice(
                 message.expired
-                    ? 'Recording expired while idle. Automatic capture can resume with playback.'
+                    ? this.autoCapture
+                        ? 'Recording expired while idle. Automatic capture can resume with playback.'
+                        : 'Recording expired. Press Record to continue.'
                     : (message.errorMessage ?? 'Recording moved to another tab.')
             );
             return;

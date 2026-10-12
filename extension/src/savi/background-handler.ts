@@ -74,6 +74,8 @@ import {
 import {
     clearCaptureSession,
     getCaptureSession,
+    getCaptureRetirement,
+    markCaptureStopRequested,
     nextPlaybackSeq,
     setCaptureSession,
     CaptureSessionRecord,
@@ -889,9 +891,12 @@ export default class SaviCommandHandler implements CommandHandler {
         const existing = await getCaptureSession();
 
         if (existing !== undefined) {
-            if (await isStaleCaptureSession(existing, message.episodeId, tabId, config, sender)) {
+            if (
+                existing.stopRequested ||
+                (await isStaleCaptureSession(existing, message.episodeId, tabId, config, sender))
+            ) {
                 let notified = false;
-                if (existing.episodeId !== message.episodeId) {
+                if (existing.stopRequested || existing.episodeId !== message.episodeId) {
                     const active = await captureState(config);
                     if (active === undefined || active.includes(existing.episodeId)) {
                         // Save and notify the confirmed old owner before handing
@@ -990,7 +995,7 @@ export default class SaviCommandHandler implements CommandHandler {
         const session = await getCaptureSession();
 
         if (session === undefined) {
-            return { stopped: false, errorMessage: 'no savi capture is running' };
+            return { stopped: false, alreadyStopped: true, errorMessage: 'no savi capture is running' };
         }
 
         if (
@@ -1005,7 +1010,10 @@ export default class SaviCommandHandler implements CommandHandler {
         }
         const config = await this._daemonConfig();
         if (!config) {
-            // The daemon keeps the session resumable; nothing to finish now.
+            // Keep the recording resumable, and remember the validated Stop
+            // so a later start can finish it after credentials are restored.
+            if (!(await markCaptureStopRequested(session)))
+                return { stopped: false, errorMessage: 'Another recording now owns this capture.' };
             return { stopped: false, errorMessage: 'sign in to savi (or set a daemon token) to finish' };
         }
 
@@ -1073,21 +1081,44 @@ export default class SaviCommandHandler implements CommandHandler {
     // warning (the daemon's stitcher self-heals a lost segment-end).
     private _playbackChain: Promise<unknown> = Promise.resolve();
 
+    private async _absentCaptureResponse(
+        message: SaviPlaybackStateMessage,
+        sender: Browser.runtime.MessageSender
+    ): Promise<SaviPlaybackStateResponse> {
+        const retired = await getCaptureRetirement();
+        if (
+            retired?.expired &&
+            message.generation !== undefined &&
+            retired.generation === message.generation &&
+            retired.tabId === sender.tab?.id &&
+            retired.episodeId === message.episodeId &&
+            (retired.documentId === undefined || retired.documentId === sender.documentId) &&
+            (retired.frameId === undefined || retired.frameId === sender.frameId)
+        )
+            return { ok: false, sessionGone: true };
+        return { ok: false, ownerAbsent: true };
+    }
+
     private async _playbackState(
         message: SaviPlaybackStateMessage,
         sender: Browser.runtime.MessageSender
     ): Promise<SaviPlaybackStateResponse> {
         const tabId = sender.tab?.id;
         const run = this._playbackChain.then(async (): Promise<SaviPlaybackStateResponse> => {
-            const allocated = await nextPlaybackSeq(
-                (session) =>
+            let ownerPresent = false;
+            const allocated = await nextPlaybackSeq((session) => {
+                ownerPresent = true;
+                return (
+                    !session.stopRequested &&
                     (tabId === undefined || session.tabId === tabId) &&
                     (message.episodeId === undefined || session.episodeId === message.episodeId) &&
                     (message.generation === undefined || session.generation === message.generation) &&
                     (session.documentId === undefined || session.documentId === sender.documentId) &&
                     (session.frameId === undefined || session.frameId === sender.frameId)
-            );
-            if (!allocated) return { ok: false, notOwner: true };
+                );
+            });
+            if (!allocated)
+                return ownerPresent ? { ok: false, notOwner: true } : this._absentCaptureResponse(message, sender);
 
             const config = await this._daemonConfig();
 
@@ -1116,7 +1147,10 @@ export default class SaviCommandHandler implements CommandHandler {
                     // stale bookkeeping and tell the tab so the capture
                     // controller restarts — the new take merges with whatever
                     // was already finished.
-                    if (!(await clearCaptureSession(session))) return { ok: false, notOwner: true };
+                    if (!(await clearCaptureSession(session, true)))
+                        return (await getCaptureSession())
+                            ? { ok: false, notOwner: true }
+                            : this._absentCaptureResponse(message, sender);
                     const command: SaviCommand<SaviCaptureEndedToVideoMessage> = {
                         sender: 'savi-extension-to-video',
                         message: {
@@ -1179,7 +1213,7 @@ export default class SaviCommandHandler implements CommandHandler {
             const active = await captureState(config);
 
             if (active !== undefined && !active.includes(session.episodeId)) {
-                if (await clearCaptureSession(session)) {
+                if (await clearCaptureSession(session, true)) {
                     this._notifyRetiredOwner(session, true);
                     return { active: false };
                 }

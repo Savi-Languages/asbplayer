@@ -67,6 +67,7 @@ export interface SaviStartCaptureResponse {
 // SaviCaptureEndedMessage so it never depends on a service-worker-bound
 // response channel staying alive.
 export interface SaviStopCaptureResponse {
+    readonly alreadyStopped?: boolean;
     readonly stopped: boolean;
     readonly errorMessage?: string;
 }
@@ -84,6 +85,8 @@ export interface SaviPlaybackStateMessage {
 }
 
 export interface SaviPlaybackStateResponse {
+    /** No record remains. Await the reason; absence alone is not an expiry. */
+    readonly ownerAbsent?: boolean;
     readonly notOwner?: boolean;
     readonly ok: boolean;
     /** The daemon's current audio state for the session ('recording' | 'idle'

@@ -1,5 +1,6 @@
 import {
     clearCaptureSession,
+    markCaptureStopRequested,
     getCaptureSession,
     nextPlaybackSeq,
     setCaptureSession,
@@ -77,4 +78,24 @@ describe('capture-session', () => {
         expect(await clearCaptureSession(old)).toBe(false);
         expect(await getCaptureSession()).toEqual(newer);
     });
+});
+
+it('does not mark a newer recording stopped when old credentials resolve late', async () => {
+    let stored: any = { ...record(), generation: 'new', seq: 9 };
+    (globalThis as any).browser = {
+        storage: {
+            session: {
+                get: async () => ({ saviCaptureSession: stored }),
+                set: async (v: any) => {
+                    stored = v.saviCaptureSession;
+                },
+            },
+        },
+    };
+    expect(await markCaptureStopRequested({ ...record(), generation: 'old' })).toBe(false);
+    expect(stored.stopRequested).toBeUndefined();
+    expect(await markCaptureStopRequested(stored)).toBe(true);
+    expect(stored.seq).toBe(9);
+    expect(stored.stopRequested).toBe(true);
+    delete (globalThis as any).browser;
 });
