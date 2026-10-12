@@ -379,11 +379,11 @@ export default class AnkiUiController {
                         switch (context.postMinePlayback) {
                             case PostMinePlayback.remember:
                                 if (context.wasPlayingBeforeRecordingMedia) {
-                                    context.play();
+                                    context.play(true);
                                 }
                                 break;
                             case PostMinePlayback.play:
-                                context.play();
+                                context.play(true);
                                 break;
                             case PostMinePlayback.pause:
                                 // already paused, don't need to do anything

@@ -501,6 +501,7 @@ const SubtitleAppearanceSettingsTab: React.FC<Props> = ({
                         color="primary"
                         fullWidth
                         label={t('settings.subtitlePositionOffset')}
+                        helperText="On Netflix and YouTube, subtitles stay above the player controls. Lower values may be limited by that clearance."
                         value={subtitlePositionOffset}
                         slotProps={{
                             htmlInput: {

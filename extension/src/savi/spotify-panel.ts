@@ -100,6 +100,7 @@ export class SpotifyPanel {
     private startedAt = 0;
     private creditedId = '';
     private captureId = '';
+    private captureGeneration?: string;
     private segmenter?: Segmenter;
     private captureBusy = false;
     private captureFinishing = false;
@@ -807,6 +808,7 @@ export class SpotifyPanel {
             }
             this.autoRetryAt = 0;
             this.captureId = state.identity.id;
+            this.captureGeneration = r.generation;
             if (r.audio?.state !== 'recording') {
                 this.notice(
                     `Audio unavailable: ${r.audio?.reason ?? r.audio?.state ?? 'unknown status'}. Stop and retry after checking Savi.`
@@ -882,9 +884,27 @@ export class SpotifyPanel {
         }
         if (!ops.length) return;
         const episodeId = this.captureId;
+        const generation = this.captureGeneration;
         this.captureChain = this.captureChain
             .then(async () => {
-                const r = await this.deps.send({ command: 'savi-playback-state', episodeId, ops });
+                const r = await this.deps.send({ command: 'savi-playback-state', episodeId, generation, ops });
+                if (this.captureId === episodeId && this.captureGeneration === generation) {
+                    if (r?.ownerAbsent) {
+                        this.releaseLocalCapture(true);
+                        this.notice('Recording stopped.');
+                        return;
+                    }
+                    if (r?.sessionGone) {
+                        this.releaseLocalCapture(false);
+                        this.notice(
+                            this.autoCapture
+                                ? 'Recording expired. Auto-capture can resume.'
+                                : 'Recording expired. Press Record to continue.'
+                        );
+                        return;
+                    }
+                    if (r?.notOwner) this.releaseLocalCapture(true);
+                }
                 if (!r?.ok || r.audio === 'off') this.notice('Audio capture interrupted. Stop and retry in Savi.');
             })
             .catch(() => this.notice('Audio connection interrupted. Stop and retry.'));
@@ -893,13 +913,14 @@ export class SpotifyPanel {
         if (!this.captureId) return;
         this.captureFinishing = true;
         const episodeId = this.captureId;
+        const generation = this.captureGeneration;
         this.enqueueOps(this.segmenter?.pause() ?? []);
         this.segmenter = undefined;
         this.captureId = '';
         this.captureButton.textContent = 'Record audio';
         await this.captureChain;
         try {
-            const r = await this.deps.send({ command: 'savi-stop-capture', episodeId });
+            const r = await this.deps.send({ command: 'savi-stop-capture', episodeId, generation });
             this.notice(
                 r?.stopped
                     ? 'Saving recorded audio in Savi…'
@@ -911,13 +932,44 @@ export class SpotifyPanel {
             this.captureFinishing = false;
         }
     }
-    captureEnded(message: any) {
-        if (message.command === 'savi-capture-ended' && spotifyIdentity(message.src)) {
-            this.notice(
-                message.ok
-                    ? finishNotice(message.info ?? {}).text
-                    : (message.errorMessage ?? 'Audio save failed; retry in Savi.')
-            );
+    /** Whether this panel is capturing or draining its final playback batch. */
+    isCapturing(): boolean {
+        return this.captureFinishing || (!this.disposed && this.captureId !== '');
+    }
+    private releaseLocalCapture(blockAutomaticRestart: boolean) {
+        if (blockAutomaticRestart) {
+            this.deliberatelyStopped.add(this.captureId);
+            if (this.deliberatelyStopped.size > 100)
+                this.deliberatelyStopped.delete(this.deliberatelyStopped.values().next().value!);
         }
+        this.captureId = '';
+        this.captureGeneration = undefined;
+        this.segmenter = undefined;
+        this.captureButton.textContent = 'Record audio';
+    }
+    captureEnded(message: any) {
+        const identity = spotifyIdentity(message.src);
+        if (message.command !== 'savi-capture-ended' || !identity) return;
+        if (message.expired || message.reason === 'ownership-transferred') {
+            if (
+                this.captureId !== identity.id ||
+                (message.generation !== undefined && message.generation !== this.captureGeneration)
+            )
+                return;
+            this.releaseLocalCapture(!message.expired);
+            this.notice(
+                message.expired
+                    ? this.autoCapture
+                        ? 'Recording expired while idle. Automatic capture can resume with playback.'
+                        : 'Recording expired. Press Record to continue.'
+                    : (message.errorMessage ?? 'Recording moved to another tab.')
+            );
+            return;
+        }
+        this.notice(
+            message.ok
+                ? finishNotice(message.info ?? {}).text
+                : (message.errorMessage ?? 'Audio save failed; retry in Savi.')
+        );
     }
 }

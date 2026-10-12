@@ -1,47 +1,48 @@
-// When a stored capture session is bookkeeping to discard rather than a capture
-// that is genuinely still running.
-//
-// Its own module, not a helper inside background-handler.ts: that file reaches
-// `import.meta.env` through cloud-client and so cannot be loaded by jest at all,
-// which is why none of its logic has ever been under test. This rule is exactly
-// the kind that needs to be.
-
+// Only authoritative lifecycle evidence may retire a stored capture.
+// A missing reply (including a frozen tab or a start handshake) is not evidence
+// that the owner stopped recording.
 import { captureState } from './daemon-client';
 import type { SaviDaemonConfig } from './daemon-client';
 import type { CaptureSessionRecord } from './capture-session';
 
-/**
- * The record used to be trusted unless its TAB had closed, which misses the two
- * ways it actually goes stale — and left no recovery except closing the tab,
- * because nothing else ever clears it:
- *
- *  - **The tab navigated.** One tab plays one thing, so a session for a
- *    different episode in the SAME tab cannot still be capturing. This is the
- *    common case: watch one video, let it go idle, open the next in that tab.
- *  - **The daemon ended it.** Its orphan sweeper reaps sessions nobody is
- *    feeding, with no notification. `GET /v2/capture/state` is the authority;
- *    anything it does not list is over.
- *
- * A daemon that cannot answer — older build without the route, or unreachable —
- * yields `undefined`, and we then keep the session. Treating silence as "nothing
- * is running" would throw away a live capture's bookkeeping on any hiccup, which
- * is the more damaging direction to be wrong in: it loses recorded audio, while
- * being wrong the other way only shows an error the user can act on.
- */
+export interface CaptureDocumentContext {
+    readonly documentId?: string;
+    readonly frameId?: number;
+}
+
 export const isStaleCaptureSession = async (
     session: CaptureSessionRecord,
-    requestedEpisodeId: string,
+    _requestedEpisodeId: string,
     requestingTabId: number,
-    config: SaviDaemonConfig
+    config: SaviDaemonConfig,
+    requestingDocument?: CaptureDocumentContext
 ): Promise<boolean> => {
     try {
         await browser.tabs.get(session.tabId);
-    } catch (e) {
-        return true; // tab is gone
+    } catch {
+        // A failed lookup can also be a transient browser API error. Confirm
+        // absence through the tab inventory before retiring a recording.
+        try {
+            const tabs = await browser.tabs.query({});
+            if (!tabs.some((tab) => tab.id === session.tabId)) return true;
+        } catch {
+            // Unknown: retain the record unless the daemon confirms it ended.
+        }
     }
 
-    if (session.tabId === requestingTabId && session.episodeId !== requestedEpisodeId) {
-        return true; // that tab moved on to something else
+    // A reload replaces the document within the SAME frame. A different frame
+    // or another video in the same document cannot evict the current owner.
+    // Older stored sessions/browsers without this metadata remain conservative:
+    // explicitly Stop before starting again, or let the daemon reconcile them.
+    if (
+        session.tabId === requestingTabId &&
+        session.frameId !== undefined &&
+        session.frameId === requestingDocument?.frameId &&
+        session.documentId !== undefined &&
+        requestingDocument?.documentId !== undefined &&
+        session.documentId !== requestingDocument.documentId
+    ) {
+        return true;
     }
 
     const active = await captureState(config);

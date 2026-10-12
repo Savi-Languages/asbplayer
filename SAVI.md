@@ -9,6 +9,15 @@ in the `savi` repo; this doc covers the _watching_ side.
 Most of what people want from Language Reactor is already in asbplayer — it's
 just behind keybinds. This is the map.
 
+## Automatic and manual recording
+
+Auto-capture episodes defaults to on for settings that have not been saved yet.
+An explicitly saved Off remains off after upgrading. Change it in Savi settings;
+the Record button remains available for manual recording either way. Stopping a
+recording manually prevents automatic restart for that episode in the current
+page session. For video, idle recovery continues an existing recording intent when the context permits it.
+Spotify idle recovery requires Auto-capture to be on.
+
 ## Hover dictionary — built-in Japanese lookup and optional Yomitan
 
 Savi's built-in Japanese hover dictionary uses the Savi daemon's tokenizer and
@@ -161,13 +170,16 @@ smaller than the target line**, give it its own size under Settings → Subtitle
 appearance → the second track's tab (per-track styling); savi can't guess which
 track is your native one.
 
-## Target words (0.57)
+## Target words (0.78.0)
 
 With the matching Savi cloud and daemon, episode preparation selects a small list
 from public subtitle profiles and your current vocabulary. Resolved episodes can
-show a pre-watch card on the next play gesture. A late response never pauses an
-already playing video. Unresolved/provider failures leave capture running; failed
-preparation can retry after a 30-second cooldown.
+show a pre-watch card on the next play near the episode start. Preparation that
+finishes during playback or after the first minute suppresses the card for that
+episode, so a later hover-hold resume is never interrupted. Preparation and heard-target mining run only in Explore.
+Unresolved/provider failures leave capture running; transient preparation failures
+back off from 30 seconds to a 10-minute cap, while unresolved titles are cached
+for 15 minutes before another lookup.
 
 The primary subtitle track gets a soft purple target underline. Hover and targets
 share one local tokenizer request/cache: hover uses dictionary compounds, targets
@@ -182,23 +194,40 @@ corrections are honored through both platform and filesystem-safe capture IDs.
 A target enters Savi review only after an acknowledged heard event and 90% audible
 forward playback of its actual primary-track cue. Paused time, seeks and repeated
 fragments cannot manufacture coverage. Mining uses a durable account/language/
-episode/cue-start/lemma identity in browser storage and daemon SQLite. It checks
-fresh known/suppressed state before creating an action. Optional audio and JPEG
-frames stay local and are best effort; protected video may have no screenshot.
+episode/cue-start/lemma identity in browser storage and daemon SQLite. The signed-in
+extension checks fresh known/suppressed state through the cloud, verifies the
+response account, and sends `eligible` and `autoMineToAnki` to the daemon. The
+daemon authenticates with the LAN token or, when no LAN token is configured, the
+owner JWT; target mining sends no separate `X-Savi-Account` header and the daemon
+does not relay a credential or call the cloud. This requires the daemon contract
+in [Savi #74](https://github.com/Savi-Languages/savi/pull/74), version 0.78.0.
+Optional audio and JPEG frames stay local and are best effort; protected video
+with an active DRM session is not sampled through canvas.
 Anki export requires opt-in in both the prepared request and current cloud setting,
 uses the `savi` deck, reconciles lost replies and retries without duplicate actions.
+Mining drops immutable daemon 400/409 failures. Transient and pending-Anki retries
+back off exponentially up to six hours and stop after twelve attempts (about
+20.5 hours at the earliest); exhausted rows discard their
+subtitle/frame payloads. Pending-Anki retries recheck current eligibility and
+export consent only when due; alarms during backoff make no cloud eligibility
+request. Target-feedback delivery retries at most once every
+15 minutes after a failure while retaining pending dismissals. Empty watch-review
+outboxes make no cloud settings request.
 The built-in reviewer continues to use the captured encounter context.
 
-Validation: 615 extension tests, TypeScript compile, Chrome production build, and
-local browser fixtures at desktop/390px. A real Netflix playback with the matching
-cloud/daemon and AnkiConnect is still an integration check in the user's environment.
+Validation covers Watch-mode gating, preparation backoff, daemon authentication,
+mining retry limits, and hover-pause ownership. Run `yarn verify`, the extension
+TypeScript compile, and the Chrome production build before review. Real Netflix
+playback with the matching cloud/daemon and AnkiConnect remains a separate live
+integration check; automated tests do not establish that result.
 
-### Immersion modes (0.58)
+### Immersion modes (0.78)
 
-The small “Savi modes” control opens Watch / Explore / Listen and explicit Bookmark / Replay / Reveal actions. Explicit mode choices save locally on this browser, scoped to the current account and backend (with a separate signed-out preference), and take effect immediately. They do not require a cloud connection or overwrite the account's cloud preference; the cloud mode is used as an initial default only when no local choice exists. Watch disables automatic target cards and hover mining; Explore permits them subject to existing consent/settings. Hover end-of-line pausing works independently of study mode. Listen hides the Savi subtitle layer with a reversible Reveal button. Replay uses the current subtitle, the previous subtitle during a gap, or the first subtitle before playback reaches it, through the platform-aware player controls. Unavailable actions are dimmed with explanatory text; bookmarking requires sign-in and a current identified subtitle.
+The optional “Savi modes” toolbar is off by default and can be enabled in Savi settings. It provides Watch / Explore / Listen and explicit Bookmark / Replay / Reveal actions. Mode changes are saved locally with a timestamp for offline use and synchronized with the signed-in account; a newer cloud preference takes precedence. Watch is the default: no automatic target preparation, card, or hover mining. Explore allows those features subject to existing consent/settings. Gloss labels and dictionary lookup remain controlled by their settings and language support. Savi hover pause holds the current subtitle at its end in every supported learning language, independently of gloss labels or study mode, and resumes only a pause it owns. Listen hides the Savi subtitle layer only while the toolbar is enabled, with a reversible Reveal button. Disabling the toolbar reveals subtitles. General asbplayer playback modes selected explicitly by the user remain separate.
 
 A bookmark is saved locally before upload even when hover mining is disabled. A paused hover must last 1.5 seconds, match an exact current primary cue, and be in Explore with consent. Strong AI selections become candidates; admission budgets are enforced in Savi. Playback alone never grades an item. The local outbox remains account/backend scoped; unavailable AI retries later.
 
+Review follow-up: internal hover/replay/recording resumes bypass the pre-watch card. A signed-in default installation without a successful daemon connection does not show an offline warning; explicit daemon settings and previously successful watched-line delivery retain outage warnings across worker restarts.
 
 ## Spotify Web (0.60)
 
@@ -208,21 +237,29 @@ Read along view to let the adapter observe text already delivered to that page.
 Availability varies by item and Spotify build. The adapter never calls private
 Spotify endpoints or reads Spotify credentials.
 
-- Select a line, then hover/tap its words for dictionary lookup. Save selected
-  line creates a bookmark in the same account's Savi review library. Explore
+- Hover/tap words directly in Spotify’s native transcript or lyrics for dictionary
+  lookup. English appears beneath each line. A compact caption follows the current
+  timed text when the native view is out of sight. Save selected line creates a bookmark in the same account's Savi review library. Explore
   mode plus paused-hover consent enables the existing 1.5-second interest signal,
   knowledge-aware selection and admission limits. AI card details remain manual.
 - Missing text: import SRT/VTT/LRC or paste publisher/user-supplied plain text.
   The panel also offers an explicit import of visible Spotify text. Untimed text
-  stays untimed, has no exact replay or heard-word evidence, and saves as text.
-- Record audio requires timed text and a verified local native media clock.
+  stays untimed and has no exact replay or heard-word evidence. Bookmark/mining requires timed text; untimed lines remain available for reading and dictionary lookup.
+- Audio recording follows the existing recording settings and requires timed text plus a verified local native media clock. If provider text is unavailable, matching native podcast timestamp groups provide a fallback without inventing per-sentence timing.
   Pause, seek, rate/volume/media changes close segments; changing item finishes
   the previous capture. A different audible browser tab blocks the process tap.
   Missing or ambiguous clocks, remote playback and crossfade disable capture.
-  Stop and retry after an audio failure; the panel reports the daemon's result.
+  An explicit stop prevents another automatic start for that item. Stop and retry
+  after an audio failure; the panel reports the daemon’s result.
 - Savi cards use canonical song/episode links. Spotify episode links include a
   timestamp only for timed text. Spotify song links open the song; saved local
   line audio uses the existing source-to-recording map.
+
+The collapsed Savi menu opens learning controls; × minimizes it without stopping
+recording. Native text highlights and scrolls with its timed cue/group, pausing
+automatic scrolling when the learner browses back. Hover pause applies only over
+rendered text. The shared dictionary popup leaves room for neighboring rows on
+Spotify and video sites; its blank-space corridor does not intercept word clicks.
 
 Listening is measured from actual local advancement, uses stable UUIDs for
 retries, and does not grade vocabulary. Imported text is scoped to the current
@@ -235,3 +272,36 @@ localhost. It uses the production panel with a synthetic media clock and fake
 API responses, never the personal account, database, or real audio. This fixture
 is not evidence of live Spotify capture. Live verification needs Spotify sign-in
 and a reload of the installed extension.
+
+### Playback sequence across capture recovery
+
+Ownership stays in `storage.session`. The worker reserves blocks of 256 playback
+sequence numbers in `storage.local` before exposing a number; a restarted worker
+skips the unused tail. Retirement, replacement and failed handshakes never lower
+the cursor. The mutation queue fences allocations against owner changes and Stop.
+This reduces durable writes from one per batch to roughly one per 256 batches.
+
+A fresh profile, reinstall or cleared storage can still start below the daemon's
+retained cursor. [Savi #92](https://github.com/Savi-Languages/savi/pull/92) adds
+`lastSeq` to playback-state responses. On a fresh stale batch the worker checks
+ownership again and reserves above that floor. The video controller sends new
+boundaries at the current playhead, or just an end while paused. It never resets
+the daemon or replays historical boundaries under a higher sequence. Existing
+files and the engine's retired-segment protection stay intact.
+
+Recovery is bounded to one cursor resync per owner generation. Missing/invalid
+`lastSeq` or another rejection retires local ownership without finishing the
+shared daemon capture; the video controller warns and suppresses auto-restart.
+This handles sequential profile changes, not concurrent capture ownership across
+profiles. Stop other recording tabs before restarting. The daemon's existing
+watchdog/idle finalization still owns abandoned audio; this path deletes nothing.
+
+HTTP retries reuse the same sequence and time out after ten seconds. Video
+content messages also carry a monotonic generation-scoped batch ID: a lost
+worker reply reuses the stored sequence, a saved resync reply is repeated, and
+an older superseded batch is never posted. This survives worker restarts. Older
+clients/Spotify without a batch ID retain their previous delivery semantics;
+new live Spotify coverage is still required before claiming that path verified.
+
+Preserve/finish an active recording before installing or reloading either build.
+The source changes do not authorize replacing an actively recording runtime.

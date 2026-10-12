@@ -31,8 +31,9 @@ export interface SaviStartCaptureMessage {
     // back to the name where absent.
     readonly showId?: string;
     // Episode label (e.g. "S1:E3 Secrets") or, when no show is known, the
-    // best available page title. Always present.
-    readonly title: string;
+    // best available page title. Omitted when an embedded player exposes only
+    // a generic site label, so an existing real title is not overwritten.
+    readonly title?: string;
     readonly lang?: string;
     readonly subtitles: string;
     readonly subtitleFormat: 'srt' | 'vtt';
@@ -46,11 +47,14 @@ export interface SaviStartCaptureMessage {
 
 export interface SaviStopCaptureMessage {
     readonly command: 'savi-stop-capture';
+    readonly episodeId?: string;
+    readonly generation?: string;
 }
 
 export interface SaviStartCaptureResponse {
     readonly started: boolean;
     readonly captureId?: string;
+    readonly generation?: string;
     /** The daemon's audio report (SV-18): whether ITS tap is recording for
      *  this session. `legacy` means an old daemon that ignored the field. */
     readonly audio?: SaviCaptureAudio;
@@ -63,6 +67,7 @@ export interface SaviStartCaptureResponse {
 // SaviCaptureEndedMessage so it never depends on a service-worker-bound
 // response channel staying alive.
 export interface SaviStopCaptureResponse {
+    readonly alreadyStopped?: boolean;
     readonly stopped: boolean;
     readonly errorMessage?: string;
 }
@@ -74,11 +79,20 @@ export interface SaviStopCaptureResponse {
 // are low-frequency, so waking a sleeping service worker per batch is fine.
 export interface SaviPlaybackStateMessage {
     readonly command: 'savi-playback-state';
+    /** Monotonic within generation, unchanged across sendMessage retries. */
+    readonly batchId?: number;
+    readonly generation?: string;
     readonly episodeId?: string;
     readonly ops: SaviSegmentOp[];
 }
 
 export interface SaviPlaybackStateResponse {
+    readonly staleSeq?: boolean;
+    /** Cursor repaired; caller must send fresh boundaries at the live playhead. */
+    readonly sequenceResynced?: boolean;
+    /** No record or matching expiry remains; stop locally without restarting. */
+    readonly ownerAbsent?: boolean;
+    readonly notOwner?: boolean;
     readonly ok: boolean;
     /** The daemon's current audio state for the session ('recording' | 'idle'
      *  | 'off'), when known. */
@@ -576,6 +590,8 @@ export interface SaviNotifyToVideoMessage {
 
 export interface SaviCaptureEndedToVideoMessage {
     readonly command: 'savi-capture-ended';
+    readonly generation?: string;
+    readonly reason?: 'ownership-transferred';
     readonly src: string;
     readonly ok: boolean;
     readonly info?: CaptureFinishInfo;

@@ -40,6 +40,22 @@ export interface ClockInputs {
     /** Has playback finished? (`video.ended`.) Sitting on the post-credits
      *  screen with the tab focused is not watching. Optional, default `false`. */
     ended?: boolean;
+    /** Media position in ms (`currentTime * 1000`). Optional; supplying it lets
+     *  a gap longer than `maxTickDeltaMs` be credited by how far the media
+     *  actually advanced instead of being discarded. A phone with its screen
+     *  off keeps the audio playing while it stretches the page's timers and
+     *  `timeupdate` to tens of seconds apart (SV-59: ~10 min played, 2 logged)
+     *  — the media position is the one witness that it really played. */
+    mediaTimeMs?: number;
+    /** `playbackRate`, to turn media advance back into wall time. Default 1. */
+    playbackRate?: number;
+    /** The media is MEANT to be playing — not paused, not ended — even if it is
+     *  momentarily stalled (buffering, `readyState < 2`). Keeps the gap anchor
+     *  alive through a stall: a stretched tick that happens to land mid-stall
+     *  must not throw away the whole next screen-off gap. Media advance stays
+     *  the evidence, so a stall itself still earns nothing. Optional, default
+     *  `playing`. */
+    mediaActive?: boolean;
 }
 
 /** A closed block, ready for an adapter to stamp and send. */
@@ -65,7 +81,9 @@ export interface EngagementClockOptions {
     idleMs?: number;
     /** Deltas larger than this are discarded rather than credited — the guard
      *  against a slept laptop or a throttled background timer waking up and
-     *  claiming hours in a single tick. */
+     *  claiming hours in a single tick. The one exception is media-anchored
+     *  credit (see `ClockInputs.mediaTimeMs`): a slept laptop's audio stops
+     *  too, so its position never advances and the guard still holds. */
     maxTickDeltaMs?: number;
     /** Close and reopen at this much accrued time. */
     maxSessionMs?: number;
@@ -101,22 +119,27 @@ export function activeKind(
     const attended = inputs.visible && inputs.focused;
 
     // Playing: attended means they're watching it; unattended means the audio is
-    // still reaching them, which is a real (shallower) kind of exposure.
-    if (inputs.playing) return attended ? opts.foregroundKind : opts.backgroundKind;
+    // still reaching them, which is a real (shallower) kind of exposure. A
+    // buffering stall (`mediaActive`, not `playing`) keeps the same kind, so a
+    // tick that lands mid-stall doesn't close the block — the clock credits a
+    // stalled interval only by media advance, so the stall itself earns nothing.
+    if (inputs.playing || inputs.mediaActive === true) {
+        return attended ? opts.foregroundKind : opts.backgroundKind;
+    }
 
     // Paused and away: nothing is reaching them at all.
     if (!attended) return null;
 
     // Paused, present — but only INSIDE a viewing. The founder timed a 39:19
     // watch that Savi recorded as 41:19, and this was the gap: the tab is
-    // focused and the mouse is moving while browsing to a title and again
-    // while the credits roll, and both were credited as `watch`. Neither is
-    // language exposure by any definition.
+    // focused and the mouse is moving while browsing to a title and again while
+    // the credits roll, and both were credited as `watch`. Neither is language
+    // exposure by any definition.
     if (inputs.everPlayed === false || inputs.ended === true) return null;
 
     // A pause between the first play and the end, with recent activity —
-    // hovering a word for a gloss, reading the line again. That IS studying,
-    // and it stays counted.
+    // hovering a word for a gloss, reading the line again. That IS studying, and
+    // it stays counted.
     return now - inputs.lastInteractionAt <= opts.idleMs ? opts.foregroundKind : null;
 }
 
@@ -132,6 +155,12 @@ export function activeKind(
 export class EngagementClock {
     private readonly opts: Required<Omit<EngagementClockOptions, 'onFlush'>> & Pick<EngagementClockOptions, 'onFlush'>;
     private lastTickAt: number | null = null;
+    /** Media position + rate at the last tick, held only while the media was
+     *  active (playing, or meant to be and stalled) — the anchor a long gap is
+     *  measured against. */
+    private lastMedia: { atMs: number; rate: number } | null = null;
+    /** The last tick was a stall: meant to play (`mediaActive`), not playing. */
+    private lastStalled = false;
     private open: OpenSession | null = null;
 
     constructor(options: EngagementClockOptions) {
@@ -155,12 +184,13 @@ export class EngagementClock {
         //    it — the kind held for that whole span, so it is credited before any
         //    transition below.
         const delta = this.lastTickAt === null ? 0 : now - this.lastTickAt;
-        const creditable = delta > 0 && delta <= this.opts.maxTickDeltaMs;
-        if (this.open && creditable) {
-            this.open.engagedMs += delta;
-            this.open.endedAtMs = wallNow;
-        }
+        if (this.open) this.credit(this.creditFor(delta, inputs), wallNow);
         this.lastTickAt = now;
+        this.lastMedia =
+            (inputs.mediaActive ?? inputs.playing) && inputs.mediaTimeMs !== undefined
+                ? { atMs: inputs.mediaTimeMs, rate: inputs.playbackRate ?? 1 }
+                : null;
+        this.lastStalled = !inputs.playing && inputs.mediaActive === true;
 
         // 2. Re-evaluate, and close the block if what they're doing changed
         //    (including changing to "nothing").
@@ -185,6 +215,8 @@ export class EngagementClock {
     flush(): void {
         this.flushOpen();
         this.lastTickAt = null;
+        this.lastMedia = null;
+        this.lastStalled = false;
     }
 
     /** Drop whatever has accrued WITHOUT emitting it (e.g. the user switched to
@@ -192,11 +224,56 @@ export class EngagementClock {
     reset(): void {
         this.open = null;
         this.lastTickAt = null;
+        this.lastMedia = null;
+        this.lastStalled = false;
     }
 
     /** Accrued ms in the block currently open — for tests and diagnostics. */
     get openMs(): number {
         return this.open?.engagedMs ?? 0;
+    }
+
+    /** How much of an elapsed `delta` is creditable. */
+    private creditFor(delta: number, inputs: ClockInputs): number {
+        if (delta <= 0) return 0;
+        // An interval that STARTED stalled earns only what actually played in it
+        // — otherwise a long buffering stall would be credited tick by tick.
+        if (this.lastStalled) return this.mediaAdvance(delta, inputs);
+        if (delta <= this.opts.maxTickDeltaMs) return delta;
+        // An oversized gap. Credit it only when the media was playing at its start
+        // and its position says how much of it really played — capped at the wall
+        // time, so a forward seek or a condensed skip can never mint extra. The
+        // END needn't be playing: a pause event landing after a frozen stretch is
+        // exactly how that stretch gets reported.
+        return this.mediaAdvance(delta, inputs);
+    }
+
+    /** Media advance since the anchor, in wall ms, clamped to [0, delta]. */
+    private mediaAdvance(delta: number, inputs: ClockInputs): number {
+        if (this.lastMedia === null || inputs.mediaTimeMs === undefined) return 0;
+        const rate = this.lastMedia.rate > 0 ? this.lastMedia.rate : 1;
+        const played = (inputs.mediaTimeMs - this.lastMedia.atMs) / rate;
+        return Math.min(Math.max(played, 0), delta);
+    }
+
+    /** Add `ms` to the open block, chunking at `maxSessionMs` on the way — a
+     *  media-anchored gap can be minutes long, and one row over the cap would
+     *  be clamped (credit lost) on ingest. Each chunk is stamped with the wall
+     *  span its share covers, ending at `wallNow`. */
+    private credit(ms: number, wallNow: number): void {
+        let remaining = ms;
+        while (this.open && remaining > 0) {
+            const take = Math.min(remaining, Math.max(0, this.opts.maxSessionMs - this.open.engagedMs));
+            this.open.engagedMs += take;
+            remaining -= take;
+            this.open.endedAtMs = wallNow - remaining;
+            if (remaining > 0) {
+                const { kind } = this.open;
+                const at = wallNow - remaining;
+                this.flushOpen();
+                this.open = { kind, engagedMs: 0, startedAtMs: at, endedAtMs: at };
+            }
+        }
     }
 
     private flushOpen(): void {

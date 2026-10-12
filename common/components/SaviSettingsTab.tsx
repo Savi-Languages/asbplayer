@@ -263,7 +263,7 @@ const SaviSettingsTab: React.FC<Props> = ({
                     label={'Target language'}
                     value={saviTargetLanguage ?? ''}
                     onCommit={(value) => onSaviTargetLanguageChange?.(value)}
-                    helperText={`The language you're learning. ${roamingHint}`}
+                    helperText={`The language you're learning. Leave blank to auto-load subtitles in the video's audio language when it can be detected. ${roamingHint}`}
                 />
             )}
             {roamingSupported && onSaviNativeLanguageChange !== undefined && (
@@ -401,6 +401,23 @@ const SaviSettingsTab: React.FC<Props> = ({
                     'the next line either way.'
                 }
             />
+            <SettingsSection>{'Study controls'}</SettingsSection>
+            <SwitchLabelWithHoverEffect
+                control={
+                    <Switch
+                        checked={settings.saviStudyToolbar}
+                        onChange={(e) => onSettingChanged('saviStudyToolbar', e.target.checked)}
+                    />
+                }
+                label={'Show floating study toolbar'}
+                labelPlacement="start"
+            />
+            <FormHelperText>
+                {
+                    'Show Watch, Explore, Listen, Reveal, Replay, and Bookmark controls over the video. Off by default. Subtitles stay visible while the toolbar is off, including in Listen mode.'
+                }
+            </FormHelperText>
+
             <SettingsSection>{'Savi capture'}</SettingsSection>
             <SwitchLabelWithHoverEffect
                 control={

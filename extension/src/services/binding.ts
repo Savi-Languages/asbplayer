@@ -116,7 +116,8 @@ import { muteSite, siteKeyForUrl } from '../savi/muted-sites';
 import { dismissHushFor, isHushDismissed } from '../savi/hush-dismissed';
 import { getCachedRoamingSettings } from '../savi/cloud-settings';
 import { deriveEpisodeId } from '../savi/episode';
-import { shouldPauseForAsbplayerHover } from './pause-on-hover';
+import { SubtitleLanguageContext } from '../savi/subtitle-language-context';
+import { shouldPauseForAsbplayerHover, isSubtitleHoverTarget } from './pause-on-hover';
 
 let netflix = false;
 document.addEventListener('asbplayer-netflix-enabled', (e) => {
@@ -304,6 +305,7 @@ export default class Binding {
     private unsubscribeStatisticsSubtitleMine?: () => void;
 
     private readonly frameId?: string;
+    private readonly _subtitleLanguageContext = new SubtitleLanguageContext();
 
     constructor(video: HTMLMediaElement, hasPageScript: boolean, frameId?: string) {
         this.video = video;
@@ -326,13 +328,20 @@ export default class Binding {
             video,
             settings: this.settings,
             currentSubtitles: () => this.subtitleController.subtitles,
+            replay: (startMs) => this._replaySaviLine(startMs),
             videoSrc: () => this._registeredVideoSrc,
             subtitleFileName: () => this.subtitleFileName(),
+            subtitleLanguage: () =>
+                this._subtitleLanguageContext.language(
+                    this.subtitleController.subtitleFileNames ?? [],
+                    window.location.href,
+                    document.title
+                ),
             notify: (locKey, replacements) => this.subtitleController.notification(locKey, replacements),
         });
         this.saviWatchInterest = new SaviWatchInterest({
             video,
-            replay: (startMs) => replayFrom(this.video, startMs, (seconds) => this.seek(seconds), netflix),
+            replay: (startMs) => this._replaySaviLine(startMs),
             onModeChange: (mode, hideText) => {
                 this.saviTargetController?.setImmersionMode(mode);
                 this.subtitleController.immersionHideSubtitles = hideText;
@@ -348,7 +357,7 @@ export default class Binding {
             subtitles: () => this.subtitleController.subtitles,
             pause: () => this.pause(),
             play: () => {
-                void this.play();
+                void this.play(true);
             },
             send: (message) => browser.runtime.sendMessage({ sender: 'savi-video', message }),
         });
@@ -365,7 +374,15 @@ export default class Binding {
             (lineText, word) => this.saviEncounterReporter.noteHoverRevealEnd(lineText, word),
             // Mining is collection, not failed recall: withdraw the reveal so
             // adding a card never lapses the card you just added.
-            (lineText, word) => this.saviEncounterReporter.noteHoverRetract(lineText, word)
+            (lineText, word) => this.saviEncounterReporter.noteHoverRetract(lineText, word),
+            undefined, // no platform adapter — this binding IS the video
+            // The tap panel pauses and resumes THROUGH the binding: on Netflix a
+            // raw video.pause()/play() fights the player (see pause/_playNetflix).
+            {
+                pause: () => this.pause(),
+                play: () => void this.play(true),
+                pauseAlreadyOwned: () => this.saviHoverPause.hasOwnedPause || this.pausedDueToHover,
+            }
         );
         // Glossing (SV-12/13): supplies gloss-ruby HTML to the subtitle controller;
         // a resolved gloss asks the controller to re-render the showing lines. The
@@ -407,8 +424,10 @@ export default class Binding {
                 this.pauseOnHoverMode !== PauseOnHoverMode.disabled &&
                 !this.subtitleController.immersionHideSubtitles,
             pause: () => this.pause(),
-            play: () => void this.play(),
+            play: () => void this.play(true),
             overPopup: (x, y) => this.saviHoverDictionary.isOverHoverSurface(x, y),
+            resumeOnLeave: () => this.pauseOnHoverMode === PauseOnHoverMode.inAndOut,
+            holdOpen: () => this.saviHoverDictionary.panelOpen,
         });
         // Encounter recording (SV-18): every primary-track line that starts
         // showing is posted to the daemon as watch-time exposure, whether or not
@@ -458,15 +477,17 @@ export default class Binding {
             glossMode: () => (this.saviGlossController.glossable ? 'glossed' : 'bare'),
             send: (message) => browser.runtime.sendMessage({ sender: 'savi-video', message }),
         });
-        // Lift the subtitles above the streaming player's control bar while it is
-        // visible (they share the same bottom strip and fight over the mouse),
-        // restoring the user's configured offset when it hides. Runtime-only.
+        // Rest the subtitles above where the streaming player's control bar
+        // appears (they share the same bottom strip and fight over the mouse) —
+        // always, not only while it is up, so the text never moves under a
+        // hovering cursor when the controls come and go. Runtime-only.
         this.saviControlsClearance = new SaviControlsClearance({
             video: () => this.video,
             applyOffset: (px) => {
                 this.subtitleController.bottomSubtitlePositionOffset = px;
                 this.subtitleController.refresh();
             },
+            currentOffset: () => this.subtitleController.bottomSubtitlePositionOffset,
         });
         this.hoveredToken = new HoveredToken();
         this.recordMedia = true;
@@ -628,7 +649,7 @@ export default class Binding {
 
                         seeking = true;
                         this.seek(subtitle.start / 1000);
-                        await this.play();
+                        await this.play(true);
                         seeking = false;
                     } finally {
                         seeking = false;
@@ -1017,7 +1038,7 @@ export default class Binding {
             // Only pause when actually over subtitle TEXT — not the wide empty
             // space of the subtitle container (hovering the blank area beside
             // the text should not pause).
-            const overText = mouseEvent.target instanceof Element && mouseEvent.target.closest('[data-track]') !== null;
+            const overText = isSubtitleHoverTarget(mouseEvent.target);
             // When Savi handles the hover, let playback reach the subtitle boundary
             // before holding. asbplayer's immediate hover-pause remains the fallback.
             if (
@@ -1025,10 +1046,10 @@ export default class Binding {
                     overSubtitleText: overText,
                     pauseOnHoverEnabled: this.pauseOnHoverMode !== PauseOnHoverMode.disabled,
                     videoPaused: this.video.paused,
-                    saviGlossHoverActive: this.saviGlossHover.isActive(),
+                    saviHoverPauseActive: this.saviHoverPause.handlesHover(mouseEvent.target),
                 })
             ) {
-                this.video.pause();
+                this.pause();
                 this.pausedDueToHover = true;
 
                 if (this.mouseMoveListener) {
@@ -1041,10 +1062,10 @@ export default class Binding {
                     // own hover surfaces (the dictionary popup / the word→popup
                     // bridge) — so moving onto the popup to click "+ Add to Anki"
                     // keeps it paused. Resume only once off both.
-                    const onText = e.target instanceof Element && e.target.closest('[data-track]') !== null;
+                    const onText = isSubtitleHoverTarget(e.target);
                     const onHoverSurface = this.saviHoverDictionary.isOverHoverSurface(e.clientX, e.clientY);
                     if (this._shouldAutoResumeOnSubtitlesMouseOut && !onText && !onHoverSurface) {
-                        this.play();
+                        this.play(true);
                         this.pausedDueToHover = false;
                     }
                 };
@@ -1490,6 +1511,7 @@ export default class Binding {
 
     async _refreshSettings() {
         const currentSettings = await this.settings.getAll();
+        this.saviWatchInterest.setToolbarEnabled(currentSettings.saviStudyToolbar);
         this._seekDuration = currentSettings.seekDuration;
         this._speedChangeStep = currentSettings.speedChangeStep;
         this.seekableTracks = currentSettings.seekableTracks;
@@ -1510,10 +1532,12 @@ export default class Binding {
         this.pauseOnHoverMode = currentSettings.pauseOnHoverMode;
 
         this.subtitleController.displaySubtitles = currentSettings.streamingDisplaySubtitles;
-        this.subtitleController.bottomSubtitlePositionOffset = currentSettings.subtitlePositionOffset;
-        // The controls-clearance watcher lifts the runtime offset above the
-        // player's control bar; the SETTING stays its resting baseline.
+        // The SETTING is the floor; controls-clearance rests the runtime offset
+        // above the player's control bar. Apply ITS answer here, not the bare
+        // setting: writing the setting dropped the text onto the control strip
+        // on every settings reload, and it stayed there.
         this.saviControlsClearance.baseOffsetPx = currentSettings.subtitlePositionOffset;
+        this.subtitleController.bottomSubtitlePositionOffset = this.saviControlsClearance.effectiveOffsetPx();
         this.subtitleController.topSubtitlePositionOffset = currentSettings.topSubtitlePositionOffset;
         this.subtitleController.subtitlesWidth = currentSettings.subtitlesWidth;
         this.subtitleController.surroundingSubtitlesCountRadius = currentSettings.surroundingSubtitlesCountRadius;
@@ -1734,7 +1758,7 @@ export default class Binding {
             this.recordingMediaWithScreenshot = this.takeScreenshot;
             const start = Math.max(0, subtitle.start - this.audioPaddingStart);
             this.seek(start / 1000);
-            await this.play();
+            await this.play(true);
         }
 
         if (!text || subtitle.text.includes(text.trim())) {
@@ -1820,7 +1844,7 @@ export default class Binding {
                 this.recordingPostMineAction = postMineAction;
 
                 if (this.video.paused) {
-                    await this.play();
+                    await this.play(true);
                 }
             }
 
@@ -1874,7 +1898,7 @@ export default class Binding {
         this.recordingState = RecordingState.requested;
         this.recordingMediaStartedTimestamp = this.video.currentTime * 1000;
         this.seek(Math.max(0, start - audioPaddingStart) / 1000);
-        await this.play();
+        await this.play(true);
 
         const command: VideoToExtensionCommand<RerecordMediaMessage> = {
             sender: 'asbplayer-video',
@@ -1906,7 +1930,13 @@ export default class Binding {
         }
     }
 
-    async play() {
+    private _replaySaviLine(startMs: number) {
+        this.saviTargetController?.skipPrewatchCard();
+        return replayFrom(this.video, startMs, (seconds) => this.seek(seconds), netflix);
+    }
+
+    async play(internal = false) {
+        if (internal) this.saviTargetController?.skipPrewatchCard();
         if (netflix) {
             await this._playNetflix();
             return;
@@ -1979,7 +2009,15 @@ export default class Binding {
         return await cropAndResize(maxWidth, maxHeight, rect, tabImageDataUrl);
     }
 
-    async loadSubtitles(files: File[], flatten: boolean, syncWithAsbplayerId?: string) {
+    async loadSubtitles(files: File[], flatten: boolean, syncWithAsbplayerId?: string, language?: string) {
+        // Carry language with the actual files, including the app round trip.
+        // A manual file load clears it; unrelated files/episodes cannot reuse it.
+        this._subtitleLanguageContext.begin(
+            language,
+            flatten && files.length > 0 ? [files[0].name] : files.map((file) => file.name),
+            window.location.href,
+            document.title
+        );
         const {
             streamingSubtitleListPreference,
             subtitleRegexFilter,
@@ -2065,6 +2103,9 @@ export default class Binding {
     }
 
     private _updateSubtitles(subtitles: IndexedSubtitleModel[], subtitleFileNames: string[]) {
+        // Commit language alongside the parsed files, so an in-flight load
+        // cannot replace the metadata belonging to subtitles still on screen.
+        this._subtitleLanguageContext.commit(subtitleFileNames);
         this.subtitleController.subtitles = subtitles;
         this.subtitleController.subtitleFileNames = subtitleFileNames;
         this.subtitleController.cacheHtml();

@@ -131,14 +131,23 @@ const doFetch = async (base: string, config: SaviDaemonConfig, path: string, ini
             // Not JSON - status alone will have to do
         }
 
-        throw new Error(`savi daemon: ${message}`);
+        throw new SaviDaemonHttpError(response.status, message);
     }
 
     return await response.json();
 };
 
-export const isDaemonResponseError = (error: unknown): boolean =>
-    error instanceof Error && error.message.startsWith('savi daemon:');
+export class SaviDaemonHttpError extends Error {
+    constructor(
+        readonly status: number,
+        message: string
+    ) {
+        super(`savi daemon: ${message}`);
+        this.name = 'SaviDaemonHttpError';
+    }
+}
+
+export const isDaemonResponseError = (error: unknown): boolean => error instanceof SaviDaemonHttpError;
 
 const request = async (config: SaviDaemonConfig, path: string, init: RequestInit) => {
     const configured = normalizedBaseUrl(config.baseUrl);
@@ -150,7 +159,7 @@ const request = async (config: SaviDaemonConfig, path: string, init: RequestInit
         // HTTP-level errors (auth, 4xx/5xx) come back as our Error above and
         // mean the daemon WAS reached — rethrow. Only a network-level failure
         // (fetch rejection: nothing listening / port moved) triggers discovery.
-        if (isDaemonResponseError(e)) {
+        if (isDaemonResponseError(e) || init.signal?.aborted) {
             throw e;
         }
 
@@ -253,14 +262,31 @@ export const postPlaybackState = async (
     { captureId, seq, ops }: { captureId: string; seq: number; ops: unknown[] }
 ): Promise<{
     ok: boolean;
+    staleSeq?: boolean;
+    lastSeq?: number;
     audio?: string;
     audioRequested?: boolean;
     sessionGone?: boolean;
     openSegment?: string | null;
 }> => {
-    const body = await request(config, '/v2/capture/playback-state', jsonInit({ captureId, seq, ops }));
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), 10_000);
+    let body;
+    try {
+        body = await request(config, '/v2/capture/playback-state', {
+            ...jsonInit({ captureId, seq, ops }),
+            signal: abort.signal,
+        });
+    } finally {
+        clearTimeout(timer);
+    }
     return {
         ok: body.ok === true,
+        staleSeq: body.staleSeq === true,
+        lastSeq:
+            typeof body.lastSeq === 'number' && Number.isSafeInteger(body.lastSeq) && body.lastSeq >= 0
+                ? body.lastSeq
+                : undefined,
         audio: typeof body.audio === 'string' ? body.audio : undefined,
         // `audio: 'off'` alone cannot distinguish a subtitles-only session from
         // one whose ops are being discarded while it believes it is recording.
@@ -596,10 +622,9 @@ export async function mineHeardTarget(
     body: import('./target-types').HeardTargetMine & { eligible: boolean; autoMineToAnki: boolean }
 ): Promise<{ ok: boolean; ankiPending?: boolean }> {
     // Eligibility was already checked by the authenticated extension cloud
-    // client. The local daemon needs only its LAN capability and the decision,
-    // never the user's cloud credential.
-    if (!config.token || config.token === config.accountJwt) {
-        throw new Error('A Savi daemon LAN token is required for target mining');
-    }
+    // client. Only the daemon bearer and the decision cross this boundary. In
+    // the documented no-LAN-token setup the owner's JWT doubles as that bearer;
+    // it is never forwarded again as a separate identity credential.
+    if (!config.token) throw new Error('A Savi daemon bearer is required for target mining');
     return request({ baseUrl: config.baseUrl, token: config.token }, '/v2/targets/mine', jsonInit(body));
 }

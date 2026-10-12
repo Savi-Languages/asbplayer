@@ -50,11 +50,78 @@ describe('Spotify hover adapter isolation', () => {
                 resolve = r;
             });
         dict._lookupDict = jest.fn();
-        const pending = dict._openWordDetail('旅行', 0);
+        // The tap resolves its word by geometry once the tokens arrive; the
+        // episode changes while they are in flight.
+        const pending = dict._openWordDetailAt(document.createElement('span'), '旅行', 0, 0);
         id = 'new-item';
         resolve([tok('旅行')]);
         await pending;
         expect(dict._lookupDict).not.toHaveBeenCalled();
+    });
+});
+
+describe('hover highlight row changes', () => {
+    let dict: SaviHoverDictionary;
+    let line: HTMLElement;
+    let highlight: HTMLDivElement;
+    let flushed: { top: string; left: string; transition: string }[];
+    const move = (element: HTMLElement, left: number, top: number, height = 24) =>
+        (dict as any)._highlightBoxes(element, [{ left, top, width: 40, height }]);
+
+    beforeEach(() => {
+        dict = new SaviHoverDictionary();
+        line = document.createElement('span');
+        line.textContent = '字幕が二行に折り返す';
+        document.body.append(line);
+        highlight = (dict as any)._ensureHighlight(0);
+        flushed = [];
+        Object.defineProperty(highlight, 'offsetWidth', {
+            get: () => {
+                flushed.push({
+                    top: highlight.style.top,
+                    left: highlight.style.left,
+                    transition: highlight.style.transition,
+                });
+                return 42;
+            },
+        });
+    });
+
+    afterEach(() => document.body.replaceChildren());
+
+    it('glides between words on the same visible row, including small glyph-height differences', () => {
+        move(line, 10, 100);
+        flushed.length = 0;
+        move(line, 60, 102, 22);
+        expect(flushed).toEqual([]);
+        expect(highlight.style.left).toBe('59px');
+        expect(highlight.style.transition).toContain('left 60ms');
+    });
+
+    it('snaps between wrapped rows in the same subtitle element', () => {
+        move(line, 200, 100);
+        flushed.length = 0;
+        move(line, 10, 132);
+        expect(flushed).toEqual([{ top: '129px', left: '9px', transition: 'none' }]);
+        expect(highlight.style.transition).toContain('left 60ms');
+        flushed.length = 0;
+        move(line, 60, 132);
+        expect(flushed).toEqual([]);
+    });
+
+    it('snaps to a different subtitle element even at the same vertical position', () => {
+        move(line, 200, 100);
+        flushed.length = 0;
+        move(document.createElement('span'), 10, 100);
+        expect(flushed).toEqual([{ top: '97px', left: '9px', transition: 'none' }]);
+    });
+
+    it('snaps when a hidden highlight reappears on the same row', () => {
+        move(line, 200, 100);
+        (dict as any)._hideHighlight();
+        flushed.length = 0;
+        move(line, 10, 100);
+        expect(flushed).toEqual([{ top: '97px', left: '9px', transition: 'none' }]);
     });
 });
 
@@ -227,12 +294,13 @@ describe('hover overlays follow subtitle layout without mouse movement', () => {
         frames.clear();
         callbacks.forEach((callback) => callback(0));
     };
-    const show = (offset = 0) =>
+    const CHAR = 20; // px per glyph in the fake layout below
+    // Hover at (x, 410): the first 裏工作 is laid out at rect.left + 0..60, the second at 60..120.
+    const show = (x = 210) =>
         dict._applyTokens(
             line,
             line.textContent,
-            offset,
-            210,
+            x,
             410,
             [
                 { text: '裏工作', lemma: '裏工作' },
@@ -255,10 +323,16 @@ describe('hover overlays follow subtitle layout without mouse movement', () => {
         jest.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
             frames.delete(id);
         });
-        // jsdom has no layout; keep real DOM ranges and supply measured geometry.
-        Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+        // jsdom has no layout; keep real DOM ranges and lay the line out as one
+        // row of CHAR-px glyphs at `rect` (a zero rect = not laid out at all).
+        Object.defineProperty(Range.prototype, 'getClientRects', {
             configurable: true,
-            value: () => rect,
+            value(this: Range) {
+                if (rect.width === 0 && rect.height === 0) return [];
+                const start = this.startContainer === line ? 0 : this.startOffset;
+                const end = this.endContainer === line ? line.textContent!.length : this.endOffset;
+                return [makeRect(rect.left + start * CHAR, rect.top, (end - start) * CHAR, rect.height)];
+            },
         });
         jest.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
             return makeRect(parseFloat(this.style.left) || 0, parseFloat(this.style.top) || 0, 300, 180);
@@ -270,24 +344,31 @@ describe('hover overlays follow subtitle layout without mouse movement', () => {
     afterEach(() => {
         dict.stop();
         jest.restoreAllMocks();
-        delete (Range.prototype as any).getBoundingClientRect;
+        delete (Range.prototype as any).getClientRects;
         document.body.innerHTML = '';
     });
 
-    it('renders a prepared word during the mouse event, without timers or pending promises', () => {
+    it('renders the latest prepared word once per animation frame', () => {
         line.className = 'asbplayer-subtitle-text';
-        const caret = document.createRange();
-        caret.setStart(line.firstChild!, 0);
-        Object.defineProperty(document, 'caretRangeFromPoint', { configurable: true, value: () => caret });
         jest.spyOn(dict, '_tokenize').mockReturnValue([{ text: '裏工作裏工作', lemma: '裏工作' }]);
         dict._lookupDict.mockReturnValue(result);
-        try {
-            line.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 210, clientY: 410 }));
-            expect(surface('popup')?.style.display).toBe('block');
-            expect(surface('popup')?.textContent).toContain('裏工作');
-        } finally {
-            delete (document as any).caretRangeFromPoint;
-        }
+        line.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 210, clientY: 410 }));
+        expect(surface('popup')?.style.display).not.toBe('block');
+        line.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 220, clientY: 410 }));
+        line.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 230, clientY: 410 }));
+        frame();
+        expect(dict._lookupDict).toHaveBeenCalledTimes(1);
+        expect(surface('popup')?.style.display).toBe('block');
+        expect(surface('popup')?.textContent).toContain('裏工作');
+    });
+
+    it('cancels pending mouse work when the dictionary stops', () => {
+        line.className = 'asbplayer-subtitle-text';
+        const tokenize = jest.spyOn(dict, '_tokenize');
+        line.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 210, clientY: 410 }));
+        dict.stop();
+        frame();
+        expect(tokenize).not.toHaveBeenCalled();
     });
 
     it('moves the outline, popup and bridge with controls hiding and showing', async () => {
@@ -322,11 +403,12 @@ describe('hover overlays follow subtitle layout without mouse movement', () => {
     });
 
     it('reanchors the same dictionary term at a different position', async () => {
-        await show();
+        await show(); // the first 裏工作
         rect = makeRect(350, 400, 120, 40);
-        await show(3);
+        await show(350 + 70); // the second 裏工作, now laid out at 410..470
         frame();
-        expect(parseFloat(surface('popup').style.left)).toBe(350 + 60 - 150);
+        // Centered on that occurrence (its center, less half the popup width).
+        expect(parseFloat(surface('popup').style.left)).toBe(350 + 60 + 30 - 150);
         expect(dict._lookupDict).toHaveBeenCalledTimes(1);
     });
 
@@ -422,4 +504,199 @@ describe('hover dictionary preparation', () => {
         await preparing;
         expect(send).not.toHaveBeenCalled();
     });
+});
+
+it('clears stale hover UI when shared tokenization fails instead of rejecting the hover task', async () => {
+    const { subtitleTokens } = await import('./token-cache');
+    const tokenize = jest.spyOn(subtitleTokens, 'get').mockRejectedValue(new Error('offline'));
+    const dict = new SaviHoverDictionary();
+    const line = document.createElement('span');
+    line.textContent = '猫';
+    document.body.append(line);
+    const range = document.createRange();
+    range.setStart(line.firstChild!, 0);
+    Object.defineProperty(document, 'caretRangeFromPoint', { configurable: true, value: () => range });
+    const highlight = (dict as any)._ensureHighlight(0);
+    highlight.style.display = 'block';
+    const popup = (dict as any)._ensurePopup();
+    popup.style.display = 'block';
+    try {
+        await expect((dict as any)._handleHover(line, 1, 1)).resolves.toBeUndefined();
+        expect(highlight.style.display).toBe('none');
+        expect(popup.style.display).toBe('none');
+    } finally {
+        tokenize.mockRestore();
+        delete (document as any).caretRangeFromPoint;
+        dict.stop();
+        line.remove();
+    }
+});
+
+it('resumes the study panel through the guarded host playback path', () => {
+    const video = document.createElement('video');
+    video.play = jest.fn().mockResolvedValue(undefined);
+    const resume = jest.fn();
+    const dict = new (SaviHoverDictionary as any)(
+        () => video,
+        () => [],
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { pause: jest.fn(), play: resume }
+    );
+    dict._pausedForPanel = true;
+    dict._panelPlayback = video;
+    dict._panelEpisode = dict._episodeId();
+    dict._onPanelClosed();
+    expect(resume).toHaveBeenCalledTimes(1);
+    expect(video.play).not.toHaveBeenCalled();
+});
+
+describe('SaviHoverDictionary tap panel — pauses through the binding, not the raw element', () => {
+    // On Netflix the player owns the <video>: asbplayer's binding routes pause and
+    // play through the page script, and gloss-hover's hold was handed that pair
+    // for the same reason. The panel used to call video.pause()/play() directly.
+    const entries = [{ kanji: ['改善'], readings: ['かいぜん'], senses: [{ pos: ['n'], glosses: ['improvement'] }] }];
+
+    beforeEach(() => {
+        (globalThis as any).browser = {
+            runtime: {
+                sendMessage: async (command: { message: { command: string } }) => {
+                    switch (command.message.command) {
+                        case 'savi-dict':
+                            return { entries, kanji: [] };
+                        case 'savi-segment-line':
+                            return { ai: false, tokens: [] };
+                        case 'savi-explain-word':
+                            return { explanation: null };
+                        case 'savi-kanji':
+                            return { kanji: [] };
+                        default:
+                            throw new Error(`unexpected ${command.message.command}`);
+                    }
+                },
+            },
+        };
+    });
+
+    afterEach(() => {
+        delete (globalThis as any).browser;
+    });
+
+    // A stand-in that actually flips `paused`: the panel resumes only a video
+    // it paused, which is still paused, and it checks the element to know.
+    const fakeVideo = (paused = false) => {
+        const video = {
+            paused,
+            pause: jest.fn(() => {
+                video.paused = true;
+            }),
+            play: jest.fn(async () => {
+                video.paused = false;
+            }),
+        };
+        return video as unknown as HTMLMediaElement;
+    };
+    const span = { token: tok('改善', '改善'), start: 0, end: 2 };
+    const settle = () => new Promise((r) => setTimeout(r, 0)); // let the panel's AI sections land
+    const openPanel = async (dict: SaviHoverDictionary) => {
+        await (dict as any)._openWordDetail('改善を', span);
+        await settle();
+    };
+
+    it('pauses and resumes through the binding when given its pair', async () => {
+        const video = fakeVideo();
+        // The binding's pair reaches the element by another road (the Netflix
+        // page script), so it flips `paused` without touching video.pause/play.
+        // The panel resumes only a video that is still paused, so a pair that
+        // left `paused` alone would (rightly) never be asked to play.
+        const playback = {
+            pause: jest.fn(() => {
+                (video as { paused: boolean }).paused = true;
+            }),
+            play: jest.fn(() => {
+                (video as { paused: boolean }).paused = false;
+            }),
+        };
+        const dict = new SaviHoverDictionary(
+            () => video,
+            () => [],
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            playback
+        );
+        await openPanel(dict);
+        expect(playback.pause).toHaveBeenCalledTimes(1);
+        expect(video.pause).not.toHaveBeenCalled();
+        (dict as any)._onPanelClosed();
+        expect(playback.play).toHaveBeenCalledTimes(1);
+        expect(video.play).not.toHaveBeenCalled();
+        dict.stop();
+    });
+
+    it('does not resume a video it did not pause', async () => {
+        const video = fakeVideo(true);
+        const playback = { pause: jest.fn(), play: jest.fn() };
+        const dict = new SaviHoverDictionary(
+            () => video,
+            () => [],
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            playback
+        );
+        await openPanel(dict);
+        expect(playback.pause).not.toHaveBeenCalled();
+        (dict as any)._onPanelClosed();
+        expect(playback.play).not.toHaveBeenCalled();
+        dict.stop();
+    });
+
+    it('does not claim an asynchronous hover pause still awaiting the platform acknowledgement', async () => {
+        const video = fakeVideo();
+        const playback = { pause: jest.fn(), play: jest.fn(), pauseAlreadyOwned: () => true };
+        const dict = new SaviHoverDictionary(
+            () => video,
+            () => [],
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            playback
+        );
+        await openPanel(dict);
+        expect(playback.pause).not.toHaveBeenCalled();
+        (video as { paused: boolean }).paused = true;
+        (dict as any)._onPanelClosed();
+        expect(playback.play).not.toHaveBeenCalled();
+        dict.stop();
+    });
+
+    it('falls back to the raw element without the pair', async () => {
+        const video = fakeVideo();
+        const dict = new SaviHoverDictionary(() => video);
+        await openPanel(dict);
+        expect(video.pause).toHaveBeenCalledTimes(1);
+        (dict as any)._onPanelClosed();
+        expect(video.play).toHaveBeenCalledTimes(1);
+        dict.stop();
+    });
+});
+
+it('handles a tokenizer outage during a word tap without an unhandled rejection', async () => {
+    const { subtitleTokens } = await import('./token-cache');
+    const tokenize = jest.spyOn(subtitleTokens, 'get').mockRejectedValue(new Error('offline'));
+    const dict = new SaviHoverDictionary() as any;
+    const toast = jest.spyOn(dict, '_toast').mockImplementation(() => {});
+    try {
+        await expect(dict._openWordDetailAt(document.createElement('span'), '猫', 1, 1)).resolves.toBeUndefined();
+        expect(toast).toHaveBeenCalled();
+    } finally {
+        tokenize.mockRestore();
+        dict.stop();
+    }
 });

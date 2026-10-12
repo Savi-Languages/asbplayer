@@ -37,6 +37,7 @@ describe('paused subtitle interest', () => {
         });
         document.body.innerHTML = '<span class="asbplayer-subtitle-text">準備に手間取った</span>';
         const line = document.querySelector('span')!;
+        controller.setToolbarEnabled(true);
         controller.start('ja');
         await flush();
         line.dispatchEvent(new MouseEvent('mousemove', { bubbles: true }));
@@ -51,6 +52,7 @@ describe('paused subtitle interest', () => {
         await flush();
         expect(send.mock.calls.filter(([m]) => m.command === 'savi-save-watch-interest')).toHaveLength(1);
         controller.stop();
+        controller.setToolbarEnabled(true);
         controller.start('ja');
         await flush();
         line.dispatchEvent(new MouseEvent('mousemove', { bubbles: true }));
@@ -71,6 +73,7 @@ describe('paused subtitle interest', () => {
             send,
         });
         document.body.innerHTML = '<span class="asbplayer-subtitle-text">準備に手間取った</span>';
+        controller.setToolbarEnabled(true);
         controller.start('ja');
         await flush();
         document.querySelector('span')!.dispatchEvent(new MouseEvent('mousemove', { bubbles: true }));
@@ -90,6 +93,7 @@ test('Listen has a reversible text reveal and teardown restores subtitles', asyn
         onModeChange,
         send: jest.fn(async () => ({ account: 'u', enabled: true, mode: 'listen' })),
     });
+    c.setToolbarEnabled(true);
     c.start('ja');
     await flush();
     expect(onModeChange).toHaveBeenLastCalledWith('listen', true);
@@ -133,6 +137,7 @@ describe('study controls', () => {
             replay,
             onModeChange,
         });
+        controller.setToolbarEnabled(true);
         controller.start('ja');
         await flush();
         button('Savi modes').click();

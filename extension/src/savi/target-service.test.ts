@@ -1,9 +1,9 @@
 import { prepareTargets, drainTargetFeedback, drainTargetMines, queueTargetMines } from './target-service';
 import { storedAccount, currentAccessToken } from './account';
-import { mineHeardTarget } from './daemon-client';
+import { mineHeardTarget, SaviDaemonHttpError } from './daemon-client';
 jest.mock('./account', () => ({ storedAccount: jest.fn(), currentAccessToken: jest.fn() }));
 jest.mock('./cloud-client', () => ({ resolveCloudBase: (url: string) => url || 'https://test.invalid' }));
-jest.mock('./daemon-client', () => ({ mineHeardTarget: jest.fn() }));
+jest.mock('./daemon-client', () => ({ ...jest.requireActual('./daemon-client'), mineHeardTarget: jest.fn() }));
 let data: Record<string, any>;
 beforeEach(() => {
     jest.resetAllMocks();
@@ -118,6 +118,90 @@ it('deduplicates enqueue and lets later lines progress past a retryable failure'
     expect(mineHeardTarget).toHaveBeenCalledWith({}, expect.objectContaining({ eligible: true, autoMineToAnki: true }));
     expect(Object.values(data).filter((v) => v.done)).toHaveLength(1);
     expect(Object.values(data).filter((v) => v.payload)).toHaveLength(1);
+    const retry = Object.values(data).find((v) => v.payload) as any;
+    expect(retry.attempts).toBe(1);
+    expect(retry.retryAt).toBeGreaterThan(Date.now());
+});
+
+it('honors target-mine backoff before making another cloud eligibility request', async () => {
+    await queueTargetMines('', 'alice', [mine('関与')]);
+    const key = Object.keys(data).find((candidate) => candidate.startsWith('saviTargetMine:'))!;
+    data[key].attempts = 1;
+    data[key].retryAt = Date.now() + 60_000;
+    (global as any).fetch = jest.fn(async () => {
+        throw new Error('must not retry during backoff');
+    });
+
+    await drainTargetMines('', async () => ({}) as any);
+
+    expect((global as any).fetch).not.toHaveBeenCalled();
+    expect(mineHeardTarget).not.toHaveBeenCalled();
+    expect(data[key].payload).toBeDefined();
+});
+
+it.each([400, 409])('drops a permanently invalid target mine after daemon HTTP %s', async (status) => {
+    await queueTargetMines('', 'alice', [mine('関与')]);
+    (global as any).fetch = jest.fn(async () => ({
+        ok: true,
+        json: async () => ({ account: 'alice', eligible: ['関与'], autoMineToAnki: false }),
+    }));
+    (mineHeardTarget as jest.Mock).mockRejectedValue(new SaviDaemonHttpError(status, `daemon ${status}`));
+
+    await drainTargetMines('', async () => ({}) as any);
+
+    expect(Object.keys(data).filter((key) => key.startsWith('saviTargetMine:'))).toHaveLength(0);
+});
+
+it('rechecks consent on due Anki retries but not during backoff', async () => {
+    await queueTargetMines('', 'alice', [{ ...mine('関与'), exportToAnki: true }]);
+    (global as any).fetch = jest.fn(async () => ({
+        ok: true,
+        json: async () => ({ account: 'alice', eligible: ['関与'], autoMineToAnki: true }),
+    }));
+    (mineHeardTarget as jest.Mock).mockResolvedValueOnce({ ok: true, ankiPending: true });
+
+    await drainTargetMines('', async () => ({}) as any);
+    const key = Object.keys(data).find((candidate) => candidate.startsWith('saviTargetMine:'))!;
+    expect(data[key].decision).toEqual({ eligible: true, autoMineToAnki: true });
+    expect(data[key].retryAt).toBeGreaterThan(Date.now());
+
+    data[key].retryAt = Date.now() - 1;
+    (global as any).fetch.mockClear().mockResolvedValue({
+        ok: true,
+        json: async () => ({ account: 'alice', eligible: ['関与'], autoMineToAnki: false }),
+    });
+    (mineHeardTarget as jest.Mock).mockResolvedValueOnce({ ok: true });
+    await drainTargetMines('', async () => ({}) as any);
+
+    expect((global as any).fetch).toHaveBeenCalledTimes(1);
+    expect(mineHeardTarget).toHaveBeenLastCalledWith(
+        expect.anything(),
+        expect.objectContaining({ autoMineToAnki: false })
+    );
+    expect(Object.values(data).filter((value) => value.done)).toHaveLength(1);
+});
+
+it('caps repeated transient mine attempts and discards the sensitive payload', async () => {
+    await queueTargetMines('', 'alice', [mine('関与')]);
+    (global as any).fetch = jest.fn(async () => ({
+        ok: true,
+        json: async () => ({ account: 'alice', eligible: ['関与'], autoMineToAnki: false }),
+    }));
+    (mineHeardTarget as jest.Mock).mockRejectedValue(new Error('daemon offline'));
+    const key = Object.keys(data).find((candidate) => candidate.startsWith('saviTargetMine:'))!;
+
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+        if (data[key]?.retryAt) data[key].retryAt = Date.now() - 1;
+        await drainTargetMines('', async () => ({}) as any);
+    }
+
+    expect(data[key]).toEqual(
+        expect.objectContaining({ base: 'https://test.invalid', account: 'alice', exhausted: true })
+    );
+    expect(data[key].payload).toBeUndefined();
+    const calls = (global as any).fetch.mock.calls.length;
+    await drainTargetMines('', async () => ({}) as any);
+    expect((global as any).fetch).toHaveBeenCalledTimes(calls);
 });
 it('checks new local dismissals for each queued line and never delivers another account', async () => {
     await queueTargetMines('', 'alice', [mine('証拠'), mine('関与')]);
@@ -186,4 +270,50 @@ it('uses the UI filesystem-safe capture mapping before attempting metadata resol
         'https://test.invalid/v2/settings',
         'https://test.invalid/v2/episodes/99/2/3/targets?lang=ja',
     ]);
+});
+
+it('backs off target feedback failures without hiding the pending dismissal', async () => {
+    data['saviTargetFeedback:dismissal'] = { base: 'https://test.invalid', account: 'alice', action };
+    (global as any).fetch = jest.fn(async () => ({ ok: false, status: 500 }));
+    await drainTargetFeedback('');
+    await drainTargetFeedback('');
+    expect((global as any).fetch).toHaveBeenCalledTimes(1);
+    expect(data['saviTargetFeedback:dismissal'].action).toEqual(action);
+    expect(data['saviTargetFeedback:dismissal'].retryAt).toBeGreaterThan(Date.now());
+});
+
+it('keeps Anki exports retryable after an episode and still caps the total retry window', async () => {
+    let now = Date.now();
+    const start = now;
+    const clock = jest.spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+        await queueTargetMines('', 'alice', [{ ...mine('関与'), exportToAnki: true }]);
+        (global as any).fetch = jest.fn(async () => ({
+            ok: true,
+            json: async () => ({ account: 'alice', eligible: ['関与'], autoMineToAnki: true }),
+        }));
+        (mineHeardTarget as jest.Mock).mockResolvedValue({ ok: true, ankiPending: true });
+        const key = Object.keys(data).find((k) => k.startsWith('saviTargetMine:'))!;
+        for (let i = 0; i < 20 && !data[key].exhausted; i++) {
+            await drainTargetMines('', async () => ({}) as any);
+            if (!data[key].exhausted) now = data[key].retryAt;
+        }
+        expect(data[key].exhausted).toBe(true);
+        expect(now - start).toBeGreaterThan(12 * 60 * 60_000);
+        expect(now - start).toBeLessThan(24 * 60 * 60_000);
+        expect((global as any).fetch).toHaveBeenCalledTimes(12);
+    } finally {
+        clock.mockRestore();
+    }
+});
+
+it.each([400, 409])('preserves a durable mine when cloud eligibility returns HTTP %s', async (status) => {
+    await queueTargetMines('', 'alice', [mine('関与')]);
+    (global as any).fetch = jest.fn(async () => ({ ok: false, status }));
+    await drainTargetMines('', async () => ({}) as any);
+    const row = Object.values(data).find((row) => row.payload);
+    expect(row).toBeDefined();
+    expect(row.attempts).toBe(1);
+    expect(row.retryAt).toBeGreaterThan(Date.now());
+    expect(mineHeardTarget).not.toHaveBeenCalled();
 });

@@ -13,6 +13,14 @@ import { ensureStoragePersisted } from '@project/common/util';
 
 type Unbinder = (() => void) | false;
 
+export function adjustedBaseSubtitleOffset(baseOffset: number, increase: boolean, visibleOffset = baseOffset): number {
+    const base = Math.max(0, baseOffset);
+    if (increase) return Math.max(base, visibleOffset) + 20;
+    // Below the controls floor, repeated Down presses must not silently ruin
+    // the global preference used by sites without automatic clearance.
+    return visibleOffset > base ? base : Math.max(0, base - 20);
+}
+
 export default class KeyBindings {
     private _keyBinder: DefaultKeyBinder | undefined;
 
@@ -154,7 +162,7 @@ export default class KeyBindings {
                 event.preventDefault();
                 event.stopImmediatePropagation();
                 context.seek(subtitle.start / 1000);
-                if (context.alwaysPlayOnSubtitleRepeat) context.play();
+                if (context.alwaysPlayOnSubtitleRepeat) context.play(true);
             },
             () => context.subtitleController.subtitles.length === 0,
             () => context.video.currentTime * 1000,
@@ -336,8 +344,13 @@ export default class KeyBindings {
                 event.preventDefault();
                 event.stopImmediatePropagation();
 
-                const currentOffset = context.subtitleController.bottomSubtitlePositionOffset;
-                const newOffset = currentOffset + (increase ? 20 : -20);
+                const newOffset = adjustedBaseSubtitleOffset(
+                    context.saviControlsClearance.baseOffsetPx,
+                    increase,
+                    context.saviControlsClearance.effectiveOffsetPx()
+                );
+
+                if (newOffset === context.saviControlsClearance.baseOffsetPx) return;
 
                 context.settings
                     .set({ subtitlePositionOffset: newOffset })

@@ -11,6 +11,20 @@
 
 import type { VideoDataSubtitleTrack } from '@project/common';
 
+/** A configured learning target always wins. Otherwise use trustworthy audio
+ * metadata for this video only, without writing an account preference. */
+export const subtitleLanguageForVideo = (target: string, audioLanguage?: string): string => {
+    if (target.trim()) return target.trim();
+    const candidate = audioLanguage?.trim();
+    if (!candidate || ['und', 'mul', 'zxx'].includes(primarySubtag(candidate))) return '';
+    try {
+        Intl.getCanonicalLocales(candidate); // Validate without rewriting player aliases (e.g. iw → he).
+        return candidate;
+    } catch {
+        return '';
+    }
+};
+
 /** The BCP-47 primary subtag, lowercased (`es-419` → `es`). */
 export const primarySubtag = (language: string): string => language.trim().toLowerCase().split('-')[0];
 

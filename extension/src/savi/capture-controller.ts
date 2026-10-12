@@ -21,9 +21,11 @@ import {
     deriveEpisodeId,
     deriveShowAndTitle,
     deriveShowAndTitleFromBasename,
+    captureTitle,
     youtubeShowAndTitle,
     youtubeShowId,
 } from './episode';
+import { allowsAutomaticCapture } from './capture-context';
 import { NativeSubtitleHider, nativeSubtitleSelectorForHost } from './native-subtitle-hider';
 import { SaviRecordButton } from './record-button';
 import { SaviReplayButton } from './replay-button';
@@ -44,12 +46,16 @@ export interface SaviCaptureHost {
     readonly video: HTMLMediaElement;
     readonly settings: SettingsProvider;
     currentSubtitles: () => SerializableSubtitle[];
+    replay: (startMs: number) => Promise<void>;
     videoSrc: () => string;
     // asbplayer's own detected name for the loaded subtitle track, e.g.
     // "<Show> S<NN>E<NN> <Episode Title>" (films: just "<Show>"). Derived from
     // the streaming site's video metadata API, so it's the most reliable
     // source of show/title — preferred over DOM/document.title scraping.
     subtitleFileName: () => string;
+    /** Language of the loaded track, scoped to this binding rather than a
+     * remembered site preference. Optional for legacy/manual integrations. */
+    subtitleLanguage?: () => string | undefined;
     notify: (locKey: string, replacements?: { [key: string]: string }) => void;
 }
 
@@ -157,6 +163,9 @@ export class SaviCaptureController {
     private readonly _guard = new SaviRecordingGuard(this._recordButton);
     private _segmenter?: Segmenter;
     private _active = false;
+    private _captureEpisodeId?: string;
+    private _captureGeneration?: string;
+    private _nextPlaybackBatch = 0;
     private _starting = false;
     private _notifiedUnsupportedRate?: number;
     /** Whether this session has already said its ops are being discarded. */
@@ -231,23 +240,27 @@ export class SaviCaptureController {
                 // out-of-band; see SaviStopCaptureResponse), so don't gate
                 // on _active.
                 if (request.message.src === this._host.videoSrc()) {
-                    if (this._active) {
-                        this._deactivate();
-                    }
+                    if (
+                        (request.message.expired || request.message.reason === 'ownership-transferred') &&
+                        (!this._active ||
+                            (request.message.generation !== undefined &&
+                                request.message.generation !== this._captureGeneration))
+                    )
+                        return;
 
+                    // Delayed results for a previous take must not stop a newer
+                    // recording of the same video in this document.
+                    if (
+                        this._active &&
+                        request.message.generation !== undefined &&
+                        request.message.generation !== this._captureGeneration
+                    )
+                        return;
                     if (request.message.expired) {
-                        // The daemon auto-finished the session while we were
-                        // idle (or restarted). The user is clearly watching
-                        // again — restart the capture; the new take merges
-                        // with what was already finished. A deliberate stop
-                        // stays stopped.
-                        const { episodeId } = this._pageMetadata();
-                        if (episodeId !== undefined && !this._starting && !this._deliberatelyStopped.has(episodeId)) {
-                            this._host.notify('Savi: capture restarted after idle timeout');
-                            this.start(false);
-                        }
+                        this._recoverExpiredCapture();
                         return;
                     }
+                    if (this._active) this._deactivate();
 
                     this._notifyFinished(request.message);
                 }
@@ -284,6 +297,10 @@ export class SaviCaptureController {
         // The Replay control is a playback aid, independent of capture — surface
         // it whenever there are subtitles to replay.
         this._replayButton.show();
+        // Auto-capture controls automatic starts, not access to manual
+        // recording. Show synchronously so a delayed settings read cannot
+        // recreate this control after subtitle reset or unbind.
+        this._recordButton.show();
         this._host.settings
             .get(['saviCaptureEnabled', 'saviHideNativeSubtitles', 'saviDaemonUrl'])
             .then(({ saviCaptureEnabled, saviHideNativeSubtitles }) => {
@@ -299,12 +316,7 @@ export class SaviCaptureController {
                 }
 
                 if (saviCaptureEnabled) {
-                    // Surface the Record control whenever capture is on offer,
-                    // and auto-start for the no-friction case — unless the user
-                    // deliberately stopped this episode earlier in the session.
-                    this._recordButton.show();
-                    // The speed selector rides with the Record control: both are
-                    // capture affordances, and SAVI.md documents them together.
+                    // Keep the speed selector's existing auto-capture setting.
                     // This is the ONLY speed picker — MobileVideoOverlay used to
                     // render its own identical row, which showed up as a second
                     // panel over the video whenever capture was enabled.
@@ -315,6 +327,7 @@ export class SaviCaptureController {
                     // throwaway id and split the episode's takes in two.
                     if (
                         episodeId !== undefined &&
+                        allowsAutomaticCapture() &&
                         !this._active &&
                         !this._starting &&
                         !this._deliberatelyStopped.has(episodeId)
@@ -322,7 +335,6 @@ export class SaviCaptureController {
                         this.start(false);
                     }
                 } else {
-                    this._recordButton.hide();
                     this._speedControl.hide();
                 }
             });
@@ -351,8 +363,9 @@ export class SaviCaptureController {
         if (!current) {
             return;
         }
-        video.currentTime = current.start / 1000;
-        void video.play();
+        return this._host.replay(current.start).catch(() => {
+            this._host.notify('Could not replay this line; please try again');
+        });
     }
 
     // Called when subtitles are reset (e.g. SPA navigation to the next
@@ -424,7 +437,9 @@ export class SaviCaptureController {
                 this._host.notify('Savi: waiting for the episode to load');
                 return;
             }
-            const lang = (streamingLastLanguagesSynced[window.location.host] ?? []).find((l) => l && l !== '-');
+            const lang =
+                this._host.subtitleLanguage?.() ??
+                (streamingLastLanguagesSynced[window.location.host] ?? []).find((l) => l && l !== '-');
 
             const command: SaviCommand<SaviStartCaptureMessage> = {
                 sender: 'savi-video',
@@ -433,7 +448,7 @@ export class SaviCaptureController {
                     episodeId,
                     show,
                     showId: this._showId ?? this._youtubeShowId(),
-                    title,
+                    title: captureTitle(this._safeLocationHref(), title),
                     lang,
                     subtitles: serializeToSrt(subtitles),
                     subtitleFormat: 'srt',
@@ -450,6 +465,9 @@ export class SaviCaptureController {
                 const segmenter = new Segmenter();
                 this._segmenter = segmenter;
                 this._active = true;
+                this._captureEpisodeId = episodeId;
+                this._captureGeneration = response.generation;
+                this._nextPlaybackBatch = 0;
                 this._warnedDroppedOps = false;
                 this._notifiedUnsupportedRate = undefined;
                 this._attachVideoListeners();
@@ -657,6 +675,8 @@ export class SaviCaptureController {
             }
         }
 
+        const episodeId = this._captureEpisodeId;
+        const generation = this._captureGeneration;
         const segmenter = this._segmenter;
 
         if (segmenter !== undefined) {
@@ -668,14 +688,23 @@ export class SaviCaptureController {
         try {
             const command: SaviCommand<SaviStopCaptureMessage> = {
                 sender: 'savi-video',
-                message: { command: 'savi-stop-capture' },
+                message: { command: 'savi-stop-capture', episodeId, generation },
             };
-            const response = (await browser.runtime.sendMessage(command)) as SaviStopCaptureResponse;
+            let response: SaviStopCaptureResponse | undefined;
+            let attempts = 0;
+            await sendWithRetry(async () => {
+                attempts += 1;
+                response = (await browser.runtime.sendMessage(command)) as SaviStopCaptureResponse;
+            });
 
             if (response?.stopped) {
                 // The episode summary toast follows via 'savi-capture-ended'
                 // once the daemon finishes stitching.
                 this._host.notify('Savi: finishing episode…');
+            } else if (attempts > 1 && response?.alreadyStopped) {
+                // The first reply may have been lost. Only the asynchronous
+                // finish summary can confirm that the recording was saved.
+                this._host.notify('Savi: recording already stopped.');
             } else {
                 this._host.notify(`Savi: capture failed — ${response?.errorMessage ?? 'unknown error'}`);
             }
@@ -685,8 +714,28 @@ export class SaviCaptureController {
         }
     }
 
+    private _recoverExpiredCapture() {
+        this._deactivate();
+        // Resume the existing recording intent, including a manually started
+        // take. A deliberate Stop has already deactivated the controller.
+        const { episodeId } = this._pageMetadata();
+        if (
+            allowsAutomaticCapture() &&
+            episodeId !== undefined &&
+            !this._starting &&
+            !this._deliberatelyStopped.has(episodeId)
+        ) {
+            this._host.notify('Savi: capture restarted after idle timeout');
+            void this.start(false);
+        } else {
+            this._host.notify('Savi: recording expired. Press Record to continue.');
+        }
+    }
+
     private _deactivate() {
         this._active = false;
+        this._captureEpisodeId = undefined;
+        this._captureGeneration = undefined;
         this._segmenter = undefined;
         this._detachVideoListeners();
         this._recordButton.setState('idle');
@@ -882,11 +931,18 @@ export class SaviCaptureController {
 
     /** Deliver a batch and hand back the daemon's answer (`undefined` when it
      *  could not be delivered at all). */
-    private async _deliverOps(ops: SaviSegmentOp[]): Promise<SaviPlaybackStateResponse | undefined> {
+    private async _deliverOps(
+        ops: SaviSegmentOp[],
+        allowResync = true
+    ): Promise<SaviPlaybackStateResponse | undefined> {
+        const generation = this._captureGeneration;
         const command: SaviCommand<SaviPlaybackStateMessage> = {
             sender: 'savi-video',
             message: {
                 command: 'savi-playback-state',
+                batchId: ++this._nextPlaybackBatch,
+                episodeId: this._captureEpisodeId,
+                generation: this._captureGeneration,
                 ops,
             },
         };
@@ -900,6 +956,38 @@ export class SaviCaptureController {
             // A silent failure here is what made this take days to find.
             console.warn('savi: could not deliver segment ops after retries; coverage may overstate', ops);
             return undefined;
+        }
+        if (response?.staleSeq && this._active && generation === this._captureGeneration) {
+            if (response.sequenceResynced && allowResync) {
+                const video = this._host.video;
+                // A lost reply may describe already-applied boundaries. Close
+                // whatever is live, then use a NEW id at the current playhead.
+                const outputs =
+                    video.paused || video.ended
+                        ? (this._segmenter?.pause() ?? [])
+                        : (this._segmenter?.recut(video.currentTime * 1000) ?? []);
+                const starts = this._opsFromOutputs(outputs).filter((op) => op.op === 'segment-start');
+                this._lastReassertMs = Date.now();
+                const recovered = await this._deliverOps([{ op: 'segment-end' }, ...starts], false);
+                if (recovered?.ok && this._active && generation === this._captureGeneration)
+                    this._host.notify('Savi: recording connection recovered. There may be a short gap.');
+                return recovered;
+            }
+            if (this._captureEpisodeId) this._deliberatelyStopped.add(this._captureEpisodeId);
+            this._deactivate();
+            this._host.notify(
+                'Savi: recording updates were rejected. Close other recording tabs and update Savi before restarting. Existing audio was left intact.'
+            );
+            return response;
+        }
+        if (response?.sessionGone && this._active && generation === this._captureGeneration) {
+            this._recoverExpiredCapture();
+        } else if (response?.ownerAbsent && this._active && generation === this._captureGeneration) {
+            this._deactivate();
+            this._host.notify('Savi: recording stopped.');
+        } else if (response?.notOwner && this._active && generation === this._captureGeneration) {
+            this._deactivate();
+            this._host.notify('Savi: this tab no longer owns the recording.');
         }
         return response;
     }

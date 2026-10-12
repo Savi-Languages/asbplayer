@@ -13,6 +13,8 @@ interface Sources {
     pause(): void;
     play(): void;
     overPopup(x: number, y: number): boolean;
+    resumeOnLeave?(): boolean;
+    holdOpen?(): boolean;
 }
 const textOf = (element: HTMLElement) => {
     const copy = element.cloneNode(true) as HTMLElement;
@@ -20,9 +22,11 @@ const textOf = (element: HTMLElement) => {
     return (copy.textContent ?? '').replace(/\s+/g, '');
 };
 const cueText = (cue: Cue) => {
-    const element = document.createElement('span');
-    element.innerHTML = cue.text;
-    return textOf(element);
+    // Provider subtitle markup is untrusted; never parse it in the live document.
+    const template = document.createElement('template');
+    template.innerHTML = cue.text;
+    template.content.querySelectorAll('rt, rp').forEach((node) => node.remove());
+    return (template.content.textContent ?? '').replace(/\s+/g, '');
 };
 
 /** Playback ownership is independent of language, dictionary requests and study mode. */
@@ -31,6 +35,7 @@ export class SaviHoverPause {
     private cue?: Cue;
     private timer?: ReturnType<typeof setTimeout>;
     private ownsPause = false;
+    private acknowledgementTimer?: ReturnType<typeof setTimeout>;
     private left = false;
     constructor(private readonly sources: Sources) {}
 
@@ -56,22 +61,49 @@ export class SaviHoverPause {
     }
     private cancel = () => {
         clearTimeout(this.timer);
+        clearTimeout(this.acknowledgementTimer);
         this.cue = undefined;
         this.ownsPause = false;
         this.left = false;
     };
     private paused = () => {
+        clearTimeout(this.acknowledgementTimer);
         if (!this.ownsPause)
             this.cancel(); // A manual/other feature's pause stays paused.
         else if (this.left) this.release(); // Netflix acknowledges via a later media event.
     };
+    get hasOwnedPause(): boolean {
+        return this.ownsPause;
+    }
+    /** The immediate-hover fallback must only defer when this controller can match the cue. */
+    handlesHover(target: EventTarget | null): boolean {
+        if (!this.sources.enabled() || this.sources.video.seeking) return false;
+        const line = lineElement(target);
+        return line !== null && this.matchCue(line) !== undefined;
+    }
+    private matchCue(line: HTMLElement): Cue | undefined {
+        const now = this.sources.video.currentTime * 1000;
+        const text = textOf(line);
+        const track = Number(line.closest('[data-track]')?.getAttribute('data-track') ?? 0);
+        return this.sources
+            .subtitles()
+            .find((cue) => (cue.track ?? 0) === track && cue.start <= now && now < cue.end && cueText(cue) === text);
+    }
     private release() {
         clearTimeout(this.timer);
-        this.cue = undefined;
         this.left = true;
+        if (this.ownsPause && this.sources.holdOpen?.()) {
+            // The panel may have opened over a pause we own. Keep that pause until
+            // it closes; don't require another pointer movement to release it.
+            this.timer = setTimeout(() => {
+                if (this.left) this.release();
+            }, 50);
+            return;
+        }
+        this.cue = undefined;
         if (this.ownsPause && this.sources.video.paused) {
             this.ownsPause = false;
-            this.sources.play();
+            if (this.sources.resumeOnLeave?.() !== false) this.sources.play();
         }
     }
     private out = (event: MouseEvent) => {
@@ -83,7 +115,6 @@ export class SaviHoverPause {
             return;
         }
         const { video } = this.sources;
-        const now = video.currentTime * 1000;
         const candidates = new Set<HTMLElement>();
         const direct = lineElement(event.target);
         if (direct) candidates.add(direct);
@@ -112,14 +143,14 @@ export class SaviHoverPause {
             // Keep the original line while held, including a slightly late media pause.
             if (this.cue && (this.cue.track ?? 0) === track && cueText(this.cue) === text) {
                 this.left = false;
+                if (this.ownsPause) clearTimeout(this.timer);
                 return;
             }
-            const cue = this.sources
-                .subtitles()
-                .find((c) => (c.track ?? 0) === track && c.start <= now && now < c.end && cueText(c) === text);
+            const cue = this.matchCue(line);
             if (!cue) continue;
             if (this.ownsPause) {
                 this.left = false;
+                if (this.ownsPause) clearTimeout(this.timer);
                 return;
             }
             this.cancel();
@@ -152,6 +183,10 @@ export class SaviHoverPause {
         // must not move the pause to a different subtitle. A tiny lead keeps text visible.
         if (remaining <= 15) {
             this.ownsPause = true;
+            // A lost bridge request must not claim an unrelated manual pause later.
+            this.acknowledgementTimer = setTimeout(() => {
+                if (!video.paused) this.cancel();
+            }, 2000);
             this.sources.pause();
         } else {
             this.timer = setTimeout(this.tick, Math.max(4, Math.min(50, (remaining - 10) / (video.playbackRate || 1))));

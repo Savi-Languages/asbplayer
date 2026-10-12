@@ -10,8 +10,10 @@
 // Derivation, in order:
 //   Netflix  → `netflix:<videoId>`  videoId = the /watch/<videoId> path
 //              segment (NOT the trackId query param, which is per-play).
-//   YouTube  → `youtube:<videoId>`  videoId = ?v= (watch pages) or the
-//              youtu.be/<id> path segment (short links).
+//   YouTube  → `youtube:<videoId>`  videoId = ?v= (watch pages), the
+//              youtu.be/<id> path segment (short links), or the
+//              /embed/<id> path segment of an embedded player — on
+//              youtube.com and on the embed-only hosts alike.
 //   Fallback → `<hostname>:<slug(title)>` with NO date, so it stays stable
 //              across visits. The title is stripped of a trailing site
 //              suffix (" - Netflix", " | Netflix", " - YouTube", …) first.
@@ -68,25 +70,61 @@ const netflixVideoId = (parsed: URL): string | undefined => {
     return match ? match[1] : undefined;
 };
 
+// Every host that serves a YouTube player. The last three never serve a watch
+// page, only an embedded player inside someone else's page, where the
+// document title is a bare "YouTube" for every video — so without an entry
+// here ALL of them derived the one id `youtube.googleapis.com:youtube`.
+const youtubeHosts = ['youtube.com', 'youtube-nocookie.com', 'youtube.googleapis.com', 'youtubeeducation.com'];
+
+// `/embed/<segment>` values that name a player MODE, not a video: the video is
+// chosen by ?list= / ?channel= and is not in the URL at all. Both happen to be
+// 11 characters, the length of a real id, so a length check cannot tell them
+// apart.
+const youtubeEmbedModes = ['videoseries', 'live_stream'];
+
+// An embedded player carries its id in the path: /embed/<id>, or the legacy
+// /v/<id> and /e/<id> forms (which is what youtube.googleapis.com mostly
+// serves).
+const youtubeEmbedVideoId = (parsed: URL): string | undefined => {
+    const match = parsed.pathname.match(/^\/(?:embed|v|e)\/([^/]+)/);
+
+    if (!match || youtubeEmbedModes.includes(match[1])) {
+        return undefined;
+    }
+
+    return match[1];
+};
+
 // YouTube ids come from `?v=` on youtube.com/watch (and music.youtube.com),
-// or the first path segment of a youtu.be short link.
+// the path of an embedded player, or the first path segment of a youtu.be
+// short link.
 const youtubeVideoId = (parsed: URL): string | undefined => {
     if (hostMatches(parsed.host, 'youtu.be')) {
         const segment = parsed.pathname.split('/').filter(Boolean)[0];
         return segment || undefined;
     }
 
-    if (hostMatches(parsed.host, 'youtube.com')) {
-        const v = parsed.searchParams.get('v');
-        return v || undefined;
+    if (youtubeHosts.some((host) => hostMatches(parsed.host, host))) {
+        const pathVideoId = parsed.pathname.match(/^\/(?:shorts|live)\/([^/]+)/)?.[1];
+        return parsed.searchParams.get('v') || pathVideoId || youtubeEmbedVideoId(parsed);
     }
 
     return undefined;
 };
 
+/** Metadata sent to capture/start must never replace a real episode title with
+ *  the generic title rendered by YouTube players. Omitting the field lets the
+ *  daemon preserve metadata already stored for this stable episode id. */
+export const captureTitle = (url: string, title: string): string | undefined => {
+    const value = asString(title).trim();
+    const parsed = parseUrl(url);
+    const isYoutubeVideo = parsed !== undefined && youtubeVideoId(parsed) !== undefined;
+    return isYoutubeVideo && /^youtube$/iu.test(stripSiteSuffix(value)) ? undefined : value || undefined;
+};
+
 // Hosts whose episodes have a STABLE platform id. On these, a title slug is
 // never an acceptable substitute — see `deriveEpisodeId`.
-const platformHosts = ['netflix.com', 'youtube.com', 'youtu.be'];
+const platformHosts = ['netflix.com', 'youtu.be', ...youtubeHosts];
 
 // Pure, total: never throws.
 //

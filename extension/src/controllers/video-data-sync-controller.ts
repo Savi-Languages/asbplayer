@@ -25,12 +25,19 @@ import i18n from 'i18next';
 import { ExtensionGlobalStateProvider } from '@/services/extension-global-state-provider';
 import { isOnTutorialPage } from '@/services/tutorial';
 import { extractExtension } from '@/pages/util';
-import { parseShowQuery, primarySubtag, selectNativeTrack, selectTrackForLanguage } from '@/savi/track-select';
+import {
+    parseShowQuery,
+    primarySubtag,
+    selectNativeTrack,
+    selectTrackForLanguage,
+    subtitleLanguageForVideo,
+} from '@/savi/track-select';
 import { decideLanguageGate } from '@/savi/language-gate';
 import { titlesOverlap } from '@/savi/subtitle-relevance';
 import { mutedEpisodes } from '@/savi/muted-episodes';
 import { mutedSites, siteKeyForUrl } from '@/savi/muted-sites';
 import { deriveEpisodeId } from '@/savi/episode';
+import { subtitleSourceMatchesUrl } from '@/savi/subtitle-source';
 import { displayNameFor, localVideoName, videoFilenameFromUrl, type ParsedVideoName } from '@/savi/local-video';
 import { getCachedRoamingSettings, SaviRoamingSettings } from '@/savi/cloud-settings';
 import {
@@ -73,19 +80,49 @@ interface ShowOptions {
     fromAsbplayerId?: string;
 }
 
-const fetchDataForLanguageOnDemand = (language: string): Promise<VideoData> => {
+// Shared by controller instances so simultaneous video bindings cannot consume
+// one another's replies. These are correlation tokens, not credentials.
+let syncRequestSequence = 0;
+const nextSyncRequestId = () => String(++syncRequestSequence);
+
+const fetchDataForLanguageOnDemand = (language: string, episodeId?: string): Promise<VideoData> => {
+    const requestId = nextSyncRequestId();
     return new Promise((resolve, reject) => {
+        const cleanup = () => {
+            document.removeEventListener('asbplayer-synced-language-data', listener, false);
+            window.clearTimeout(timeout);
+        };
         const listener = (event: Event) => {
             const data = (event as CustomEvent).detail as VideoData;
+            if (data.requestId !== requestId) {
+                return;
+            }
+            cleanup();
             resolve(data);
-            document.removeEventListener('asbplayer-synced-language-data', listener, false);
         };
+        const timeout = window.setTimeout(() => {
+            cleanup();
+            reject(new Error('Timed out fetching Netflix subtitle track'));
+        }, 20000);
         document.addEventListener('asbplayer-synced-language-data', listener, false);
-        document.dispatchEvent(new CustomEvent('asbplayer-get-synced-language-data', { detail: language }));
+        let payload = { requestId, language, episodeId };
+        if (typeof cloneInto === 'function') {
+            payload = cloneInto(payload, document.defaultView);
+        }
+        document.dispatchEvent(new CustomEvent('asbplayer-get-synced-language-data', { detail: payload }));
     });
 };
 
+class StaleSubtitleResponse extends Error {}
+
 const globalStateProvider = new ExtensionGlobalStateProvider();
+
+/** Compare identities from the same namespace only. Legacy integrations may
+ * omit identity; Netflix's player id is never compared with its watch URL. */
+export const videoDataMatchesEpisode = (
+    dataEpisodeId: string | undefined,
+    currentEpisodeId: string | undefined
+): boolean => dataEpisodeId === undefined || dataEpisodeId === currentEpisodeId;
 
 export default class VideoDataSyncController {
     private readonly _context: Binding;
@@ -97,6 +134,7 @@ export default class VideoDataSyncController {
     private _lastLanguagesSynced: { [key: string]: string[] };
     private _emptySubtitle: VideoDataSubtitleTrack;
     private _syncedData?: VideoData;
+    private _syncedDataRequestId?: string;
     /** Filename-derived identity for a delegate-less page (SV-44). Set only on
      *  that path; a streaming page leaves it undefined and keeps using the
      *  site's own basename. */
@@ -113,6 +151,9 @@ export default class VideoDataSyncController {
     private _autoSyncAttempted: boolean = false;
     private _saviAutoLoadAttempted: boolean = false;
     private _dataReceivedListener?: (event: Event) => void;
+    private _episodeSyncRetry?: number;
+    private _episodeSyncRetryAttempts = 0;
+    private _episodeSyncRetryLocation?: string;
     private _isTutorial: boolean;
 
     constructor(context: Binding, settings: SettingsProvider) {
@@ -146,6 +187,8 @@ export default class VideoDataSyncController {
         }
 
         this._dataReceivedListener = undefined;
+        this._syncedDataRequestId = undefined;
+        this._resetEpisodeSyncRetry();
         this._syncedData = undefined;
         this._cleanupPlayBlocker();
         this._openedLocation = undefined;
@@ -218,6 +261,16 @@ export default class VideoDataSyncController {
             document.addEventListener('asbplayer-synced-data', this._dataReceivedListener, false);
         }
 
+        await this._dispatchSyncedDataRequest();
+    }
+
+    private async _dispatchSyncedDataRequest() {
+        const pageDelegate = await currentPageDelegate();
+
+        if (!this._context.hasPageScript || !pageDelegate?.isVideoPage()) {
+            return;
+        }
+
         if (pageDelegate.config.key === 'youtube') {
             const targetTranslationLanguageCodes =
                 (await this._settings.getSingle('streamingPages')).youtube.targetLanguages ?? [];
@@ -226,9 +279,45 @@ export default class VideoDataSyncController {
                 payload = cloneInto(payload, document.defaultView);
             }
             document.dispatchEvent(new CustomEvent('asbplayer-get-synced-data', { detail: payload }));
+        } else if (pageDelegate.config.key === 'netflix') {
+            this._syncedDataRequestId = nextSyncRequestId();
+            let payload = { requestId: this._syncedDataRequestId };
+            if (typeof cloneInto === 'function') {
+                payload = cloneInto(payload, document.defaultView);
+            }
+            document.dispatchEvent(new CustomEvent('asbplayer-get-synced-data', { detail: payload }));
         } else {
             document.dispatchEvent(new CustomEvent('asbplayer-get-synced-data'));
         }
+    }
+
+    private _scheduleEpisodeSyncRetry() {
+        const location = window.location.href;
+
+        if (this._episodeSyncRetryLocation !== location) {
+            this._resetEpisodeSyncRetry();
+            this._episodeSyncRetryLocation = location;
+        }
+
+        if (this._episodeSyncRetry !== undefined || this._episodeSyncRetryAttempts >= 3) {
+            return;
+        }
+
+        this._episodeSyncRetryAttempts++;
+        this._episodeSyncRetry = window.setTimeout(() => {
+            this._episodeSyncRetry = undefined;
+            void this._dispatchSyncedDataRequest();
+        }, 500);
+    }
+
+    private _resetEpisodeSyncRetry() {
+        if (this._episodeSyncRetry !== undefined) {
+            window.clearTimeout(this._episodeSyncRetry);
+        }
+
+        this._episodeSyncRetry = undefined;
+        this._episodeSyncRetryAttempts = 0;
+        this._episodeSyncRetryLocation = undefined;
     }
 
     /**
@@ -411,6 +500,18 @@ export default class VideoDataSyncController {
     }
 
     private async _setSyncedData(data: VideoData) {
+        // A late reply must not replace a newer request, even on the same URL.
+        if (data.requestId !== undefined && data.requestId !== this._syncedDataRequestId) {
+            return;
+        }
+        if (data.stale || !subtitleSourceMatchesUrl(data.sourceUrl, window.location.href)) {
+            console.info('[savi subtitle sync] discarding response after Netflix page/player changed');
+            this._scheduleEpisodeSyncRetry();
+            return;
+        }
+
+        this._resetEpisodeSyncRetry();
+
         const wasLoading = this._syncedData?.subtitles === undefined;
         this._syncedData = data;
 
@@ -506,11 +607,11 @@ export default class VideoDataSyncController {
      * exists" is true for most English videos and is exactly the false signal
      * that made savi switch itself on over English speech.
      */
-    private async _applySaviLanguageGate(targetLanguage: string): Promise<boolean> {
+    private async _applySaviLanguageGate(targetLanguage: string, inferredAudioLanguage?: string): Promise<boolean> {
         try {
             const episodeId = deriveEpisodeId(window.location.href, document.title);
             const verdict = decideLanguageGate({
-                spokenLanguage: this._syncedData?.spokenLanguage,
+                spokenLanguage: inferredAudioLanguage ?? this._syncedData?.spokenLanguage,
                 targetLanguage,
                 episodeId,
                 mutedEpisodes: await mutedEpisodes(),
@@ -536,14 +637,25 @@ export default class VideoDataSyncController {
             }
 
             const roaming = await this._saviRoamingSettings();
-            const { targetLanguage, openSubtitlesApiKey } = roaming;
+            const { openSubtitlesApiKey } = roaming;
+            const targetLanguage =
+                subtitleLanguageForVideo(roaming.targetLanguage, this._syncedData?.audioLanguage) ||
+                subtitleLanguageForVideo(roaming.targetLanguage, this._syncedData?.spokenLanguage);
+            if (!roaming.targetLanguage.trim() && targetLanguage) {
+                console.info('[savi auto-load] using audio language %s for this video (no target set)', targetLanguage);
+            }
 
             // The SV-41 gate runs FIRST and decides from the SPOKEN language
             // alone. It must stay independent of the native line below: a
             // native-language subtitle track existing on an English video is
             // exactly the "a track exists" false signal the gate was built to
             // ignore, so the second line never gets a vote on whether savi runs.
-            if (!(await this._applySaviLanguageGate(targetLanguage))) {
+            if (
+                !(await this._applySaviLanguageGate(
+                    targetLanguage,
+                    roaming.targetLanguage.trim() ? undefined : targetLanguage || undefined
+                ))
+            ) {
                 return false;
             }
             // Tolerate a settings object without the key: a cache written by a
@@ -557,7 +669,7 @@ export default class VideoDataSyncController {
 
             if (targetLanguage.trim().length === 0) {
                 console.info(
-                    '[savi auto-load] no target language set — set one in Settings → Savi (detected tracks: %s)',
+                    '[savi auto-load] no target language set and audio language unknown — choose a target in Settings → Savi (detected tracks: %s)',
                     detectedLangs.join(', ') || 'none yet'
                 );
                 return false;
@@ -599,8 +711,18 @@ export default class VideoDataSyncController {
                     );
                 }
 
-                await this._syncData(nativeTrack === undefined ? [track] : [track, nativeTrack]);
-                await this._rememberSaviLanguageForCapture(targetLanguage);
+                const loaded = await this._syncData(
+                    nativeTrack === undefined ? [track] : [track, nativeTrack],
+                    targetLanguage
+                );
+
+                if (!loaded) {
+                    return false;
+                }
+
+                if (roaming.targetLanguage.trim()) {
+                    await this._rememberSaviLanguageForCapture(targetLanguage);
+                }
                 return true;
             }
 
@@ -613,7 +735,7 @@ export default class VideoDataSyncController {
                 );
                 const loaded = await this._trySaviOpenSubtitlesFallback(targetLanguage);
 
-                if (loaded) {
+                if (loaded && roaming.targetLanguage.trim()) {
                     await this._rememberSaviLanguageForCapture(targetLanguage);
                 }
 
@@ -753,7 +875,7 @@ export default class VideoDataSyncController {
         }
 
         const name = /\.(srt|ass|ssa|vtt)$/i.test(response.name ?? '') ? response.name! : `${query}.srt`;
-        this._context.loadSubtitles([new File([response.content], name)], false);
+        this._context.loadSubtitles([new File([response.content], name)], false, undefined, language);
         return true;
     }
 
@@ -1003,36 +1125,63 @@ export default class VideoDataSyncController {
         }
 
         if (!this._wasPaused) {
-            this._context.play();
+            this._context.play(true);
         }
 
         this._wasPaused = undefined;
     }
 
-    private async _syncData(data: VideoDataSubtitleTrack[]) {
+    private async _syncData(data: VideoDataSubtitleTrack[], language?: string) {
         try {
             let subtitles: SerializedSubtitleFile[] = [];
+            let realTrackLoaded = false;
+            const sourceBasename = this._syncedData?.basename;
+            const sourceEpisodeId = this._syncedData?.episodeId;
+            const sourceUrl = this._syncedData?.sourceUrl;
+            const sourceRequestId = this._syncedData?.requestId;
 
             for (let i = 0; i < data.length; i++) {
                 const { extension, url, language, localFile } = data[i];
                 const subtitleFiles = await this._subtitlesForUrl(
-                    this._defaultVideoName(this._syncedData?.basename, data[i]),
+                    this._defaultVideoName(sourceBasename, data[i]),
                     language,
                     extension,
                     url,
-                    localFile
-                );
-                if (subtitleFiles !== undefined) {
-                    subtitles.push(...subtitleFiles);
+                    localFile,
+                    sourceEpisodeId,
+                    sourceUrl
+                ).catch(async (error) => {
+                    if (!realTrackLoaded || error instanceof StaleSubtitleResponse) throw error;
+                    console.warn('[savi subtitle sync] optional subtitle track failed', (error as Error).message);
+                    return undefined;
+                });
+                if (subtitleFiles === undefined) {
+                    if (!realTrackLoaded) return false;
+                    continue;
                 }
+                subtitles.push(...subtitleFiles);
+                if (url !== '-' && subtitleFiles.length > 0) realTrackLoaded = true;
+            }
+
+            if (
+                !subtitleSourceMatchesUrl(sourceUrl, window.location.href) ||
+                (sourceRequestId !== undefined && sourceRequestId !== this._syncedDataRequestId)
+            ) {
+                console.info(
+                    '[savi subtitle sync] page or request changed while subtitles were downloading; discarding them'
+                );
+                return false;
             }
 
             await this._syncSubtitles(
                 subtitles,
-                data.some((track) => typeof track.url === 'object')
+                data.some((track) => typeof track.url === 'object'),
+                undefined,
+                language ?? data.find((track) => track.language && track.language !== '-')?.language
             );
             return true;
         } catch (error) {
+            if (error instanceof StaleSubtitleResponse) return false;
             if (typeof (error as Error).message !== 'undefined') {
                 await this._reportError(`Data Sync failed: ${(error as Error).message}`);
             }
@@ -1044,22 +1193,53 @@ export default class VideoDataSyncController {
     private async _syncDataArray(data: ConfirmedVideoDataSubtitleTrack[], syncWithAsbplayerId?: string) {
         try {
             let subtitles: SerializedSubtitleFile[] = [];
+            let realTrackLoaded = false;
+            const sourceEpisodeId = this._syncedData?.episodeId;
+            const sourceUrl = this._syncedData?.sourceUrl;
+            const sourceRequestId = this._syncedData?.requestId;
 
             for (let i = 0; i < data.length; i++) {
                 const { name, language, extension, url, localFile } = data[i];
-                const subtitleFiles = await this._subtitlesForUrl(name, language, extension, url, localFile);
-                if (subtitleFiles !== undefined) {
-                    subtitles.push(...subtitleFiles);
+                const subtitleFiles = await this._subtitlesForUrl(
+                    name,
+                    language,
+                    extension,
+                    url,
+                    localFile,
+                    sourceEpisodeId,
+                    sourceUrl
+                ).catch(async (error) => {
+                    if (!realTrackLoaded || error instanceof StaleSubtitleResponse) throw error;
+                    console.warn('[savi subtitle sync] optional subtitle track failed', (error as Error).message);
+                    return undefined;
+                });
+                if (subtitleFiles === undefined) {
+                    if (!realTrackLoaded) return false;
+                    continue;
                 }
+                subtitles.push(...subtitleFiles);
+                if (url !== '-' && subtitleFiles.length > 0) realTrackLoaded = true;
+            }
+
+            if (
+                !subtitleSourceMatchesUrl(sourceUrl, window.location.href) ||
+                (sourceRequestId !== undefined && sourceRequestId !== this._syncedDataRequestId)
+            ) {
+                console.info(
+                    '[savi subtitle sync] page or request changed while picker subtitles were downloading; discarding them'
+                );
+                return false;
             }
 
             await this._syncSubtitles(
                 subtitles,
                 data.some((track) => typeof track.url === 'object'),
-                syncWithAsbplayerId
+                syncWithAsbplayerId,
+                data.find((track) => track.language && track.language !== '-')?.language
             );
             return true;
         } catch (error) {
+            if (error instanceof StaleSubtitleResponse) return false;
             if (typeof (error as Error).message !== 'undefined') {
                 await this._reportError(`Data Sync failed: ${(error as Error).message}`);
             }
@@ -1071,12 +1251,13 @@ export default class VideoDataSyncController {
     private async _syncSubtitles(
         serializedFiles: SerializedSubtitleFile[],
         flatten: boolean,
-        syncWithAsbplayerId?: string
+        syncWithAsbplayerId?: string,
+        language?: string
     ) {
         const files: File[] = await Promise.all(
             serializedFiles.map(async (f) => new File([base64ToBlob(f.base64, 'text/plain')], f.name))
         );
-        this._context.loadSubtitles(files, flatten, syncWithAsbplayerId);
+        this._context.loadSubtitles(files, flatten, syncWithAsbplayerId, language);
     }
 
     private async _subtitlesForUrl(
@@ -1084,7 +1265,9 @@ export default class VideoDataSyncController {
         language: string | undefined,
         extension: string,
         url: string | string[],
-        localFile: boolean | undefined
+        localFile: boolean | undefined,
+        sourceEpisodeId?: string,
+        sourceUrl?: string
     ): Promise<SerializedSubtitleFile[] | undefined> {
         if (url === '-') {
             return [
@@ -1097,35 +1280,40 @@ export default class VideoDataSyncController {
 
         if (url === 'lazy') {
             if (language === undefined) {
-                await this._reportError('Unable to determine language');
-                return undefined;
+                throw new Error('Unable to determine language');
             }
 
-            const data = await fetchDataForLanguageOnDemand(language);
+            const data = await fetchDataForLanguageOnDemand(language, sourceEpisodeId);
+
+            if (
+                data.stale ||
+                !videoDataMatchesEpisode(data.episodeId, sourceEpisodeId) ||
+                !subtitleSourceMatchesUrl(data.sourceUrl, window.location.href) ||
+                !subtitleSourceMatchesUrl(sourceUrl, window.location.href)
+            ) {
+                console.info('[savi subtitle sync] discarding stale lazy subtitle response');
+                throw new StaleSubtitleResponse();
+            }
 
             if (data.error) {
-                await this._reportError(data.error);
-                return undefined;
+                throw new Error(data.error);
             }
 
             const lazilyFetchedUrl = data.subtitles?.find((t) => t.language === language)?.url;
 
             if (lazilyFetchedUrl === undefined) {
-                await this._reportError('Failed to fetch subtitles for specified language');
-                return undefined;
+                throw new Error('Failed to fetch subtitles for specified language');
             }
 
             url = lazilyFetchedUrl;
         }
 
         if (typeof url === 'string') {
-            const response = await fetch(url)
-                .catch((error) => this._reportError(error.message))
-                .finally(() => {
-                    if (localFile) {
-                        URL.revokeObjectURL(url);
-                    }
-                });
+            const response = await fetch(url).finally(() => {
+                if (localFile) {
+                    URL.revokeObjectURL(url);
+                }
+            });
 
             if (!response) {
                 return undefined;

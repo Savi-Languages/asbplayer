@@ -25,7 +25,8 @@ export interface SaviRoamingSettings {
     readonly targetLanguage: string;
     /** BCP-47 tag/subtag for the SECOND subtitle line — the language the learner
      *  already reads, shown under the target line. Empty means no second line,
-     *  matching how an empty `targetLanguage` means no auto-load at all. */
+     *  while an empty `targetLanguage` lets subtitle auto-load use the video's
+     *  audio language when available. */
     readonly nativeLanguage: string;
     /** The first usable opensubtitles.com key from savi's api_keys rows —
      *  CACHE ONLY; managed in savi Settings, never written from here. */

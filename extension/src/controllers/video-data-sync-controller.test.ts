@@ -1,3 +1,4 @@
+/** @jest-environment-options {"url":"https://www.netflix.com/watch/111?trackId=old"} */
 // Integration test for the SV-8 savi auto-load glue inside VideoDataSyncController.
 // The controller is heavily coupled to Binding/UiFrame/page delegates, so we mock
 // those out and exercise the real `_trySaviAutoLoad` path end to end: it fetches
@@ -36,7 +37,7 @@ jest.mock('@/services/tutorial', () => ({ isOnTutorialPage: () => false }));
 jest.mock('@/pages/util', () => ({ extractExtension: (_u: string, e: string) => e }));
 jest.mock('@/savi/cloud-settings', () => ({ getCachedRoamingSettings: jest.fn() }));
 
-import VideoDataSyncController from './video-data-sync-controller';
+import VideoDataSyncController, { videoDataMatchesEpisode } from './video-data-sync-controller';
 import { getCachedRoamingSettings } from '@/savi/cloud-settings';
 import { resetMutedEpisodesMemo } from '@/savi/muted-episodes';
 
@@ -48,6 +49,18 @@ const track = (id: string, language: string, label: string) => ({
     label,
     url: `https://sub/${id}.vtt`,
     extension: 'nfimsc',
+});
+
+describe('videoDataMatchesEpisode', () => {
+    it('rejects an identified Netflix response after the page changes', () => {
+        expect(videoDataMatchesEpisode('netflix:111', 'netflix:222')).toBe(false);
+        expect(videoDataMatchesEpisode('netflix:111', undefined)).toBe(false);
+    });
+
+    it('accepts the current episode and unidentified legacy integrations', () => {
+        expect(videoDataMatchesEpisode('netflix:111', 'netflix:111')).toBe(true);
+        expect(videoDataMatchesEpisode(undefined, 'netflix:111')).toBe(true);
+    });
 });
 
 describe('VideoDataSyncController savi auto-load (SV-8)', () => {
@@ -112,8 +125,10 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
         expect(loadSubtitles).toHaveBeenCalledTimes(1);
         expect(loadSubtitles.mock.calls[0][0][0].name).toBe('Show - Spanish.nfimsc');
         expect(opensubtitlesCall()).toBeUndefined();
-        // Records the language for savi capture (localhost is the jsdom host).
-        expect(settingsSet).toHaveBeenCalledWith({ streamingLastLanguagesSynced: { localhost: ['es'] } });
+        // Records the language for savi capture (the current jsdom host).
+        expect(settingsSet).toHaveBeenCalledWith({
+            streamingLastLanguagesSynced: { [window.location.hostname]: ['es'] },
+        });
     });
 
     // The fallback searches a FILM/TV database with a fuzzy query that never
@@ -291,6 +306,65 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
         expect(loadSubtitles).not.toHaveBeenCalled();
     });
 
+    it.each(['ja', 'ja-JP'])(
+        'uses the selected audio language %s only when the target is empty',
+        async (audioLanguage) => {
+            roamingResponse = { targetLanguage: '  ', nativeLanguage: '', openSubtitlesApiKey: '' };
+            controller._syncedData = {
+                basename: 'Show',
+                audioLanguage,
+                subtitles: [track('1', 'en', 'English'), track('2', 'ja-CC', 'Japanese [CC]')],
+            };
+            expect(await controller._trySaviAutoLoad()).toBe(true);
+            expect(loadSubtitles.mock.calls[0][0][0].name).toBe('Show - Japanese [CC].nfimsc');
+            expect(settingsSet).not.toHaveBeenCalled();
+            expect(loadSubtitles.mock.calls[0][3]).toBe(audioLanguage);
+            expect(roamingResponse.targetLanguage).toBe('  ');
+        }
+    );
+
+    it('keeps legacy audio language codes matching the player caption metadata', async () => {
+        roamingResponse = { targetLanguage: '', nativeLanguage: '', openSubtitlesApiKey: '' };
+        controller._syncedData = { basename: 'Show', spokenLanguage: 'iw', subtitles: [track('2', 'iw', 'Hebrew')] };
+        expect(await controller._trySaviAutoLoad()).toBe(true);
+        expect(loadSubtitles.mock.calls[0][3]).toBe('iw');
+        expect(settingsSet).not.toHaveBeenCalled();
+    });
+
+    it('keeps the explicit target even when the selected audio is different', async () => {
+        controller._syncedData = {
+            basename: 'Show',
+            audioLanguage: 'ja',
+            subtitles: [track('1', 'ja-CC', 'Japanese [CC]'), track('2', 'es', 'Spanish')],
+        };
+        expect(await controller._trySaviAutoLoad()).toBe(true);
+        expect(loadSubtitles.mock.calls[0][0][0].name).toBe('Show - Spanish.nfimsc');
+    });
+
+    it.each([undefined, '', 'und'])(
+        'uses reliable spoken metadata when selected audio is unusable (%s)',
+        async (audioLanguage) => {
+            roamingResponse = { targetLanguage: '', nativeLanguage: '', openSubtitlesApiKey: '' };
+            controller._syncedData = {
+                basename: 'Show',
+                audioLanguage,
+                spokenLanguage: 'es',
+                subtitles: [track('2', 'es', 'Spanish')],
+            };
+            expect(await controller._trySaviAutoLoad()).toBe(true);
+        }
+    );
+
+    it.each(['und', 'zxx', 'mul', 'not a language', ''])(
+        'does not infer from unknown or invalid audio language %s',
+        async (audioLanguage) => {
+            roamingResponse = { targetLanguage: '', nativeLanguage: '', openSubtitlesApiKey: '' };
+            controller._syncedData = { basename: 'Show', audioLanguage, subtitles: [track('2', 'es', 'Spanish')] };
+            expect(await controller._trySaviAutoLoad()).toBe(false);
+            expect(loadSubtitles).not.toHaveBeenCalled();
+        }
+    );
+
     it('does nothing when no target language is set', async () => {
         roamingResponse = { targetLanguage: '', nativeLanguage: '', openSubtitlesApiKey: '' };
         controller._syncedData = { basename: 'Show', subtitles: [track('2', 'es', 'Spanish')] };
@@ -321,7 +395,9 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
         });
         expect(loadSubtitles).toHaveBeenCalledTimes(1);
         expect(loadSubtitles.mock.calls[0][0][0].name).toBe('Dark.S01E03.es.srt');
-        expect(settingsSet).toHaveBeenCalledWith({ streamingLastLanguagesSynced: { localhost: ['es'] } });
+        expect(settingsSet).toHaveBeenCalledWith({
+            streamingLastLanguagesSynced: { [window.location.hostname]: ['es'] },
+        });
     });
 
     it('does not use OpenSubtitles when no key is configured', async () => {
@@ -352,5 +428,304 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
 
         expect(await controller._trySaviAutoLoad()).toBe(true);
         expect(loadSubtitles).toHaveBeenCalledTimes(1);
+    });
+
+    it('honors empty-target inference even when the audio is the native language without duplicating tracks', async () => {
+        roamingResponse = { targetLanguage: '', nativeLanguage: 'en', openSubtitlesApiKey: '' };
+        controller._syncedData = { audioLanguage: 'en', basename: 'Show', subtitles: [track('1', 'en', 'English')] };
+        expect(await controller._trySaviAutoLoad()).toBe(true);
+        expect(loadSubtitles.mock.calls[0][0]).toHaveLength(1);
+        expect(loadSubtitles.mock.calls[0][3]).toBe('en');
+        expect(settingsSet).not.toHaveBeenCalled();
+    });
+
+    describe('episode-safe controller wiring', () => {
+        it.each(['_syncData', '_syncDataArray'])(
+            'keeps a good primary track when an optional track fails in %s',
+            async (method) => {
+                controller._reportError = jest.fn().mockResolvedValue(undefined);
+                const primary = { ...track('1', 'es', 'Spanish'), name: 'Spanish' };
+                const secondary = { ...track('2', 'en', 'English'), name: 'English', url: 'lazy' };
+                const listener = (e: Event) =>
+                    document.dispatchEvent(
+                        new CustomEvent('asbplayer-synced-language-data', {
+                            detail: {
+                                requestId: (e as CustomEvent).detail.requestId,
+                                error: 'Optional track unavailable',
+                            },
+                        })
+                    );
+                document.addEventListener('asbplayer-get-synced-language-data', listener);
+                try {
+                    expect(await controller[method]([primary, secondary])).toBe(true);
+                    expect(loadSubtitles).toHaveBeenCalledTimes(1);
+                    expect(loadSubtitles.mock.calls[0][0]).toHaveLength(1);
+                    expect(loadSubtitles.mock.calls[0][3]).toBe('es');
+                    expect(controller._reportError).not.toHaveBeenCalled();
+                } finally {
+                    document.removeEventListener('asbplayer-get-synced-language-data', listener);
+                }
+            }
+        );
+
+        it.each(['_syncData', '_syncDataArray'])(
+            'reports failure of the first real track after an empty slot in %s',
+            async (method) => {
+                controller._reportError = jest.fn().mockResolvedValue(undefined);
+                const empty = { ...track('0', '-', 'None'), name: 'None', url: '-' };
+                const primary = { ...track('1', 'ja', 'Japanese'), name: 'Japanese', url: 'lazy' };
+                const listener = (e: Event) =>
+                    document.dispatchEvent(
+                        new CustomEvent('asbplayer-synced-language-data', {
+                            detail: { requestId: (e as CustomEvent).detail.requestId, error: 'Track unavailable' },
+                        })
+                    );
+                document.addEventListener('asbplayer-get-synced-language-data', listener);
+                try {
+                    expect(await controller[method]([empty, primary, empty])).toBe(false);
+                    expect(loadSubtitles).not.toHaveBeenCalled();
+                    expect(controller._reportError).toHaveBeenCalledWith(expect.stringContaining('Track unavailable'));
+                } finally {
+                    document.removeEventListener('asbplayer-get-synced-language-data', listener);
+                }
+            }
+        );
+
+        it('does not replace a failed primary track with the native track', async () => {
+            controller._subtitlesForUrl = jest
+                .fn()
+                .mockResolvedValueOnce(undefined)
+                .mockResolvedValueOnce([{ name: 'English.vtt', base64: '' }]);
+            expect(await controller._syncData([track('1', 'es', 'Spanish'), track('2', 'en', 'English')])).toBe(false);
+            expect(loadSubtitles).not.toHaveBeenCalled();
+        });
+
+        it('still discards the primary when the secondary response belongs to a stale episode', async () => {
+            const listener = (e: Event) =>
+                document.dispatchEvent(
+                    new CustomEvent('asbplayer-synced-language-data', {
+                        detail: { requestId: (e as CustomEvent).detail.requestId, stale: true },
+                    })
+                );
+            document.addEventListener('asbplayer-get-synced-language-data', listener);
+            try {
+                expect(
+                    await controller._syncData([
+                        track('1', 'es', 'Spanish'),
+                        { ...track('2', 'en', 'English'), url: 'lazy' },
+                    ])
+                ).toBe(false);
+                expect(loadSubtitles).not.toHaveBeenCalled();
+            } finally {
+                document.removeEventListener('asbplayer-get-synced-language-data', listener);
+            }
+        });
+
+        it.each(['_syncData', '_syncDataArray'])('accepts Netflix query-only changes during %s', async (method) => {
+            const originalUrl = window.location.href;
+            controller._syncedData = { sourceUrl: originalUrl, basename: 'Show' };
+            const originalFetch = global.fetch;
+            global.fetch = jest.fn(async () => {
+                window.history.replaceState({}, '', '/watch/111?trackId=new');
+                return { ok: true, arrayBuffer: async () => new Uint8Array([87]).buffer } as Response;
+            });
+            try {
+                expect(await controller[method]([{ ...track('1', 'es', 'Spanish'), name: 'Spanish' }])).toBe(true);
+                expect(loadSubtitles).toHaveBeenCalledTimes(1);
+            } finally {
+                global.fetch = originalFetch;
+                window.history.replaceState({}, '', originalUrl);
+            }
+        });
+
+        it('accepts a current Netflix player whose id differs from the watch URL', async () => {
+            controller._syncedDataRequestId = 'current';
+            controller._buildModel = jest.fn().mockResolvedValue({});
+            await controller._setSyncedData({
+                requestId: 'current',
+                sourceUrl: window.location.href,
+                episodeId: 'netflix:playable-not-url-id',
+                basename: 'Show',
+                subtitles: [track('2', 'es', 'Spanish')],
+            });
+            expect(loadSubtitles).toHaveBeenCalledTimes(1);
+        });
+
+        it('ignores a superseded request even when its URL matches', async () => {
+            controller._syncedDataRequestId = 'new';
+            controller._scheduleEpisodeSyncRetry = jest.fn();
+            await controller._setSyncedData({
+                requestId: 'old',
+                sourceUrl: window.location.href,
+                basename: 'Old',
+                subtitles: [track('2', 'es', 'Spanish')],
+            });
+            expect(loadSubtitles).not.toHaveBeenCalled();
+            expect(controller._syncedData).toBeUndefined();
+            expect(controller._scheduleEpisodeSyncRetry).not.toHaveBeenCalled();
+        });
+
+        it('rejects a response after navigation using the captured URL, not the player id', async () => {
+            controller._syncedDataRequestId = 'current';
+            controller._scheduleEpisodeSyncRetry = jest.fn();
+            await controller._setSyncedData({
+                requestId: 'current',
+                sourceUrl: new URL('/watch/222', window.location.href).href,
+                basename: 'Old',
+                subtitles: [track('2', 'es', 'Spanish')],
+            });
+            expect(loadSubtitles).not.toHaveBeenCalled();
+            expect(controller._scheduleEpisodeSyncRetry).toHaveBeenCalledTimes(1);
+        });
+
+        it.each(['_syncData', '_syncDataArray'])('rejects navigation during %s downloads', async (method) => {
+            const originalUrl = window.location.href;
+            controller._syncedData = { sourceUrl: originalUrl, basename: 'Show', subtitles: [] };
+            (globalThis.fetch as jest.Mock).mockImplementation(async () => {
+                window.history.replaceState({}, '', '/next');
+                return { ok: true, arrayBuffer: async () => new ArrayBuffer(0) };
+            });
+            try {
+                expect(await controller[method]([{ ...track('2', 'es', 'Spanish'), name: 'Spanish' }])).toBe(false);
+                expect(loadSubtitles).not.toHaveBeenCalled();
+            } finally {
+                window.history.replaceState({}, '', originalUrl);
+            }
+        });
+
+        it.each(['_syncData', '_syncDataArray'])(
+            'does not let an older %s download overwrite a newer request on the same URL',
+            async (method) => {
+                controller._syncedDataRequestId = 'old';
+                controller._syncedData = { requestId: 'old', sourceUrl: window.location.href, basename: 'Old' };
+                (globalThis.fetch as jest.Mock).mockImplementation(async () => {
+                    controller._syncedDataRequestId = 'new';
+                    return { ok: true, arrayBuffer: async () => new ArrayBuffer(0) };
+                });
+                expect(await controller[method]([{ ...track('2', 'es', 'Spanish'), name: 'Spanish' }])).toBe(false);
+                expect(loadSubtitles).not.toHaveBeenCalled();
+            }
+        );
+
+        it('correlates overlapping lazy responses and accepts a player id unlike the URL', async () => {
+            controller._syncedData = {
+                sourceUrl: window.location.href,
+                episodeId: 'netflix:playable',
+                basename: 'Show',
+                subtitles: [],
+            };
+            const requests: any[] = [];
+            const listener = (e: Event) => {
+                requests.push((e as CustomEvent).detail);
+            };
+            document.addEventListener('asbplayer-get-synced-language-data', listener);
+            try {
+                const first = controller._syncData([{ ...track('2', 'es', 'Spanish'), url: 'lazy' }]);
+                const second = controller._syncData([{ ...track('1', 'en', 'English'), url: 'lazy' }]);
+                for (const request of requests.slice().reverse()) {
+                    document.dispatchEvent(
+                        new CustomEvent('asbplayer-synced-language-data', {
+                            detail: {
+                                requestId: request.requestId,
+                                sourceUrl: window.location.href,
+                                episodeId: 'netflix:playable',
+                                basename: 'Show',
+                                subtitles: [track(request.language, request.language, request.language)],
+                            },
+                        })
+                    );
+                }
+                expect(await Promise.all([first, second])).toEqual([true, true]);
+                expect(globalThis.fetch).toHaveBeenCalledWith('https://sub/es.vtt');
+                expect(globalThis.fetch).toHaveBeenCalledWith('https://sub/en.vtt');
+            } finally {
+                document.removeEventListener('asbplayer-get-synced-language-data', listener);
+            }
+        });
+
+        it('never reports a stale lazy download as successful or loads empty subtitles', async () => {
+            controller._syncedData = { episodeId: 'netflix:old', sourceUrl: window.location.href, basename: 'Show' };
+            const listener = (e: Event) =>
+                document.dispatchEvent(
+                    new CustomEvent('asbplayer-synced-language-data', {
+                        detail: { requestId: (e as CustomEvent).detail.requestId, stale: true },
+                    })
+                );
+            document.addEventListener('asbplayer-get-synced-language-data', listener);
+            try {
+                expect(await controller._syncData([{ ...track('2', 'es', 'Spanish'), url: 'lazy' }])).toBe(false);
+                expect(loadSubtitles).not.toHaveBeenCalled();
+            } finally {
+                document.removeEventListener('asbplayer-get-synced-language-data', listener);
+            }
+        });
+
+        it('times out an unanswered lazy request and removes its listener', async () => {
+            jest.useFakeTimers();
+            const removed = jest.spyOn(document, 'removeEventListener');
+            controller._reportError = jest.fn().mockResolvedValue(undefined);
+            try {
+                const pending = controller._syncData([{ ...track('2', 'es', 'Spanish'), url: 'lazy' }]);
+                await jest.advanceTimersByTimeAsync(20000);
+                expect(await pending).toBe(false);
+                expect(controller._reportError).toHaveBeenCalledWith(expect.stringContaining('Timed out'));
+                expect(removed).toHaveBeenCalledWith('asbplayer-synced-language-data', expect.any(Function), false);
+                expect(loadSubtitles).not.toHaveBeenCalled();
+            } finally {
+                removed.mockRestore();
+                jest.useRealTimers();
+            }
+        });
+
+        it('threads the selected episode through the picker confirm download path', async () => {
+            controller._syncedData = { episodeId: 'netflix:111', subtitles: [] };
+            controller._subtitlesForUrl = jest.fn().mockResolvedValue([]);
+
+            await controller._syncDataArray([
+                {
+                    name: 'Spanish',
+                    language: 'es',
+                    extension: 'vtt',
+                    url: 'lazy',
+                },
+            ]);
+
+            expect(controller._subtitlesForUrl).toHaveBeenCalledWith(
+                'Spanish',
+                'es',
+                'vtt',
+                'lazy',
+                undefined,
+                'netflix:111',
+                undefined
+            );
+        });
+
+        it('re-requests page data after a mismatched identified response, with a bounded retry count', async () => {
+            jest.useFakeTimers();
+            controller._dispatchSyncedDataRequest = jest.fn().mockResolvedValue(undefined);
+
+            try {
+                for (let attempt = 0; attempt < 4; attempt++) {
+                    await controller._setSyncedData({ sourceUrl: window.location.href + 'stale', stale: true });
+                    await jest.advanceTimersByTimeAsync(500);
+                }
+
+                expect(controller._dispatchSyncedDataRequest).toHaveBeenCalledTimes(3);
+            } finally {
+                jest.useRealTimers();
+            }
+        });
+
+        it('does not remember an auto-loaded language when the page changed during download', async () => {
+            controller._syncedData = {
+                basename: 'Show',
+                subtitles: [track('2', 'es', 'Spanish')],
+            };
+            controller._syncData = jest.fn().mockResolvedValue(false);
+
+            expect(await controller._trySaviAutoLoad()).toBe(false);
+            expect(settingsSet).not.toHaveBeenCalled();
+        });
     });
 });

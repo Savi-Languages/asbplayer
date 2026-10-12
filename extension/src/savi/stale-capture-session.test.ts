@@ -1,88 +1,86 @@
 import { isStaleCaptureSession } from './capture-staleness';
 import { captureState } from './daemon-client';
 import { CaptureSessionRecord } from './capture-session';
-
-jest.mock('./daemon-client', () => ({
-    ...jest.requireActual('./daemon-client'),
-    captureState: jest.fn(),
-}));
-
-const mockCaptureState = captureState as jest.MockedFunction<typeof captureState>;
-
-const config = { baseUrl: 'http://localhost:4030', token: 'lan-token' };
-
-const session = (over: Partial<CaptureSessionRecord> = {}): CaptureSessionRecord => ({
+jest.mock('./daemon-client', () => ({ captureState: jest.fn() }));
+const mockCaptureState = captureState as jest.Mock;
+const config = { baseUrl: 'http://localhost:4030', token: 'test' };
+const session: CaptureSessionRecord = {
     tabId: 7,
-    src: 'https://www.youtube.com/watch?v=aaa',
-    captureId: 'cap-aaa',
-    episodeId: 'youtube_aaa',
+    frameId: 0,
+    documentId: 'original',
+    src: 'video',
+    captureId: 'cap',
+    episodeId: 'episode-a',
     seq: 0,
-    audio: undefined as any,
-    ...over,
-});
-
-const tabs = (existing: number[]) => {
-    (globalThis as any).browser = {
-        tabs: {
-            get: jest.fn(async (id: number) => {
-                if (!existing.includes(id)) {
-                    throw new Error('No tab with id');
-                }
-                return { id };
-            }),
-        },
-    };
+    audio: { state: 'disabled' },
 };
-
+let get: jest.Mock;
+let query: jest.Mock;
+let send: jest.Mock;
 beforeEach(() => {
-    mockCaptureState.mockReset();
-    tabs([7]);
+    get = jest.fn().mockResolvedValue({ id: 7 });
+    query = jest.fn().mockResolvedValue([{ id: 7 }]);
+    send = jest.fn();
+    (globalThis as any).browser = { tabs: { get, query, sendMessage: send } };
+    mockCaptureState.mockResolvedValue(['episode-a']);
 });
-
-describe('isStaleCaptureSession', () => {
-    it('is stale when the tab is gone', async () => {
-        tabs([]); // the recorded tab no longer exists
-        mockCaptureState.mockResolvedValue(['youtube_aaa']);
-        expect(await isStaleCaptureSession(session(), 'youtube_aaa', 7, config)).toBe(true);
-    });
-
-    it('is stale when that tab moved to a different episode', async () => {
-        // The case that produced "a savi capture is already running" with no way
-        // out but closing the tab: same tab, next video, daemon had swept the old
-        // capture long ago. Must hold even on a daemon with no state route.
-        mockCaptureState.mockResolvedValue(undefined);
-        expect(await isStaleCaptureSession(session(), 'youtube_bbb', 7, config)).toBe(true);
-    });
-
-    it('is stale when the daemon no longer lists the capture', async () => {
-        // Same tab, same episode — only the daemon knows this one is over.
-        mockCaptureState.mockResolvedValue(['youtube_something_else']);
-        expect(await isStaleCaptureSession(session(), 'youtube_aaa', 7, config)).toBe(true);
-    });
-
-    it('is stale when the daemon reports nothing open at all', async () => {
-        mockCaptureState.mockResolvedValue([]);
-        expect(await isStaleCaptureSession(session(), 'youtube_aaa', 7, config)).toBe(true);
-    });
-
-    it('is NOT stale while the daemon still lists it', async () => {
-        mockCaptureState.mockResolvedValue(['youtube_aaa']);
-        expect(await isStaleCaptureSession(session(), 'youtube_aaa', 7, config)).toBe(false);
-    });
-
-    it('is NOT stale when the daemon cannot answer', async () => {
-        // undefined means "no answer", NOT "nothing is running". Discarding the
-        // record here would drop a live capture's bookkeeping — and the recorded
-        // audio with it — every time the daemon hiccuped or was an older build.
-        mockCaptureState.mockResolvedValue(undefined);
-        expect(await isStaleCaptureSession(session(), 'youtube_aaa', 7, config)).toBe(false);
-    });
-
-    it('does not treat another tab capturing a different episode as stale', async () => {
-        // A second tab asking to record must not sweep tab 7's live capture just
-        // because the episodes differ — the episode rule is scoped to one tab.
-        tabs([7, 9]);
-        mockCaptureState.mockResolvedValue(['youtube_aaa']);
-        expect(await isStaleCaptureSession(session(), 'youtube_bbb', 9, config)).toBe(false);
-    });
+it('retires only a tab confirmed absent from the inventory', async () => {
+    get.mockRejectedValue(new Error('No tab'));
+    query.mockResolvedValue([]);
+    expect(await isStaleCaptureSession(session, 'episode-b', 9, config)).toBe(true);
+});
+it('preserves the owner when tabs.get fails transiently but the tab still exists', async () => {
+    get.mockRejectedValue(new Error('Transient API failure'));
+    expect(await isStaleCaptureSession(session, 'episode-b', 9, config)).toBe(false);
+});
+it('preserves the owner when tab and daemon checks are both unavailable', async () => {
+    get.mockRejectedValue(new Error('Unavailable'));
+    query.mockRejectedValue(new Error('Unavailable'));
+    mockCaptureState.mockResolvedValue(undefined);
+    expect(await isStaleCaptureSession(session, 'episode-b', 9, config)).toBe(false);
+});
+it.each([[[]], [['other']]])('retires a recording the daemon confirms ended: %j', async (active) => {
+    mockCaptureState.mockResolvedValue(active);
+    expect(await isStaleCaptureSession(session, 'episode-a', 7, config)).toBe(true);
+});
+it.each(['silent', 'frozen', 'error'])('preserves the listed owner with %s messaging', async (mode) => {
+    send.mockImplementation(() =>
+        mode === 'frozen'
+            ? new Promise(() => {})
+            : mode === 'error'
+              ? Promise.reject(new Error('Closed message port'))
+              : Promise.resolve(undefined)
+    );
+    expect(await isStaleCaptureSession(session, 'episode-b', 9, config)).toBe(false);
+    expect(send).not.toHaveBeenCalled();
+});
+it('does not let a second video in the same document evict the owner', async () => {
+    expect(await isStaleCaptureSession(session, 'episode-b', 7, config, { frameId: 0, documentId: 'original' })).toBe(
+        false
+    );
+});
+it('recovers a replaced document within the same owner frame', async () => {
+    expect(await isStaleCaptureSession(session, 'episode-a', 7, config, { frameId: 0, documentId: 'reloaded' })).toBe(
+        true
+    );
+});
+it('does not confuse a different frame with a reloaded owner', async () => {
+    expect(await isStaleCaptureSession(session, 'episode-b', 7, config, { frameId: 1, documentId: 'other' })).toBe(
+        false
+    );
+});
+it('does not compare document identities across tabs', async () => {
+    expect(await isStaleCaptureSession(session, 'episode-b', 9, config, { frameId: 0, documentId: 'other' })).toBe(
+        false
+    );
+});
+it.each([{}, { frameId: 0 }, { documentId: 'new' }])(
+    'retains sessions when requesting context is incomplete: %j',
+    async (context) => {
+        expect(await isStaleCaptureSession(session, 'episode-a', 7, config, context)).toBe(false);
+    }
+);
+it('retains legacy sessions without document metadata until explicit Stop or daemon reconciliation', async () => {
+    const legacy = { ...session, documentId: undefined, frameId: undefined };
+    expect(await isStaleCaptureSession(legacy, 'episode-a', 7, config, { frameId: 0, documentId: 'new' })).toBe(false);
 });

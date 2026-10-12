@@ -60,3 +60,19 @@ it('exposes prepared tokens synchronously without starting a request', async () 
     expect(cache.peek('ja', '猫')).toEqual([{ text: '猫' }]);
     expect(cache.peek('zh', '猫')).toBeUndefined();
 });
+
+it('keeps valid hover tokens usable when raw target tokens do not match the surface', async () => {
+    const fetch = jest
+        .fn()
+        .mockResolvedValue({ tokens: [{ text: '猫', lemma: '猫' }], rawTokens: [{ text: 'wrong' }] });
+    const cache = new SharedTokenCache(fetch);
+    await expect(cache.get('ja', '猫')).resolves.toEqual([{ text: '猫', lemma: '猫' }]);
+    await expect(cache.getRaw('ja', '猫')).rejects.toThrow();
+    await expect(cache.getRaw('ja', '猫')).rejects.toThrow();
+    await expect(cache.get('ja', '猫')).resolves.toEqual([{ text: '猫', lemma: '猫' }]);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const now = jest.spyOn(Date, 'now').mockReturnValue(Date.now() + 30_001);
+    fetch.mockResolvedValue({ tokens: [{ text: '猫' }], rawTokens: [{ text: '猫' }] });
+    await expect(cache.getRaw('ja', '猫')).resolves.toEqual([{ text: '猫' }]);
+    now.mockRestore();
+});

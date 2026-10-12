@@ -31,7 +31,8 @@ export default defineContentScript({
         });
         panel.start();
         const listener = (request: any) => {
-            if (request.sender === 'savi-extension-to-video') panel.captureEnded(request.message);
+            if (request.sender !== 'savi-extension-to-video') return;
+            panel.captureEnded(request.message);
         };
         browser.runtime.onMessage.addListener(listener);
         ctx.onInvalidated(() => {

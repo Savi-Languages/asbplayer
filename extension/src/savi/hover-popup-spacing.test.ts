@@ -20,6 +20,7 @@ it.each([20, 40, 60])('leaves a neighboring text row accessible for %spx words',
 });
 it('keeps the popup reachable through a gap that does not intercept underlying words', () => {
     const dict = new SaviHoverDictionary() as any;
+    dict.start();
     const popup = document.createElement('div');
     dict._popup = popup;
     jest.spyOn(popup, 'getBoundingClientRect').mockReturnValue(rect(100, 100, 300, 180));
@@ -58,4 +59,16 @@ it('scrolls a tall popup internally instead of covering the neighboring row or l
     expect(Number.parseFloat(popup.style.top)).toBeGreaterThanOrEqual(8);
     expect(Number.parseFloat(popup.style.top) + height() + 32).toBeLessThan(word.top - 72);
     expect(content.style.overflowY).toBe('auto');
+});
+
+it('recognizes a top-layer popup immediately while expensive hit testing waits for a frame', () => {
+    const dict = new SaviHoverDictionary() as any;
+    const popup = document.createElement('div');
+    document.body.append(popup);
+    dict._popup = popup;
+    Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: () => document.body });
+    dict.start();
+    popup.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 500, clientY: 500 }));
+    expect(dict.isOverHoverSurface(500, 500)).toBe(true);
+    dict.stop();
 });

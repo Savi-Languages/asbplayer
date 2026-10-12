@@ -1,3 +1,4 @@
+jest.mock('./account', () => ({ daemonCredentials: async () => ({ bearer: 'test-only' }) }));
 import { sendWithRetry } from './capture-controller';
 
 const noSleep = async () => {};
@@ -133,5 +134,161 @@ describe('droppedOpsWarning', () => {
     it('says nothing when the daemon predates the field', () => {
         expect(droppedOpsWarning({ audio: 'off' }, false)).toBeUndefined();
         expect(droppedOpsWarning(undefined, false)).toBeUndefined();
+    });
+});
+
+import { SaviCaptureController } from './capture-controller';
+it('inline Replay uses the guarded host replay path', async () => {
+    const video = document.createElement('video');
+    video.currentTime = 1.5;
+    video.play = jest.fn();
+    const replay = jest.fn().mockResolvedValue(undefined);
+    const controller = Object.create(SaviCaptureController.prototype) as any;
+    controller._host = { video, replay, currentSubtitles: () => [{ text: '猫', start: 1000, end: 2000, track: 0 }] };
+    await controller._replayCurrentLine();
+    expect(replay).toHaveBeenCalledWith(1000);
+    expect(video.play).not.toHaveBeenCalled();
+    expect(video.currentTime).toBe(1.5);
+});
+
+it('sends the loaded track language to capture ahead of remembered site choices', async () => {
+    const sendMessage = jest.fn().mockResolvedValue({ started: false });
+    const oldBrowser = (globalThis as any).browser;
+    (globalThis as any).browser = { runtime: { sendMessage } };
+    try {
+        const controller = Object.create(SaviCaptureController.prototype) as any;
+        controller._host = {
+            settings: {
+                get: async () => ({
+                    saviDaemonUrl: 'http://127.0.0.1:14074',
+                    saviDaemonToken: 'test',
+                    streamingLastLanguagesSynced: { localhost: ['es'] },
+                }),
+            },
+            video: document.createElement('video'),
+            videoSrc: () => 'test-video',
+            subtitleLanguage: () => 'ja',
+            notify: jest.fn(),
+        };
+        controller._subtitlesForCapture = () => [{ text: '猫', start: 0, end: 1000, track: 0 }];
+        controller._pageMetadata = () => ({ episodeId: 'netflix:test', title: 'Test' });
+        controller._youtubeShowId = () => undefined;
+        await controller.start(true);
+        expect(sendMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ message: expect.objectContaining({ command: 'savi-start-capture', lang: 'ja' }) })
+        );
+    } finally {
+        (globalThis as any).browser = oldBrowser;
+    }
+});
+
+describe('manual Record control with auto-capture off', () => {
+    const setup = (autoCapture = false) => {
+        const getSettings = jest.fn().mockResolvedValue({
+            saviCaptureEnabled: autoCapture,
+            saviHideNativeSubtitles: false,
+        });
+        const controller = new SaviCaptureController({
+            settings: {
+                get: getSettings,
+            } as any,
+            video: document.createElement('video'),
+            currentSubtitles: () => [{ text: '猫', start: 1000, end: 2000, track: 0 }],
+            replay: jest.fn(),
+            videoSrc: () => 'test-video',
+            subtitleFileName: () => 'Test episode',
+            notify: jest.fn(),
+        });
+        jest.spyOn(controller as any, '_pageMetadata').mockReturnValue({ episodeId: 'netflix:1' });
+        const start = jest.spyOn(controller, 'start').mockResolvedValue(undefined);
+        const stop = jest.spyOn(controller, 'stop').mockImplementation(async () => {
+            (controller as any)._active = false;
+        });
+        return { controller, start, stop, getSettings };
+    };
+    const recordButton = () => document.querySelector<HTMLButtonElement>('.savi-record-button');
+
+    it('offers manual start after subtitles load without automatically recording', async () => {
+        const { controller, start } = setup();
+        try {
+            controller.onSubtitlesLoaded();
+            await Promise.resolve();
+            expect(recordButton()).not.toBeNull();
+            expect(recordButton()!.style.display).toBe('inline-flex');
+            expect(start).not.toHaveBeenCalled();
+            recordButton()!.click();
+            expect(start).toHaveBeenCalledTimes(1);
+            expect(start).toHaveBeenCalledWith(true);
+        } finally {
+            controller.unbind();
+        }
+    });
+
+    it('keeps manual Stop available with auto-capture off', async () => {
+        const { controller, start, stop } = setup();
+        try {
+            (controller as any)._active = true;
+            controller.onSubtitlesLoaded();
+            await Promise.resolve();
+            expect(recordButton()).not.toBeNull();
+            recordButton()!.click();
+            expect(stop).toHaveBeenCalledWith(true);
+            expect(start).not.toHaveBeenCalled();
+        } finally {
+            controller.unbind();
+        }
+    });
+
+    it.each(['reset', 'unbind'])(
+        'does not resurrect the Record control after %s during a settings read',
+        async (end) => {
+            const { controller, start, getSettings } = setup();
+            let resolveSettings!: (settings: object) => void;
+            getSettings.mockReturnValue(
+                new Promise((resolve) => {
+                    resolveSettings = resolve;
+                })
+            );
+            try {
+                controller.onSubtitlesLoaded();
+                if (end === 'reset') controller.onSubtitlesReset();
+                else controller.unbind();
+                resolveSettings({ saviCaptureEnabled: false, saviHideNativeSubtitles: false });
+                await Promise.resolve();
+                expect(recordButton() === null || recordButton()!.style.display === 'none').toBe(true);
+                expect(start).not.toHaveBeenCalled();
+            } finally {
+                controller.unbind();
+            }
+        }
+    );
+
+    it('still automatically starts when auto-capture is on', async () => {
+        const { controller, start } = setup(true);
+        try {
+            controller.onSubtitlesLoaded();
+            await Promise.resolve();
+            expect(recordButton()!.style.display).toBe('inline-flex');
+            expect(start).toHaveBeenCalledWith(false);
+        } finally {
+            controller.unbind();
+        }
+    });
+
+    it('hides during subtitle reset and returns without auto-start for the next episode', async () => {
+        const { controller, start } = setup();
+        try {
+            controller.onSubtitlesLoaded();
+            await Promise.resolve();
+            expect(recordButton()).not.toBeNull();
+            controller.onSubtitlesReset();
+            expect(recordButton()!.style.display).toBe('none');
+            controller.onSubtitlesLoaded();
+            await Promise.resolve();
+            expect(recordButton()!.style.display).toBe('inline-flex');
+            expect(start).not.toHaveBeenCalled();
+        } finally {
+            controller.unbind();
+        }
     });
 });
