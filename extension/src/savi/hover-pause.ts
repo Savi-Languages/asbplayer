@@ -35,6 +35,7 @@ export class SaviHoverPause {
     private cue?: Cue;
     private timer?: ReturnType<typeof setTimeout>;
     private ownsPause = false;
+    private acknowledgementTimer?: ReturnType<typeof setTimeout>;
     private left = false;
     constructor(private readonly sources: Sources) {}
 
@@ -60,11 +61,13 @@ export class SaviHoverPause {
     }
     private cancel = () => {
         clearTimeout(this.timer);
+        clearTimeout(this.acknowledgementTimer);
         this.cue = undefined;
         this.ownsPause = false;
         this.left = false;
     };
     private paused = () => {
+        clearTimeout(this.acknowledgementTimer);
         if (!this.ownsPause)
             this.cancel(); // A manual/other feature's pause stays paused.
         else if (this.left) this.release(); // Netflix acknowledges via a later media event.
@@ -180,6 +183,10 @@ export class SaviHoverPause {
         // must not move the pause to a different subtitle. A tiny lead keeps text visible.
         if (remaining <= 15) {
             this.ownsPause = true;
+            // A lost bridge request must not claim an unrelated manual pause later.
+            this.acknowledgementTimer = setTimeout(() => {
+                if (!video.paused) this.cancel();
+            }, 2000);
             this.sources.pause();
         } else {
             this.timer = setTimeout(this.tick, Math.max(4, Math.min(50, (remaining - 10) / (video.playbackRate || 1))));

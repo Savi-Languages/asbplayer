@@ -233,4 +233,15 @@ describe('hover holds the current subtitle at its end', () => {
         move(document.body);
         expect(play).toHaveBeenCalledTimes(1);
     });
+    test('a dropped platform pause cannot own a later manual pause forever', () => {
+        pause.mockImplementation(() => {});
+        move(line);
+        advance(3.99);
+        move(document.body);
+        jest.advanceTimersByTime(2100);
+        paused = true;
+        video.dispatchEvent(new Event('pause'));
+        expect(play).not.toHaveBeenCalled();
+        expect(controller.hasOwnedPause).toBe(false);
+    });
 });

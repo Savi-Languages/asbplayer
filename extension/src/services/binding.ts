@@ -373,7 +373,7 @@ export default class Binding {
             {
                 pause: () => this.pause(),
                 play: () => void this.play(true),
-                pauseAlreadyOwned: () => this.saviHoverPause.hasOwnedPause,
+                pauseAlreadyOwned: () => this.saviHoverPause.hasOwnedPause || this.pausedDueToHover,
             }
         );
         // Glossing (SV-12/13): supplies gloss-ruby HTML to the subtitle controller;
