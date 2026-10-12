@@ -1,3 +1,4 @@
+jest.mock('./account', () => ({ daemonCredentials: async () => ({ bearer: 'test-only' }) }));
 import { sendWithRetry } from './capture-controller';
 
 const noSleep = async () => {};
@@ -148,4 +149,35 @@ it('inline Replay uses the guarded host replay path', async () => {
     expect(replay).toHaveBeenCalledWith(1000);
     expect(video.play).not.toHaveBeenCalled();
     expect(video.currentTime).toBe(1.5);
+});
+
+it('sends the loaded track language to capture ahead of remembered site choices', async () => {
+    const sendMessage = jest.fn().mockResolvedValue({ started: false });
+    const oldBrowser = (globalThis as any).browser;
+    (globalThis as any).browser = { runtime: { sendMessage } };
+    try {
+        const controller = Object.create(SaviCaptureController.prototype) as any;
+        controller._host = {
+            settings: {
+                get: async () => ({
+                    saviDaemonUrl: 'http://127.0.0.1:14074',
+                    saviDaemonToken: 'test',
+                    streamingLastLanguagesSynced: { localhost: ['es'] },
+                }),
+            },
+            video: document.createElement('video'),
+            videoSrc: () => 'test-video',
+            subtitleLanguage: () => 'ja',
+            notify: jest.fn(),
+        };
+        controller._subtitlesForCapture = () => [{ text: '猫', start: 0, end: 1000, track: 0 }];
+        controller._pageMetadata = () => ({ episodeId: 'netflix:test', title: 'Test' });
+        controller._youtubeShowId = () => undefined;
+        await controller.start(true);
+        expect(sendMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ message: expect.objectContaining({ command: 'savi-start-capture', lang: 'ja' }) })
+        );
+    } finally {
+        (globalThis as any).browser = oldBrowser;
+    }
 });

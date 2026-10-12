@@ -82,6 +82,27 @@ describe('Netflix page response identity', () => {
         jest.useRealTimers();
     });
 
+    it('reports the selected audio language, not subtitle or original-language availability', async () => {
+        activePlayer.getAudioTrack = () => ({ bcp47: 'ja' });
+        const response = jest.fn();
+        document.addEventListener('asbplayer-synced-data', (e) => response((e as CustomEvent).detail));
+        request('asbplayer-get-synced-data', { requestId: 'audio' });
+        await flush();
+        expect(response).toHaveBeenCalledWith(expect.objectContaining({ audioLanguage: 'ja' }));
+    });
+
+    it('still returns subtitles when the audio API throws', async () => {
+        activePlayer.getAudioTrack = () => {
+            throw new Error('not ready');
+        };
+        const response = jest.fn();
+        document.addEventListener('asbplayer-synced-data', (e) => response((e as CustomEvent).detail));
+        request('asbplayer-get-synced-data', { requestId: 'no-audio' });
+        await flush();
+        expect(response).toHaveBeenCalledWith(expect.objectContaining({ subtitles: expect.any(Array) }));
+        expect(response.mock.calls[0][0].audioLanguage).toBeUndefined();
+    });
+
     it('echoes the request token and captures the URL separately from the player id', async () => {
         const response = jest.fn();
         document.addEventListener('asbplayer-synced-data', (e) => response((e as CustomEvent).detail));

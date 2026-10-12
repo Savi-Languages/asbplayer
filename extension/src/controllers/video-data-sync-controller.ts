@@ -25,7 +25,13 @@ import i18n from 'i18next';
 import { ExtensionGlobalStateProvider } from '@/services/extension-global-state-provider';
 import { isOnTutorialPage } from '@/services/tutorial';
 import { extractExtension } from '@/pages/util';
-import { parseShowQuery, primarySubtag, selectNativeTrack, selectTrackForLanguage } from '@/savi/track-select';
+import {
+    parseShowQuery,
+    primarySubtag,
+    selectNativeTrack,
+    selectTrackForLanguage,
+    subtitleLanguageForVideo,
+} from '@/savi/track-select';
 import { decideLanguageGate } from '@/savi/language-gate';
 import { titlesOverlap } from '@/savi/subtitle-relevance';
 import { mutedEpisodes } from '@/savi/muted-episodes';
@@ -598,11 +604,11 @@ export default class VideoDataSyncController {
      * exists" is true for most English videos and is exactly the false signal
      * that made savi switch itself on over English speech.
      */
-    private async _applySaviLanguageGate(targetLanguage: string): Promise<boolean> {
+    private async _applySaviLanguageGate(targetLanguage: string, inferredAudioLanguage?: string): Promise<boolean> {
         try {
             const episodeId = deriveEpisodeId(window.location.href, document.title);
             const verdict = decideLanguageGate({
-                spokenLanguage: this._syncedData?.spokenLanguage,
+                spokenLanguage: inferredAudioLanguage ?? this._syncedData?.spokenLanguage,
                 targetLanguage,
                 episodeId,
                 mutedEpisodes: await mutedEpisodes(),
@@ -628,14 +634,25 @@ export default class VideoDataSyncController {
             }
 
             const roaming = await this._saviRoamingSettings();
-            const { targetLanguage, openSubtitlesApiKey } = roaming;
+            const { openSubtitlesApiKey } = roaming;
+            const targetLanguage =
+                subtitleLanguageForVideo(roaming.targetLanguage, this._syncedData?.audioLanguage) ||
+                subtitleLanguageForVideo(roaming.targetLanguage, this._syncedData?.spokenLanguage);
+            if (!roaming.targetLanguage.trim() && targetLanguage) {
+                console.info('[savi auto-load] using audio language %s for this video (no target set)', targetLanguage);
+            }
 
             // The SV-41 gate runs FIRST and decides from the SPOKEN language
             // alone. It must stay independent of the native line below: a
             // native-language subtitle track existing on an English video is
             // exactly the "a track exists" false signal the gate was built to
             // ignore, so the second line never gets a vote on whether savi runs.
-            if (!(await this._applySaviLanguageGate(targetLanguage))) {
+            if (
+                !(await this._applySaviLanguageGate(
+                    targetLanguage,
+                    roaming.targetLanguage.trim() ? undefined : targetLanguage || undefined
+                ))
+            ) {
                 return false;
             }
             // Tolerate a settings object without the key: a cache written by a
@@ -649,7 +666,7 @@ export default class VideoDataSyncController {
 
             if (targetLanguage.trim().length === 0) {
                 console.info(
-                    '[savi auto-load] no target language set — set one in Settings → Savi (detected tracks: %s)',
+                    '[savi auto-load] no target language set and audio language unknown — choose a target in Settings → Savi (detected tracks: %s)',
                     detectedLangs.join(', ') || 'none yet'
                 );
                 return false;
@@ -691,13 +708,18 @@ export default class VideoDataSyncController {
                     );
                 }
 
-                const loaded = await this._syncData(nativeTrack === undefined ? [track] : [track, nativeTrack]);
+                const loaded = await this._syncData(
+                    nativeTrack === undefined ? [track] : [track, nativeTrack],
+                    targetLanguage
+                );
 
                 if (!loaded) {
                     return false;
                 }
 
-                await this._rememberSaviLanguageForCapture(targetLanguage);
+                if (roaming.targetLanguage.trim()) {
+                    await this._rememberSaviLanguageForCapture(targetLanguage);
+                }
                 return true;
             }
 
@@ -710,7 +732,7 @@ export default class VideoDataSyncController {
                 );
                 const loaded = await this._trySaviOpenSubtitlesFallback(targetLanguage);
 
-                if (loaded) {
+                if (loaded && roaming.targetLanguage.trim()) {
                     await this._rememberSaviLanguageForCapture(targetLanguage);
                 }
 
@@ -850,7 +872,7 @@ export default class VideoDataSyncController {
         }
 
         const name = /\.(srt|ass|ssa|vtt)$/i.test(response.name ?? '') ? response.name! : `${query}.srt`;
-        this._context.loadSubtitles([new File([response.content], name)], false);
+        this._context.loadSubtitles([new File([response.content], name)], false, undefined, language);
         return true;
     }
 
@@ -1106,7 +1128,7 @@ export default class VideoDataSyncController {
         this._wasPaused = undefined;
     }
 
-    private async _syncData(data: VideoDataSubtitleTrack[]) {
+    private async _syncData(data: VideoDataSubtitleTrack[], language?: string) {
         try {
             let subtitles: SerializedSubtitleFile[] = [];
             const sourceBasename = this._syncedData?.basename;
@@ -1143,7 +1165,9 @@ export default class VideoDataSyncController {
 
             await this._syncSubtitles(
                 subtitles,
-                data.some((track) => typeof track.url === 'object')
+                data.some((track) => typeof track.url === 'object'),
+                undefined,
+                language ?? data.find((track) => track.language && track.language !== '-')?.language
             );
             return true;
         } catch (error) {
@@ -1192,7 +1216,8 @@ export default class VideoDataSyncController {
             await this._syncSubtitles(
                 subtitles,
                 data.some((track) => typeof track.url === 'object'),
-                syncWithAsbplayerId
+                syncWithAsbplayerId,
+                data.find((track) => track.language && track.language !== '-')?.language
             );
             return true;
         } catch (error) {
@@ -1207,12 +1232,13 @@ export default class VideoDataSyncController {
     private async _syncSubtitles(
         serializedFiles: SerializedSubtitleFile[],
         flatten: boolean,
-        syncWithAsbplayerId?: string
+        syncWithAsbplayerId?: string,
+        language?: string
     ) {
         const files: File[] = await Promise.all(
             serializedFiles.map(async (f) => new File([base64ToBlob(f.base64, 'text/plain')], f.name))
         );
-        this._context.loadSubtitles(files, flatten, syncWithAsbplayerId);
+        this._context.loadSubtitles(files, flatten, syncWithAsbplayerId, language);
     }
 
     private async _subtitlesForUrl(

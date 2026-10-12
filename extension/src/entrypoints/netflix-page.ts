@@ -250,6 +250,16 @@ export default defineUnlistedScript(() => {
                 return staleResponse(request);
             }
             const urlsByTrackId = timedTextUrls();
+            // Audio metadata is optional: a missing/temporarily unavailable
+            // API must not prevent the existing subtitle response.
+            try {
+                const language = request.np.getAudioTrack?.()?.bcp47;
+                if (typeof language === 'string') {
+                    response.audioLanguage = language;
+                }
+            } catch {
+                // Leave language unknown; never infer it from offered captions.
+            }
             response.subtitles = (request.np.getTimedTextTrackList() ?? [])
                 .map((track: any) => dataForTrack(track, urlsByTrackId))
                 .filter((data: VideoDataSubtitleTrack | undefined) => data !== undefined);

@@ -227,6 +227,10 @@ export interface VideoData {
      *  auto-translated tracks make that a useless proxy. Undefined means "no
      *  signal", and savi's language gate then fails open. */
     spokenLanguage?: string;
+    /** Language of the currently selected audio track, when exposed by the
+     * player. Used only to auto-select subtitles when no learning target is
+     * configured; it must not replace an explicit account preference. */
+    audioLanguage?: string;
 }
 
 export enum VideoDataUiOpenReason {

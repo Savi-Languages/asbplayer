@@ -116,6 +116,7 @@ import { muteSite, siteKeyForUrl } from '../savi/muted-sites';
 import { dismissHushFor, isHushDismissed } from '../savi/hush-dismissed';
 import { getCachedRoamingSettings } from '../savi/cloud-settings';
 import { deriveEpisodeId } from '../savi/episode';
+import { SubtitleLanguageContext } from '../savi/subtitle-language-context';
 import { shouldPauseForAsbplayerHover, isSubtitleHoverTarget } from './pause-on-hover';
 
 let netflix = false;
@@ -304,6 +305,7 @@ export default class Binding {
     private unsubscribeStatisticsSubtitleMine?: () => void;
 
     private readonly frameId?: string;
+    private readonly _subtitleLanguageContext = new SubtitleLanguageContext();
 
     constructor(video: HTMLMediaElement, hasPageScript: boolean, frameId?: string) {
         this.video = video;
@@ -329,6 +331,12 @@ export default class Binding {
             replay: (startMs) => this._replaySaviLine(startMs),
             videoSrc: () => this._registeredVideoSrc,
             subtitleFileName: () => this.subtitleFileName(),
+            subtitleLanguage: () =>
+                this._subtitleLanguageContext.language(
+                    this.subtitleController.subtitleFileNames ?? [],
+                    window.location.href,
+                    document.title
+                ),
             notify: (locKey, replacements) => this.subtitleController.notification(locKey, replacements),
         });
         this.saviWatchInterest = new SaviWatchInterest({
@@ -2001,7 +2009,15 @@ export default class Binding {
         return await cropAndResize(maxWidth, maxHeight, rect, tabImageDataUrl);
     }
 
-    async loadSubtitles(files: File[], flatten: boolean, syncWithAsbplayerId?: string) {
+    async loadSubtitles(files: File[], flatten: boolean, syncWithAsbplayerId?: string, language?: string) {
+        // Carry language with the actual files, including the app round trip.
+        // A manual file load clears it; unrelated files/episodes cannot reuse it.
+        this._subtitleLanguageContext.begin(
+            language,
+            flatten && files.length > 0 ? [files[0].name] : files.map((file) => file.name),
+            window.location.href,
+            document.title
+        );
         const {
             streamingSubtitleListPreference,
             subtitleRegexFilter,
@@ -2087,6 +2103,9 @@ export default class Binding {
     }
 
     private _updateSubtitles(subtitles: IndexedSubtitleModel[], subtitleFileNames: string[]) {
+        // Commit language alongside the parsed files, so an in-flight load
+        // cannot replace the metadata belonging to subtitles still on screen.
+        this._subtitleLanguageContext.commit(subtitleFileNames);
         this.subtitleController.subtitles = subtitles;
         this.subtitleController.subtitleFileNames = subtitleFileNames;
         this.subtitleController.cacheHtml();

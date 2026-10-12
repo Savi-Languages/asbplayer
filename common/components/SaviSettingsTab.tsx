@@ -263,7 +263,7 @@ const SaviSettingsTab: React.FC<Props> = ({
                     label={'Target language'}
                     value={saviTargetLanguage ?? ''}
                     onCommit={(value) => onSaviTargetLanguageChange?.(value)}
-                    helperText={`The language you're learning. ${roamingHint}`}
+                    helperText={`The language you're learning. Leave blank to auto-load subtitles in the video's audio language when it can be detected. ${roamingHint}`}
                 />
             )}
             {roamingSupported && onSaviNativeLanguageChange !== undefined && (

@@ -53,6 +53,9 @@ export interface SaviCaptureHost {
     // the streaming site's video metadata API, so it's the most reliable
     // source of show/title — preferred over DOM/document.title scraping.
     subtitleFileName: () => string;
+    /** Language of the loaded track, scoped to this binding rather than a
+     * remembered site preference. Optional for legacy/manual integrations. */
+    subtitleLanguage?: () => string | undefined;
     notify: (locKey: string, replacements?: { [key: string]: string }) => void;
 }
 
@@ -443,7 +446,9 @@ export class SaviCaptureController {
                 this._host.notify('Savi: waiting for the episode to load');
                 return;
             }
-            const lang = (streamingLastLanguagesSynced[window.location.host] ?? []).find((l) => l && l !== '-');
+            const lang =
+                this._host.subtitleLanguage?.() ??
+                (streamingLastLanguagesSynced[window.location.host] ?? []).find((l) => l && l !== '-');
 
             const command: SaviCommand<SaviStartCaptureMessage> = {
                 sender: 'savi-video',

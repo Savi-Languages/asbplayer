@@ -303,6 +303,65 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
         expect(loadSubtitles).not.toHaveBeenCalled();
     });
 
+    it.each(['ja', 'ja-JP'])(
+        'uses the selected audio language %s only when the target is empty',
+        async (audioLanguage) => {
+            roamingResponse = { targetLanguage: '  ', nativeLanguage: '', openSubtitlesApiKey: '' };
+            controller._syncedData = {
+                basename: 'Show',
+                audioLanguage,
+                subtitles: [track('1', 'en', 'English'), track('2', 'ja-CC', 'Japanese [CC]')],
+            };
+            expect(await controller._trySaviAutoLoad()).toBe(true);
+            expect(loadSubtitles.mock.calls[0][0][0].name).toBe('Show - Japanese [CC].nfimsc');
+            expect(settingsSet).not.toHaveBeenCalled();
+            expect(loadSubtitles.mock.calls[0][3]).toBe(audioLanguage);
+            expect(roamingResponse.targetLanguage).toBe('  ');
+        }
+    );
+
+    it('keeps legacy audio language codes matching the player caption metadata', async () => {
+        roamingResponse = { targetLanguage: '', nativeLanguage: '', openSubtitlesApiKey: '' };
+        controller._syncedData = { basename: 'Show', spokenLanguage: 'iw', subtitles: [track('2', 'iw', 'Hebrew')] };
+        expect(await controller._trySaviAutoLoad()).toBe(true);
+        expect(loadSubtitles.mock.calls[0][3]).toBe('iw');
+        expect(settingsSet).not.toHaveBeenCalled();
+    });
+
+    it('keeps the explicit target even when the selected audio is different', async () => {
+        controller._syncedData = {
+            basename: 'Show',
+            audioLanguage: 'ja',
+            subtitles: [track('1', 'ja-CC', 'Japanese [CC]'), track('2', 'es', 'Spanish')],
+        };
+        expect(await controller._trySaviAutoLoad()).toBe(true);
+        expect(loadSubtitles.mock.calls[0][0][0].name).toBe('Show - Spanish.nfimsc');
+    });
+
+    it.each([undefined, '', 'und'])(
+        'uses reliable spoken metadata when selected audio is unusable (%s)',
+        async (audioLanguage) => {
+            roamingResponse = { targetLanguage: '', nativeLanguage: '', openSubtitlesApiKey: '' };
+            controller._syncedData = {
+                basename: 'Show',
+                audioLanguage,
+                spokenLanguage: 'es',
+                subtitles: [track('2', 'es', 'Spanish')],
+            };
+            expect(await controller._trySaviAutoLoad()).toBe(true);
+        }
+    );
+
+    it.each(['und', 'zxx', 'mul', 'not a language', ''])(
+        'does not infer from unknown or invalid audio language %s',
+        async (audioLanguage) => {
+            roamingResponse = { targetLanguage: '', nativeLanguage: '', openSubtitlesApiKey: '' };
+            controller._syncedData = { basename: 'Show', audioLanguage, subtitles: [track('2', 'es', 'Spanish')] };
+            expect(await controller._trySaviAutoLoad()).toBe(false);
+            expect(loadSubtitles).not.toHaveBeenCalled();
+        }
+    );
+
     it('does nothing when no target language is set', async () => {
         roamingResponse = { targetLanguage: '', nativeLanguage: '', openSubtitlesApiKey: '' };
         controller._syncedData = { basename: 'Show', subtitles: [track('2', 'es', 'Spanish')] };
