@@ -1,4 +1,4 @@
-import { shouldPauseForAsbplayerHover } from './pause-on-hover';
+import { shouldPauseForAsbplayerHover, isSubtitleHoverTarget } from './pause-on-hover';
 import { SaviHoverPause } from '../savi/hover-pause';
 
 describe('shouldPauseForAsbplayerHover', () => {
@@ -76,4 +76,12 @@ describe('shouldPauseForAsbplayerHover', () => {
             jest.useRealTimers();
         }
     });
+});
+
+it('notification text does not trigger the immediate subtitle hover fallback', () => {
+    document.body.innerHTML =
+        '<div class="asbplayer-notification"><span data-track="0">Loaded</span></div><div class="asbplayer-subtitles"><span data-track="0">猫</span></div>';
+    expect(isSubtitleHoverTarget(document.querySelector('.asbplayer-notification span'))).toBe(false);
+    expect(isSubtitleHoverTarget(document.querySelector('.asbplayer-subtitles span'))).toBe(true);
+    document.body.replaceChildren();
 });

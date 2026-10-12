@@ -158,7 +158,7 @@ export default class KeyBindings {
                 event.preventDefault();
                 event.stopImmediatePropagation();
                 context.seek(subtitle.start / 1000);
-                if (context.alwaysPlayOnSubtitleRepeat) context.play();
+                if (context.alwaysPlayOnSubtitleRepeat) context.play(true);
             },
             () => context.subtitleController.subtitles.length === 0,
             () => context.video.currentTime * 1000,

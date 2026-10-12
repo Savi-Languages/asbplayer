@@ -370,7 +370,7 @@ export class SaviCaptureController {
             return;
         }
         return this._host.replay(current.start).catch(() => {
-            this._host.notify('Savi: Could not replay this line. Please try again.');
+            this._host.notify('Could not replay this line; please try again');
         });
     }
 

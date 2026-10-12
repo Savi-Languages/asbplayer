@@ -219,4 +219,18 @@ describe('hover holds the current subtitle at its end', () => {
         expect(pause).toHaveBeenCalledTimes(1);
         create.mockRestore();
     });
+    test('returning to the held line cancels the panel release poll', () => {
+        move(line);
+        advance(3.99);
+        panelOpen = true;
+        document.dispatchEvent(new MouseEvent('mouseout', { relatedTarget: null }));
+        jest.advanceTimersByTime(100);
+        video.currentTime = 4.02; // a late platform pause acknowledgement
+        move(line);
+        panelOpen = false;
+        jest.advanceTimersByTime(100);
+        expect(play).not.toHaveBeenCalled();
+        move(document.body);
+        expect(play).toHaveBeenCalledTimes(1);
+    });
 });

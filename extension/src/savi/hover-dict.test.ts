@@ -642,6 +642,26 @@ describe('SaviHoverDictionary tap panel — pauses through the binding, not the 
         dict.stop();
     });
 
+    it('does not claim an asynchronous hover pause still awaiting the platform acknowledgement', async () => {
+        const video = fakeVideo();
+        const playback = { pause: jest.fn(), play: jest.fn(), pauseAlreadyOwned: () => true };
+        const dict = new SaviHoverDictionary(
+            () => video,
+            () => [],
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            playback
+        );
+        await openPanel(dict);
+        expect(playback.pause).not.toHaveBeenCalled();
+        (video as { paused: boolean }).paused = true;
+        (dict as any)._onPanelClosed();
+        expect(playback.play).not.toHaveBeenCalled();
+        dict.stop();
+    });
+
     it('falls back to the raw element without the pair', async () => {
         const video = fakeVideo();
         const dict = new SaviHoverDictionary(() => video);

@@ -393,6 +393,7 @@ function hitPadFor(line: HTMLElement): HitPad {
  *  `-play`) — asbplayer's own play/pause and gloss-hover's hold-the-line both
  *  go through that pair for the same reason. */
 export interface SaviPlaybackControl {
+    pauseAlreadyOwned?(): boolean;
     pause(): void;
     play(): void;
 }
@@ -555,14 +556,14 @@ export class SaviHoverDictionary {
         this._wordPanel = null;
     }
 
-    /** True when (x, y) is over savi's own hover surfaces — the dictionary popup
-     *  or the transparent word→popup bridge. The binding uses this to keep the
-     *  video paused while the cursor moves from a subtitle word onto the popup
-     *  (so reaching "+ Add to Anki" doesn't resume playback). */
     get panelOpen(): boolean {
         return this._panelOpen;
     }
 
+    /** True when (x, y) is over savi's own hover surfaces — the dictionary popup
+     *  or the transparent word→popup bridge. The binding uses this to keep the
+     *  video paused while the cursor moves from a subtitle word onto the popup
+     *  (so reaching "+ Add to Anki" doesn't resume playback). */
     isOverHoverSurface(x: number, y: number): boolean {
         if (this._panelOpen) {
             return true; // study panel up — tell the binding to keep the video paused
@@ -951,7 +952,7 @@ export class SaviHoverDictionary {
         // hover-resume can't fire; we resume on close only when WE were the pauser.)
         this._panelOpen = true;
         const video = this._playback();
-        if (video && !video.paused) {
+        if (video && !video.paused && !this._playbackControl?.pauseAlreadyOwned?.()) {
             this._pauseVideo(video);
             this._pausedForPanel = true;
             this._panelPlayback = video;

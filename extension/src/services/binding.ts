@@ -116,7 +116,7 @@ import { muteSite, siteKeyForUrl } from '../savi/muted-sites';
 import { dismissHushFor, isHushDismissed } from '../savi/hush-dismissed';
 import { getCachedRoamingSettings } from '../savi/cloud-settings';
 import { deriveEpisodeId } from '../savi/episode';
-import { shouldPauseForAsbplayerHover } from './pause-on-hover';
+import { shouldPauseForAsbplayerHover, isSubtitleHoverTarget } from './pause-on-hover';
 
 let netflix = false;
 document.addEventListener('asbplayer-netflix-enabled', (e) => {
@@ -370,7 +370,11 @@ export default class Binding {
             undefined, // no platform adapter — this binding IS the video
             // The tap panel pauses and resumes THROUGH the binding: on Netflix a
             // raw video.pause()/play() fights the player (see pause/_playNetflix).
-            { pause: () => this.pause(), play: () => void this.play(true) }
+            {
+                pause: () => this.pause(),
+                play: () => void this.play(true),
+                pauseAlreadyOwned: () => this.saviHoverPause.hasOwnedPause,
+            }
         );
         // Glossing (SV-12/13): supplies gloss-ruby HTML to the subtitle controller;
         // a resolved gloss asks the controller to re-render the showing lines. The
@@ -1026,7 +1030,7 @@ export default class Binding {
             // Only pause when actually over subtitle TEXT — not the wide empty
             // space of the subtitle container (hovering the blank area beside
             // the text should not pause).
-            const overText = mouseEvent.target instanceof Element && mouseEvent.target.closest('[data-track]') !== null;
+            const overText = isSubtitleHoverTarget(mouseEvent.target);
             // When Savi handles the hover, let playback reach the subtitle boundary
             // before holding. asbplayer's immediate hover-pause remains the fallback.
             if (
@@ -1037,7 +1041,7 @@ export default class Binding {
                     saviHoverPauseActive: this.saviHoverPause.handlesHover(mouseEvent.target),
                 })
             ) {
-                this.video.pause();
+                this.pause();
                 this.pausedDueToHover = true;
 
                 if (this.mouseMoveListener) {
@@ -1050,7 +1054,7 @@ export default class Binding {
                     // own hover surfaces (the dictionary popup / the word→popup
                     // bridge) — so moving onto the popup to click "+ Add to Anki"
                     // keeps it paused. Resume only once off both.
-                    const onText = e.target instanceof Element && e.target.closest('[data-track]') !== null;
+                    const onText = isSubtitleHoverTarget(e.target);
                     const onHoverSurface = this.saviHoverDictionary.isOverHoverSurface(e.clientX, e.clientY);
                     if (this._shouldAutoResumeOnSubtitlesMouseOut && !onText && !onHoverSurface) {
                         this.play(true);

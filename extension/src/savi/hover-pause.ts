@@ -69,9 +69,12 @@ export class SaviHoverPause {
             this.cancel(); // A manual/other feature's pause stays paused.
         else if (this.left) this.release(); // Netflix acknowledges via a later media event.
     };
+    get hasOwnedPause(): boolean {
+        return this.ownsPause;
+    }
     /** The immediate-hover fallback must only defer when this controller can match the cue. */
     handlesHover(target: EventTarget | null): boolean {
-        if (!this.sources.enabled()) return false;
+        if (!this.sources.enabled() || this.sources.video.seeking) return false;
         const line = lineElement(target);
         return line !== null && this.matchCue(line) !== undefined;
     }
@@ -85,14 +88,16 @@ export class SaviHoverPause {
     }
     private release() {
         clearTimeout(this.timer);
-        this.cue = undefined;
         this.left = true;
         if (this.ownsPause && this.sources.holdOpen?.()) {
             // The panel may have opened over a pause we own. Keep that pause until
             // it closes; don't require another pointer movement to release it.
-            this.timer = setTimeout(() => this.release(), 50);
+            this.timer = setTimeout(() => {
+                if (this.left) this.release();
+            }, 50);
             return;
         }
+        this.cue = undefined;
         if (this.ownsPause && this.sources.video.paused) {
             this.ownsPause = false;
             if (this.sources.resumeOnLeave?.() !== false) this.sources.play();
@@ -135,12 +140,14 @@ export class SaviHoverPause {
             // Keep the original line while held, including a slightly late media pause.
             if (this.cue && (this.cue.track ?? 0) === track && cueText(this.cue) === text) {
                 this.left = false;
+                if (this.ownsPause) clearTimeout(this.timer);
                 return;
             }
             const cue = this.matchCue(line);
             if (!cue) continue;
             if (this.ownsPause) {
                 this.left = false;
+                if (this.ownsPause) clearTimeout(this.timer);
                 return;
             }
             this.cancel();

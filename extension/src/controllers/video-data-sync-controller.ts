@@ -1100,7 +1100,7 @@ export default class VideoDataSyncController {
         }
 
         if (!this._wasPaused) {
-            this._context.play();
+            this._context.play(true);
         }
 
         this._wasPaused = undefined;
