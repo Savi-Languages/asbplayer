@@ -439,6 +439,7 @@ export class SaviHoverDictionary {
     /** The subtitle line element the highlight box currently sits on. Moves
      *  within it glide; a move to any other line snaps. See _highlightRect. */
     private _highlightLine: HTMLElement | null = null;
+    private _highlightRow: { top: number; height: number } | null = null;
     /** The WORD the visuals are anchored to (line element + char span), so the
      *  box and popup can follow it when the page moves it. The rect measured at
      *  hover time goes stale in seconds on Netflix: hovering pauses the video,
@@ -1214,7 +1215,12 @@ export class SaviHoverDictionary {
         // when staying on the same line element; otherwise snap, and re-enable
         // the transition on the next frame so the NEXT within-line move glides.
         const el = this._ensureHighlight();
-        const sameLine = this._highlightLine === line && el.style.display !== 'none';
+        const previousRow = this._highlightRow;
+        const sameLine =
+            this._highlightLine === line &&
+            el.style.display !== 'none' &&
+            previousRow !== null &&
+            Math.abs(rect.top - previousRow.top) < Math.min(rect.height, previousRow.height) / 2;
         this._placeHighlight(line, rect, !sameLine);
         // The subtitle container forces cursor:text; signal the word is
         // clickable with a pointer while it's boxed.
@@ -1241,6 +1247,7 @@ export class SaviHoverDictionary {
             el.style.transition = 'none';
         }
         this._highlightLine = line;
+        this._highlightRow = { top: rect.top, height: rect.height };
         el.style.left = `${rect.left - padX}px`;
         el.style.top = `${rect.top - padY}px`;
         el.style.width = `${Math.max(0, rect.width - trailing + padX * 2)}px`;
@@ -1333,6 +1340,7 @@ export class SaviHoverDictionary {
         this._stopTracking();
         if (this._highlight) this._highlight.style.display = 'none';
         this._highlightLine = null;
+        this._highlightRow = null;
         if (this._cursorLine) {
             this._cursorLine.style.cursor = '';
             this._cursorLine = null;
