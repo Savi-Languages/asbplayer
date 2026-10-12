@@ -348,13 +348,27 @@ describe('hover overlays follow subtitle layout without mouse movement', () => {
         document.body.innerHTML = '';
     });
 
-    it('renders a prepared word during the mouse event, without timers or pending promises', () => {
+    it('renders the latest prepared word once per animation frame', () => {
         line.className = 'asbplayer-subtitle-text';
         jest.spyOn(dict, '_tokenize').mockReturnValue([{ text: '裏工作裏工作', lemma: '裏工作' }]);
         dict._lookupDict.mockReturnValue(result);
         line.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 210, clientY: 410 }));
+        expect(surface('popup')?.style.display).not.toBe('block');
+        line.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 220, clientY: 410 }));
+        line.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 230, clientY: 410 }));
+        frame();
+        expect(dict._lookupDict).toHaveBeenCalledTimes(1);
         expect(surface('popup')?.style.display).toBe('block');
         expect(surface('popup')?.textContent).toContain('裏工作');
+    });
+
+    it('cancels pending mouse work when the dictionary stops', () => {
+        line.className = 'asbplayer-subtitle-text';
+        const tokenize = jest.spyOn(dict, '_tokenize');
+        line.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 210, clientY: 410 }));
+        dict.stop();
+        frame();
+        expect(tokenize).not.toHaveBeenCalled();
     });
 
     it('moves the outline, popup and bridge with controls hiding and showing', async () => {

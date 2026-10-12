@@ -159,7 +159,7 @@ const request = async (config: SaviDaemonConfig, path: string, init: RequestInit
         // HTTP-level errors (auth, 4xx/5xx) come back as our Error above and
         // mean the daemon WAS reached — rethrow. Only a network-level failure
         // (fetch rejection: nothing listening / port moved) triggers discovery.
-        if (isDaemonResponseError(e)) {
+        if (isDaemonResponseError(e) || init.signal?.aborted) {
             throw e;
         }
 
@@ -262,14 +262,31 @@ export const postPlaybackState = async (
     { captureId, seq, ops }: { captureId: string; seq: number; ops: unknown[] }
 ): Promise<{
     ok: boolean;
+    staleSeq?: boolean;
+    lastSeq?: number;
     audio?: string;
     audioRequested?: boolean;
     sessionGone?: boolean;
     openSegment?: string | null;
 }> => {
-    const body = await request(config, '/v2/capture/playback-state', jsonInit({ captureId, seq, ops }));
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), 10_000);
+    let body;
+    try {
+        body = await request(config, '/v2/capture/playback-state', {
+            ...jsonInit({ captureId, seq, ops }),
+            signal: abort.signal,
+        });
+    } finally {
+        clearTimeout(timer);
+    }
     return {
         ok: body.ok === true,
+        staleSeq: body.staleSeq === true,
+        lastSeq:
+            typeof body.lastSeq === 'number' && Number.isSafeInteger(body.lastSeq) && body.lastSeq >= 0
+                ? body.lastSeq
+                : undefined,
         audio: typeof body.audio === 'string' ? body.audio : undefined,
         // `audio: 'off'` alone cannot distinguish a subtitles-only session from
         // one whose ops are being discarded while it believes it is recording.

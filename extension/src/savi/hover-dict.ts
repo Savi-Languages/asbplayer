@@ -546,6 +546,9 @@ export class SaviHoverDictionary {
         clearInterval(this._prefetchTimer);
         this._prefetchTimer = undefined;
         document.removeEventListener('mousemove', this._onMouseMove, true);
+        if (this._mouseRaf !== undefined) cancelAnimationFrame(this._mouseRaf);
+        this._mouseRaf = undefined;
+        this._pendingMouse = undefined;
         document.removeEventListener('click', this._onClick, true);
         document.removeEventListener('fullscreenchange', this._onFullscreenChange);
         this._clear();
@@ -585,7 +588,23 @@ export class SaviHoverDictionary {
         return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
     }
 
+    private _mouseRaf: number | undefined;
+    private _pendingMouse: MouseEvent | undefined;
     private _onMouseMove = (event: MouseEvent) => {
+        // Binding pause ownership reads this during the same event. Keep the
+        // cheap top-layer target check synchronous; defer token/layout work.
+        this._pointerOnSurface = !!this._popup && event.target instanceof Node && this._popup.contains(event.target);
+        this._pendingMouse = event;
+        if (this._mouseRaf !== undefined) return;
+        this._mouseRaf = requestAnimationFrame(() => {
+            this._mouseRaf = undefined;
+            const latest = this._pendingMouse;
+            this._pendingMouse = undefined;
+            if (latest && this._bound) this._handleMouseMove(latest);
+        });
+    };
+
+    private _handleMouseMove = (event: MouseEvent) => {
         const line = this._resolveLine(event.target, event.clientX, event.clientY);
         if (!line) {
             const target = event.target;

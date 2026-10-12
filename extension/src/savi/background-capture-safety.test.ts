@@ -10,6 +10,7 @@ jest.mock('@/services/subtitle-sources', () => ({}));
 jest.mock('./cloud-settings', () => ({}));
 jest.mock('./muted-sites', () => ({}));
 jest.mock('./daemon-client', () => ({
+    isDaemonResponseError: () => false,
     captureState: jest.fn(),
     finishCapture: jest.fn(),
     startCapture: jest.fn(),
@@ -368,4 +369,98 @@ it('keeps the sequence through a failed resume handshake and its retry', async (
     const response = await handler._startCapture(message, reloaded);
     await handler._playbackState({ episodeId: message.episodeId, generation: response.generation, ops: [] }, reloaded);
     expect(postPlaybackState).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ seq: 43 }));
+});
+
+it('raises a fresh-profile cursor without replaying stale historical segment boundaries', async () => {
+    (postPlaybackState as jest.Mock).mockResolvedValueOnce({
+        ok: false,
+        staleSeq: true,
+        lastSeq: 800,
+        audio: 'recording',
+    });
+    const result = await handler._playbackState(
+        { ...message, generation: stored.generation, ops: [{ op: 'segment-end' }] },
+        owner
+    );
+    expect(result).toMatchObject({ ok: false, staleSeq: true, sequenceResynced: true });
+    expect(postPlaybackState).toHaveBeenCalledTimes(1);
+    expect(sequence).toBeGreaterThanOrEqual(800);
+    await handler._playbackState({ ...message, generation: stored.generation, ops: [] }, owner);
+    expect((postPlaybackState as jest.Mock).mock.calls[1][1].seq).toBeGreaterThan(800);
+    expect(finishCapture).not.toHaveBeenCalled();
+});
+it('retires a repeatedly stale owner without finishing another profile recording', async () => {
+    (postPlaybackState as jest.Mock).mockResolvedValue({ ok: false, staleSeq: true, lastSeq: 800 });
+    await handler._playbackState({ ...message, ops: [] }, owner);
+    (postPlaybackState as jest.Mock).mockResolvedValue({ ok: false, staleSeq: true, lastSeq: 1600 });
+    expect(await handler._playbackState({ ...message, ops: [] }, owner)).toMatchObject({
+        staleSeq: true,
+        sequenceResynced: false,
+    });
+    expect(stored).toBeUndefined();
+    expect(finishCapture).not.toHaveBeenCalled();
+});
+it('surfaces an old daemon stale response instead of recutting forever', async () => {
+    (postPlaybackState as jest.Mock).mockResolvedValue({ ok: false, staleSeq: true });
+    expect(await handler._playbackState({ ...message, ops: [] }, owner)).toMatchObject({
+        staleSeq: true,
+        sequenceResynced: false,
+    });
+    expect(stored).toBeUndefined();
+    expect(finishCapture).not.toHaveBeenCalled();
+});
+it('does not replay an applied boundary batch after its HTTP reply was lost', async () => {
+    (postPlaybackState as jest.Mock)
+        .mockRejectedValueOnce(new Error('timeout'))
+        .mockImplementationOnce(async (_config, batch) => ({ ok: false, staleSeq: true, lastSeq: batch.seq }));
+    expect(await handler._playbackState({ ...message, ops: [{ op: 'segment-end' }] }, owner)).toMatchObject({
+        ok: true,
+    });
+    expect((postPlaybackState as jest.Mock).mock.calls.map((call) => call[1].seq)).toEqual([1, 1]);
+    expect(stored).toBeDefined();
+});
+it('does not let an old stale response raise or retire the replacement owner', async () => {
+    let resolve!: (value: any) => void;
+    (postPlaybackState as jest.Mock).mockImplementationOnce(() => new Promise((r) => (resolve = r)));
+    const pending = handler._playbackState({ ...message, generation: stored.generation, ops: [] }, owner);
+    while (!(postPlaybackState as jest.Mock).mock.calls.length) await Promise.resolve();
+    stored = { ...oldSession(), generation: 'replacement', seq: 999 };
+    resolve({ ok: false, staleSeq: true, lastSeq: 800 });
+    expect(await pending).toMatchObject({ notOwner: true });
+    expect(stored).toMatchObject({ generation: 'replacement', seq: 999 });
+});
+
+it('reuses the sequence for the same content batch after a lost worker reply', async () => {
+    const batch = { ...message, generation: stored.generation, batchId: 1, ops: [{ op: 'segment-end' }] };
+    await handler._playbackState(batch, owner);
+    (postPlaybackState as jest.Mock).mockImplementation(async (_config, body) => ({
+        ok: false,
+        staleSeq: true,
+        lastSeq: body.seq,
+    }));
+    expect(await handler._playbackState(batch, owner)).toMatchObject({ ok: true });
+    expect((postPlaybackState as jest.Mock).mock.calls.map((call) => call[1].seq)).toEqual([1, 1]);
+});
+it('does not post a delayed content batch that a newer batch superseded', async () => {
+    const batch = { ...message, generation: stored.generation, ops: [] };
+    await handler._playbackState({ ...batch, batchId: 1 }, owner);
+    await handler._playbackState({ ...batch, batchId: 2 }, owner);
+    expect(await handler._playbackState({ ...batch, batchId: 1 }, owner)).toMatchObject({ ok: true });
+    expect(postPlaybackState).toHaveBeenCalledTimes(2);
+});
+
+it('repeats a lost resync reply without posting the stale content batch again', async () => {
+    const batch = { ...message, generation: stored.generation, batchId: 1, ops: [] };
+    (postPlaybackState as jest.Mock).mockResolvedValue({ ok: false, staleSeq: true, lastSeq: 800 });
+    expect(await handler._playbackState(batch, owner)).toMatchObject({ sequenceResynced: true });
+    expect(await handler._playbackState(batch, owner)).toMatchObject({ sequenceResynced: true });
+    expect(postPlaybackState).toHaveBeenCalledTimes(1);
+});
+
+it('resyncs a replayed batch when another profile advanced beyond its sequence', async () => {
+    const batch = { ...message, generation: stored.generation, batchId: 1, ops: [{ op: 'segment-end' }] };
+    await handler._playbackState(batch, owner);
+    (postPlaybackState as jest.Mock).mockResolvedValue({ ok: false, staleSeq: true, lastSeq: 800 });
+    expect(await handler._playbackState(batch, owner)).toMatchObject({ ok: false, sequenceResynced: true });
+    expect(sequence).toBeGreaterThan(800);
 });

@@ -275,18 +275,33 @@ and a reload of the installed extension.
 
 ### Playback sequence across capture recovery
 
-The extension persists one playback sequence high-water mark in `storage.local`;
-capture ownership stays in `storage.session`. Retiring or replacing an owner
-does not reset the sequence: the daemon can resume/re-arm the same capture ID
-with its previous sequence still active. The mutation queue preserves allocations
-made during a reload handshake. Failed starts, service-worker restarts, extension
-reloads/updates and browser restarts retain the durable number. Each allocation
-is persisted before its HTTP request; interruption between storage writes can
-skip a number but cannot reuse one. A genuinely new daemon capture accepts a
-higher first sequence, so no API change or daemon-side reset is needed.
+Ownership stays in `storage.session`. The worker reserves blocks of 256 playback
+sequence numbers in `storage.local` before exposing a number; a restarted worker
+skips the unused tail. Retirement, replacement and failed handshakes never lower
+the cursor. The mutation queue fences allocations against owner changes and Stop.
+This reduces durable writes from one per batch to roughly one per 256 batches.
 
-This does not coordinate separate extension profiles/IDs or recover a sequence
-after extension removal/data clearing. On the first upgrade from a build without
-a durable cursor, finish active recording before reloading the extension: the
-browser clears the old session bookkeeping on update, so the new build cannot
-reconstruct a sequence that was already lost.
+A fresh profile, reinstall or cleared storage can still start below the daemon's
+retained cursor. [Savi #92](https://github.com/Savi-Languages/savi/pull/92) adds
+`lastSeq` to playback-state responses. On a fresh stale batch the worker checks
+ownership again and reserves above that floor. The video controller sends new
+boundaries at the current playhead, or just an end while paused. It never resets
+the daemon or replays historical boundaries under a higher sequence. Existing
+files and the engine's retired-segment protection stay intact.
+
+Recovery is bounded to one cursor resync per owner generation. Missing/invalid
+`lastSeq` or another rejection retires local ownership without finishing the
+shared daemon capture; the video controller warns and suppresses auto-restart.
+This handles sequential profile changes, not concurrent capture ownership across
+profiles. Stop other recording tabs before restarting. The daemon's existing
+watchdog/idle finalization still owns abandoned audio; this path deletes nothing.
+
+HTTP retries reuse the same sequence and time out after ten seconds. Video
+content messages also carry a monotonic generation-scoped batch ID: a lost
+worker reply reuses the stored sequence, a saved resync reply is repeated, and
+an older superseded batch is never posted. This survives worker restarts. Older
+clients/Spotify without a batch ID retain their previous delivery semantics;
+new live Spotify coverage is still required before claiming that path verified.
+
+Preserve/finish an active recording before installing or reloading either build.
+The source changes do not authorize replacing an actively recording runtime.

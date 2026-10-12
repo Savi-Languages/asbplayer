@@ -165,6 +165,7 @@ export class SaviCaptureController {
     private _active = false;
     private _captureEpisodeId?: string;
     private _captureGeneration?: string;
+    private _nextPlaybackBatch = 0;
     private _starting = false;
     private _notifiedUnsupportedRate?: number;
     /** Whether this session has already said its ops are being discarded. */
@@ -466,6 +467,7 @@ export class SaviCaptureController {
                 this._active = true;
                 this._captureEpisodeId = episodeId;
                 this._captureGeneration = response.generation;
+                this._nextPlaybackBatch = 0;
                 this._warnedDroppedOps = false;
                 this._notifiedUnsupportedRate = undefined;
                 this._attachVideoListeners();
@@ -929,12 +931,16 @@ export class SaviCaptureController {
 
     /** Deliver a batch and hand back the daemon's answer (`undefined` when it
      *  could not be delivered at all). */
-    private async _deliverOps(ops: SaviSegmentOp[]): Promise<SaviPlaybackStateResponse | undefined> {
+    private async _deliverOps(
+        ops: SaviSegmentOp[],
+        allowResync = true
+    ): Promise<SaviPlaybackStateResponse | undefined> {
         const generation = this._captureGeneration;
         const command: SaviCommand<SaviPlaybackStateMessage> = {
             sender: 'savi-video',
             message: {
                 command: 'savi-playback-state',
+                batchId: ++this._nextPlaybackBatch,
                 episodeId: this._captureEpisodeId,
                 generation: this._captureGeneration,
                 ops,
@@ -950,6 +956,29 @@ export class SaviCaptureController {
             // A silent failure here is what made this take days to find.
             console.warn('savi: could not deliver segment ops after retries; coverage may overstate', ops);
             return undefined;
+        }
+        if (response?.staleSeq && this._active && generation === this._captureGeneration) {
+            if (response.sequenceResynced && allowResync) {
+                const video = this._host.video;
+                // A lost reply may describe already-applied boundaries. Close
+                // whatever is live, then use a NEW id at the current playhead.
+                const outputs =
+                    video.paused || video.ended
+                        ? (this._segmenter?.pause() ?? [])
+                        : (this._segmenter?.recut(video.currentTime * 1000) ?? []);
+                const starts = this._opsFromOutputs(outputs).filter((op) => op.op === 'segment-start');
+                this._lastReassertMs = Date.now();
+                const recovered = await this._deliverOps([{ op: 'segment-end' }, ...starts], false);
+                if (recovered?.ok && this._active && generation === this._captureGeneration)
+                    this._host.notify('Savi: recording connection recovered. There may be a short gap.');
+                return recovered;
+            }
+            if (this._captureEpisodeId) this._deliberatelyStopped.add(this._captureEpisodeId);
+            this._deactivate();
+            this._host.notify(
+                'Savi: recording updates were rejected. Close other recording tabs and update Savi before restarting. Existing audio was left intact.'
+            );
+            return response;
         }
         if (response?.sessionGone && this._active && generation === this._captureGeneration) {
             this._recoverExpiredCapture();

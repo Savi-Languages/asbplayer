@@ -12,6 +12,16 @@ describe('postPlaybackState openSegment', () => {
         return postPlaybackState({ baseUrl: 'http://127.0.0.1:4030', token: 't' }, { captureId: 'c', seq: 1, ops: [] });
     };
 
+    it('preserves stale sequence information and validates the server cursor', async () => {
+        expect(await replyWith({ ok: false, staleSeq: true, lastSeq: 800 })).toMatchObject({
+            staleSeq: true,
+            lastSeq: 800,
+        });
+        for (const lastSeq of [-1, 1.5, '800', Number.MAX_SAFE_INTEGER + 1]) {
+            expect(((await replyWith({ staleSeq: true, lastSeq })) as any).lastSeq).toBeUndefined();
+        }
+    });
+
     it('reports the open segment id', async () => {
         expect((await replyWith({ ok: true, audio: 'recording', openSegment: 's7' })).openSegment).toBe('s7');
     });
@@ -226,4 +236,27 @@ describe('finishCapture', () => {
         });
         expect(info.condenseWarning).toBe('kept 3.4s of a 24 minute watch');
     });
+});
+
+it('times out a hung playback request without falling through to port discovery', async () => {
+    jest.useFakeTimers();
+    try {
+        global.fetch = jest.fn(
+            (_url, init) =>
+                new Promise((_resolve, reject) => {
+                    init!.signal!.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+                })
+        ) as any;
+        const pending = postPlaybackState(
+            { baseUrl: 'http://127.0.0.1:4030', token: 't' },
+            { captureId: 'c', seq: 1, ops: [] }
+        );
+        const rejected = expect(pending).rejects.toThrow('aborted');
+        await jest.advanceTimersByTimeAsync(10_000);
+        await rejected;
+        expect(fetch).toHaveBeenCalledTimes(1);
+        expect(jest.getTimerCount()).toBe(0);
+    } finally {
+        jest.useRealTimers();
+    }
 });

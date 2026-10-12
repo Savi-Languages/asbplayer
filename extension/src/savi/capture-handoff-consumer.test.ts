@@ -1,3 +1,4 @@
+import { Segmenter } from './segmenter';
 import { SaviCaptureController } from './capture-controller';
 
 it('deactivates the matching video controller on handoff without an idle restart', () => {
@@ -251,3 +252,82 @@ it.each([true, false])(
         }
     }
 );
+
+it('recovers a stale cursor with fresh boundaries at the current playhead', async () => {
+    const f = recoveryFixture();
+    try {
+        Object.defineProperty(f.c._host.video, 'paused', { value: false, configurable: true });
+        f.c._host.video.currentTime = 120;
+        f.c._segmenter = new Segmenter();
+        f.c._segmenter.begin(100_000, 1, false);
+        f.send
+            .mockResolvedValueOnce({ ok: false, staleSeq: true, sequenceResynced: true })
+            .mockResolvedValueOnce({ ok: true, audio: 'recording' });
+        await f.c._deliverOps([{ op: 'segment-start', segment: { segmentId: 's0', mediaTimeMs: 100_000, rate: 1 } }]);
+        expect(f.send).toHaveBeenCalledTimes(2);
+        expect(f.send.mock.calls[1][0].message.ops).toEqual([
+            { op: 'segment-end' },
+            { op: 'segment-start', segment: { segmentId: 's1', mediaTimeMs: 120_000, rate: 1 } },
+        ]);
+        expect(f.controller.active).toBe(true);
+    } finally {
+        f.controller.unbind();
+    }
+});
+it('repairs a rejected Pause using only a fresh end, never a new start', async () => {
+    const f = recoveryFixture();
+    try {
+        f.c._segmenter = new Segmenter();
+        f.c._segmenter.begin(100_000, 1, true);
+        f.send
+            .mockResolvedValueOnce({ ok: false, staleSeq: true, sequenceResynced: true })
+            .mockResolvedValueOnce({ ok: true });
+        await f.c._deliverOps([{ op: 'segment-end' }]);
+        expect(f.send.mock.calls[1][0].message.ops).toEqual([{ op: 'segment-end' }]);
+    } finally {
+        f.controller.unbind();
+    }
+});
+it('warns and deactivates when sequence recovery cannot succeed', async () => {
+    const f = recoveryFixture();
+    try {
+        f.send.mockResolvedValue({ ok: false, staleSeq: true, sequenceResynced: false });
+        await f.c._deliverOps([]);
+        expect(f.controller.active).toBe(false);
+        expect(f.notify.mock.calls.flat().join(' ')).toContain('rejected');
+        expect(f.c._deliberatelyStopped.has('episode-a')).toBe(true);
+        expect(f.start).not.toHaveBeenCalled();
+    } finally {
+        f.controller.unbind();
+    }
+});
+it('does not resync or warn for a response from a replaced generation', async () => {
+    const f = recoveryFixture();
+    try {
+        let resolve!: (value: any) => void;
+        f.send.mockImplementationOnce(() => new Promise((r) => (resolve = r)));
+        const pending = f.c._deliverOps([]);
+        f.c._captureGeneration = 'replacement';
+        resolve({ ok: false, staleSeq: true, sequenceResynced: true });
+        await pending;
+        expect(f.send).toHaveBeenCalledTimes(1);
+        expect(f.notify).not.toHaveBeenCalled();
+        expect(f.controller.active).toBe(true);
+    } finally {
+        f.controller.unbind();
+    }
+});
+
+it('keeps a content batch id stable across a lost sendMessage reply', async () => {
+    const f = recoveryFixture();
+    try {
+        f.send.mockRejectedValueOnce(new Error('worker reply lost')).mockResolvedValueOnce({ ok: true });
+        await f.c._deliverOps([]);
+        const calls = f.send.mock.calls;
+        expect(calls).toHaveLength(2);
+        expect(calls[0][0].message.batchId).toBe(1);
+        expect(calls[1][0]).toEqual(calls[0][0]);
+    } finally {
+        f.controller.unbind();
+    }
+});

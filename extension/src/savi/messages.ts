@@ -79,12 +79,17 @@ export interface SaviStopCaptureResponse {
 // are low-frequency, so waking a sleeping service worker per batch is fine.
 export interface SaviPlaybackStateMessage {
     readonly command: 'savi-playback-state';
+    /** Monotonic within generation, unchanged across sendMessage retries. */
+    readonly batchId?: number;
     readonly generation?: string;
     readonly episodeId?: string;
     readonly ops: SaviSegmentOp[];
 }
 
 export interface SaviPlaybackStateResponse {
+    readonly staleSeq?: boolean;
+    /** Cursor repaired; caller must send fresh boundaries at the live playhead. */
+    readonly sequenceResynced?: boolean;
     /** No record or matching expiry remains; stop locally without restarting. */
     readonly ownerAbsent?: boolean;
     readonly notOwner?: boolean;

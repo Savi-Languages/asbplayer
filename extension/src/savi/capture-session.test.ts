@@ -67,6 +67,31 @@ describe('capture-session', () => {
         expect(second?.seq).toBe(2);
     });
 
+    it('reserves durable blocks instead of writing local storage on every keepalive', async () => {
+        await setCaptureSession(record());
+        const durableWrite = jest.spyOn(browser.storage.local, 'set');
+        const sessionRead = jest.spyOn(browser.storage.session, 'get');
+        let previous = 0;
+        for (let i = 0; i < 720; i++) {
+            const allocation = await nextPlaybackSeq();
+            expect(allocation!.seq).toBeGreaterThan(previous);
+            previous = allocation!.seq;
+            expect(local.saviPlaybackSequence).toBeGreaterThanOrEqual(previous);
+        }
+        expect(durableWrite.mock.calls.length).toBeLessThanOrEqual(4);
+        expect(sessionRead.mock.calls.length).toBeLessThanOrEqual(720);
+    });
+
+    it('retains content batch deduplication across a service-worker restart', async () => {
+        await setCaptureSession({ ...record(), generation: 'owner' });
+        const first = await nextPlaybackSeq(() => true, 1);
+        let restarted!: typeof import('./capture-session');
+        jest.isolateModules(() => {
+            restarted = require('./capture-session');
+        });
+        expect((await restarted.nextPlaybackSeq(() => true, 1))?.seq).toBe(first?.seq);
+    });
+
     it('yields no seq without a live session', async () => {
         expect(await nextPlaybackSeq()).toBeUndefined();
     });
@@ -99,7 +124,9 @@ describe('capture-session', () => {
             restarted = require('./capture-session');
         });
         await restarted.setCaptureSession({ ...record(), generation: 'reloaded' });
-        expect((await restarted.nextPlaybackSeq())?.seq).toBe(44);
+        const next = (await restarted.nextPlaybackSeq())!.seq;
+        expect(next).toBeGreaterThan(43);
+        expect(next).toBeLessThanOrEqual(43 + 256);
     });
     it('uses increasing numbers even for a genuinely new daemon session, which accepts any higher positive seq', async () => {
         await setCaptureSession(record(42));
@@ -125,7 +152,9 @@ describe('capture-session', () => {
             restarted = require('./capture-session');
         });
         await restarted.setCaptureSession({ ...record(), generation: 'after-extension-reload' });
-        expect((await restarted.nextPlaybackSeq())?.seq).toBe(44);
+        const next = (await restarted.nextPlaybackSeq())!.seq;
+        expect(next).toBeGreaterThan(43);
+        expect(next).toBeLessThanOrEqual(43 + 256);
     });
     it('does not allocate a usable batch if durable cursor persistence fails', async () => {
         await setCaptureSession(record(42));
@@ -147,7 +176,9 @@ describe('capture-session', () => {
         jest.isolateModules(() => {
             restarted = require('./capture-session');
         });
-        expect((await restarted.nextPlaybackSeq())?.seq).toBe(44);
+        const next = (await restarted.nextPlaybackSeq())!.seq;
+        expect(next).toBeGreaterThan(43);
+        expect(next).toBeLessThanOrEqual(43 + 256);
     });
     it('can retire and finish an existing recording when durable storage writes fail', async () => {
         await setCaptureSession(record(42));

@@ -78,6 +78,7 @@ import {
     expireCaptureSession,
     markCaptureStopRequested,
     nextPlaybackSeq,
+    resyncPlaybackSequence,
     setCaptureSession,
     CaptureSessionRecord,
     SaviCaptureAudio,
@@ -1119,10 +1120,12 @@ export default class SaviCommandHandler implements CommandHandler {
                     (session.documentId === undefined || session.documentId === sender.documentId) &&
                     (session.frameId === undefined || session.frameId === sender.frameId)
                 );
-            });
+            }, message.batchId);
             if (!allocated)
                 return ownerPresent ? { ok: false, notOwner: true } : this._absentCaptureResponse(message, sender);
 
+            if (allocated.superseded) return { ok: true };
+            if (allocated.resync) return { ok: false, staleSeq: true, sequenceResynced: true };
             const config = await this._daemonConfig();
 
             if (!config) {
@@ -1143,7 +1146,10 @@ export default class SaviCommandHandler implements CommandHandler {
             }
             const post = () => postPlaybackState(config, { captureId: session.captureId, seq, ops: message.ops });
 
-            const handle = async (result: Awaited<ReturnType<typeof post>>): Promise<SaviPlaybackStateResponse> => {
+            const handle = async (
+                result: Awaited<ReturnType<typeof post>>,
+                retried: boolean
+            ): Promise<SaviPlaybackStateResponse> => {
                 if (result.sessionGone) {
                     // The daemon finished this session behind our back (orphan
                     // sweep after a long idle, or a daemon restart). Drop the
@@ -1178,6 +1184,23 @@ export default class SaviCommandHandler implements CommandHandler {
                         .catch(() => {});
                     return { ok: false, sessionGone: true };
                 }
+                if (result.staleSeq) {
+                    // Repeating this exact HTTP batch after a lost reply must
+                    // not replay an end/start pair at a new sequence number.
+                    if (
+                        (retried && result.lastSeq === seq) ||
+                        (allocated.replayed && (result.lastSeq === undefined || result.lastSeq === seq))
+                    ) {
+                        return { ok: true, audio: result.audio, openSegment: result.openSegment };
+                    }
+                    const recovery = await resyncPlaybackSequence(session, result.lastSeq);
+                    if (recovery === 'not-owner') return { ok: false, notOwner: true };
+                    if (recovery === 'blocked' && !(await clearCaptureSession(session)))
+                        return { ok: false, notOwner: true };
+                    // Do not finish: another profile may now own the same daemon
+                    // capture. Its files/tap must survive our local retirement.
+                    return { ok: false, staleSeq: true, sequenceResynced: recovery === 'resynced' };
+                }
                 return {
                     ok: result.ok,
                     audio: result.audio,
@@ -1186,17 +1209,25 @@ export default class SaviCommandHandler implements CommandHandler {
                 };
             };
 
+            let result: Awaited<ReturnType<typeof post>>;
+            let retried = false;
             try {
-                return await handle(await post());
-            } catch (e) {
+                result = await post();
+            } catch (error) {
+                if (isDaemonResponseError(error)) return { ok: false };
                 try {
-                    // Same seq on retry: the daemon never saw the failed send.
-                    return await handle(await post());
-                } catch (e2) {
-                    console.warn('savi: playback-state batch dropped', e2);
+                    // A timeout can happen AFTER application. Repeat the same
+                    // seq so the daemon cannot apply the boundaries twice.
+                    retried = true;
+                    result = await post();
+                } catch (retryError) {
+                    console.warn('savi: playback-state batch dropped', retryError);
                     return { ok: false };
                 }
             }
+            // Storage/retirement errors are not transport failures; never retry
+            // a batch merely because processing its successful reply failed.
+            return handle(result, retried);
         });
         this._playbackChain = run.catch(() => {});
         return run;
