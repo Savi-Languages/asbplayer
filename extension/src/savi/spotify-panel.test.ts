@@ -349,6 +349,7 @@ it('stops the matching controller on ownership handoff without reclaiming or fin
         src: 'https://open.spotify.com/track/abcdefghijklmnopqrstuv',
         ok: false,
         expired: false,
+        reason: 'ownership-transferred',
     });
     expect(f.p.isCapturing()).toBe(true);
     f.p.captureEnded({
@@ -356,11 +357,28 @@ it('stops the matching controller on ownership handoff without reclaiming or fin
         src: `https://open.spotify.com/track/${id}`,
         ok: false,
         expired: false,
+        reason: 'ownership-transferred',
     });
     expect(f.p.isCapturing()).toBe(false);
     expect(Array.from(f.root.querySelectorAll('button')).some((b) => b.textContent === 'Record audio')).toBe(true);
     await f.advance(140);
     expect(sent.filter((m) => m.command === 'savi-start-capture')).toHaveLength(1);
     expect(sent.filter((m) => m.command === 'savi-stop-capture')).toHaveLength(0);
+    f.p.stop();
+});
+
+it.each([true, false])('preserves a newer same-item recording when the old save result arrives (ok=%s)', async (ok) => {
+    const f = await autoFixture();
+    f.play();
+    await f.advance(12);
+    f.p.captureEnded({
+        command: 'savi-capture-ended',
+        src: `https://open.spotify.com/track/${id}`,
+        ok,
+        info: { totalLines: 1 },
+    });
+    expect(f.p.isCapturing()).toBe(true);
+    await f.advance(12);
+    expect(sent.filter((m) => m.command === 'savi-start-capture')).toHaveLength(1);
     f.p.stop();
 });

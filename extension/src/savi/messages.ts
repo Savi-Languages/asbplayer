@@ -576,6 +576,8 @@ export interface SaviNotifyToVideoMessage {
 
 export interface SaviCaptureEndedToVideoMessage {
     readonly command: 'savi-capture-ended';
+    /** Explicit ownership handoff; ordinary save results must not stop a new capture. */
+    readonly reason?: 'ownership-transferred';
     readonly src: string;
     readonly ok: boolean;
     readonly info?: CaptureFinishInfo;

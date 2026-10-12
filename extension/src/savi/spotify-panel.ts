@@ -919,7 +919,7 @@ export class SpotifyPanel {
     captureEnded(message: any) {
         const identity = spotifyIdentity(message.src);
         if (message.command === 'savi-capture-ended' && identity) {
-            if (this.captureId === identity.id && !message.expired) {
+            if (this.captureId === identity.id && message.reason === 'ownership-transferred') {
                 // Ownership moved to another tab. Drop local recording state
                 // without stopping the daemon session now owned by that tab,
                 // and do not automatically compete for it on the next tick.

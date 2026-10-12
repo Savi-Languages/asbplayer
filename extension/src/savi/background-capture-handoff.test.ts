@@ -87,6 +87,7 @@ describe('capture ownership after a frozen tab', () => {
                 src: oldSession.src,
                 ok: false,
                 expired: false,
+                reason: 'ownership-transferred',
                 errorMessage: 'Recording moved to another tab.',
             },
         });
@@ -132,4 +133,40 @@ describe('capture ownership after a frozen tab', () => {
         expect(startCapture).not.toHaveBeenCalled();
         expect(finishCapture).not.toHaveBeenCalled();
     });
+});
+
+const requestStop = (tabId?: number, episodeId?: string) => {
+    const handler = new SaviCommandHandler({
+        get: async () => ({
+            saviDaemonUrl: 'http://localhost:4030',
+            saviDaemonToken: 'test-token',
+        }),
+    } as any);
+    return new Promise<any>((resolve) =>
+        handler.handle(
+            {
+                sender: 'savi-video',
+                message: {
+                    command: 'savi-stop-capture',
+                    episodeId,
+                },
+            },
+            (tabId === undefined ? {} : { tab: { id: tabId } }) as any,
+            resolve
+        )
+    );
+};
+it.each([undefined, oldSession.episodeId])('rejects a stale tab stop even when episodeId is %s', async (episodeId) => {
+    expect(await requestStop(9, episodeId)).toMatchObject({ stopped: false });
+    expect(clearCaptureSession).not.toHaveBeenCalled();
+    expect(finishCapture).not.toHaveBeenCalled();
+});
+it.each([oldSession.tabId, undefined])('allows the current owner or popup to stop (tab=%s)', async (tabId) => {
+    expect(await requestStop(tabId)).toMatchObject({ stopped: true });
+    expect(clearCaptureSession).toHaveBeenCalled();
+    expect(finishCapture).toHaveBeenCalledWith(expect.anything(), oldSession.captureId);
+});
+it('rejects a previous episode stop in the current owner tab', async () => {
+    expect(await requestStop(oldSession.tabId, 'netflix:other')).toMatchObject({ stopped: false });
+    expect(clearCaptureSession).not.toHaveBeenCalled();
 });

@@ -885,6 +885,7 @@ export default class SaviCommandHandler implements CommandHandler {
                             src: existing.src,
                             ok: false,
                             expired: false,
+                            reason: 'ownership-transferred',
                             errorMessage: 'Recording moved to another tab.',
                         },
                     };
@@ -969,7 +970,10 @@ export default class SaviCommandHandler implements CommandHandler {
             return { stopped: false, errorMessage: 'no savi capture is running' };
         }
 
-        if (expectedEpisodeId && (session.episodeId !== expectedEpisodeId || session.tabId !== sender?.tab?.id)) {
+        if (
+            (sender?.tab?.id !== undefined && session.tabId !== sender.tab.id) ||
+            (expectedEpisodeId !== undefined && session.episodeId !== expectedEpisodeId)
+        ) {
             return { stopped: false, errorMessage: 'Another tab owns this capture.' };
         }
         const config = await this._daemonConfig();
