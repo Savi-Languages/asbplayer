@@ -1,0 +1,34 @@
+name: Request review
+
+# Khalifa's PRs ask Leon for review on their own, so a finished PR never sits
+# unseen because nobody was asked. Fires when a PR is opened ready, or when a
+# draft is marked ready — never on drafts, which are explicitly not ready for
+# anyone to look at.
+#
+# A workflow rather than CODEOWNERS so this fork and the (private) savi
+# monorepo share one mechanism: GitHub only auto-requests code owners on a
+# private repo with a paid plan. The same file lives in both.
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  request:
+    if: github.event.pull_request.user.login == 'Gentle-mann' && !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ask Leon to review
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # The REST call, not `gh pr edit --add-reviewer`: the latter also reads
+        # project data, which the workflow token cannot see, and fails on that
+        # alone. Re-requesting someone already requested is a no-op, so a
+        # reopened PR is safe.
+        run: |
+          gh api --method POST \
+            "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/requested_reviewers" \
+            -f "reviewers[]=LeonC510"
