@@ -47,6 +47,8 @@ describe('Netflix page response identity', () => {
             getVideoMetadataByVideoId: () => ({
                 getCurrentVideo: () => ({
                     getTitle: () => (metadataReady ? 'Show' : undefined),
+                    getId: () => activePlayer.getMovieId(),
+                    isEpisodic: () => false,
                 }),
             }),
         };
@@ -81,6 +83,96 @@ describe('Netflix page response identity', () => {
         delete (globalThis as any).netflix;
         jest.restoreAllMocks();
         jest.useRealTimers();
+    });
+
+    const observeMetadata = () => {
+        const response = jest.fn();
+        document.addEventListener('asbplayer-synced-data', (e) => response((e as CustomEvent).detail));
+        request('asbplayer-get-synced-data', { requestId: 'metadata' });
+        return response;
+    };
+
+    it('never labels the current episode with unrelated movie metadata', async () => {
+        api.getVideoMetadataByVideoId = () => ({
+            getCurrentVideo: () => ({
+                getTitle: () => 'Home Sweet Home 2013',
+                getId: () => 'other-movie',
+                isEpisodic: () => false,
+            }),
+        });
+        const response = observeMetadata();
+        await jest.advanceTimersByTimeAsync(5000);
+        expect(response).toHaveBeenCalledWith(
+            expect.objectContaining({
+                basename: 'playable-999',
+                episodeId: 'netflix:playable-999',
+                subtitles: expect.any(Array),
+            })
+        );
+    });
+
+    it('retries unrelated movie metadata until the requested episode is ready', async () => {
+        let ready = false;
+        api.getVideoMetadataByVideoId = () => ({
+            getCurrentVideo: () =>
+                ready
+                    ? {
+                          getTitle: () => 'A Life : A Love',
+                          isEpisodic: () => true,
+                          getId: () => 'series-id',
+                          getSeason: () => ({ _season: { seq: 1 } }),
+                          getEpisodeNumber: () => 1,
+                          getEpisodeTitle: () => 'Episode 1',
+                      }
+                    : {
+                          getTitle: () => 'Home Sweet Home 2013',
+                          getId: () => 'other-movie',
+                          isEpisodic: () => false,
+                      },
+        });
+        const response = observeMetadata();
+        await flush();
+        expect(response).not.toHaveBeenCalled();
+        ready = true;
+        await jest.advanceTimersByTimeAsync(1000);
+        expect(response).toHaveBeenCalledWith(
+            expect.objectContaining({ basename: 'A Life : A Love S01E01 Episode 1' })
+        );
+    });
+
+    it.each(['no-id', 'blank-title', 'throws', 'incomplete-series'])(
+        'keeps subtitles usable but does not trust incomplete metadata (%s)',
+        async (kind) => {
+            api.getVideoMetadataByVideoId = () => ({
+                getCurrentVideo: () => {
+                    if (kind === 'throws') throw new Error('metadata not ready');
+                    return {
+                        getTitle: () => (kind === 'blank-title' ? '  ' : 'Unverified'),
+                        getId: () => (kind === 'no-id' ? undefined : activePlayer.getMovieId()),
+                        isEpisodic: () => kind === 'incomplete-series',
+                    };
+                },
+            });
+            const response = observeMetadata();
+            await jest.advanceTimersByTimeAsync(5000);
+            expect(response).toHaveBeenCalledWith(
+                expect.objectContaining({ basename: 'playable-999', subtitles: expect.any(Array) })
+            );
+        }
+    );
+
+    it('accepts a genuine movie with a matching numeric metadata id', async () => {
+        activePlayer = makePlayer('123');
+        api.getVideoMetadataByVideoId = () => ({
+            getCurrentVideo: () => ({
+                getTitle: () => 'Home Sweet Home 2013',
+                getId: () => 123,
+                isEpisodic: () => false,
+            }),
+        });
+        const response = observeMetadata();
+        await flush();
+        expect(response).toHaveBeenCalledWith(expect.objectContaining({ basename: 'Home Sweet Home 2013' }));
     });
 
     it('reports the selected audio language, not subtitle or original-language availability', async () => {

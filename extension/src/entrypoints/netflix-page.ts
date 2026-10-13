@@ -130,39 +130,58 @@ export default defineUnlistedScript(() => {
         });
 
         function determineBasename(titleId: string): [string, boolean] {
-            const videoApi = getAPI()?.getVideoMetadataByVideoId?.(titleId)?.getCurrentVideo?.();
-            const actualTitle = videoApi?.getTitle?.();
+            // Netflix can return a metadata object before the requested video
+            // is ready. A non-empty title alone does not prove ownership: an
+            // unrelated movie must not become this episode's permanent name.
+            try {
+                const videoApi = getAPI()?.getVideoMetadataByVideoId?.(titleId)?.getCurrentVideo?.();
+                const actualTitle = videoApi?.getTitle?.();
+                if (typeof actualTitle !== 'string' || actualTitle.trim().length === 0) {
+                    return [`${titleId}`, true];
+                }
 
-            if (typeof actualTitle !== 'string') {
-                return [`${titleId}`, true];
-            }
+                const metadataId = videoApi?.getId?.();
+                const hasId =
+                    (typeof metadataId === 'number' && Number.isFinite(metadataId)) ||
+                    (typeof metadataId === 'string' && metadataId.trim().length > 0);
+                const episodic = videoApi?.isEpisodic?.();
+                if (!hasId || typeof episodic !== 'boolean') return [`${titleId}`, true];
 
-            let basename = actualTitle;
+                if (!episodic) {
+                    return `${metadataId}` === `${titleId}` ? [actualTitle.trim(), false] : [`${titleId}`, true];
+                }
 
-            if (videoApi?.isEpisodic?.() === true) {
-                const season = `${videoApi?.getSeason()?._season?.seq}`.padStart(2, '0');
-                const ep = `${videoApi?.getEpisodeNumber?.()}`.padStart(2, '0');
+                // Episodic metadata uses the SERIES id, so do not compare that
+                // namespace with the playable episode id. Require complete
+                // episode coordinates before accepting the series title.
+                const seasonNumber = videoApi?.getSeason?.()?._season?.seq;
+                const episodeNumber = videoApi?.getEpisodeNumber?.();
                 const epTitle = videoApi?.getEpisodeTitle?.();
-                basename += ` S${season}E${ep} ${epTitle}`;
-
-                // savi: surface the SHOW's stable Netflix id. Titles are
-                // localized to the profile's display language and can change;
-                // this id can't, so the library groups episodes by it. The
-                // metadata root is the show for episodic content — trust its
-                // id only when it differs from the episode's own id (a same
-                // value would mean we misread the API and would fragment the
-                // library into one group per episode).
-                const showId = videoApi?.getId?.();
-                if ((typeof showId === 'number' || typeof showId === 'string') && `${showId}` !== `${titleId}`) {
+                if (
+                    !Number.isInteger(seasonNumber) ||
+                    seasonNumber < 0 ||
+                    !Number.isInteger(episodeNumber) ||
+                    episodeNumber < 1 ||
+                    typeof epTitle !== 'string' ||
+                    epTitle.trim().length === 0
+                ) {
+                    return [`${titleId}`, true];
+                }
+                const season = `${seasonNumber}`.padStart(2, '0');
+                const ep = `${episodeNumber}`.padStart(2, '0');
+                if (`${metadataId}` !== `${titleId}`) {
                     document.dispatchEvent(
                         new CustomEvent('savi-netflix-show-id', {
-                            detail: { showId: `netflix:${showId}` },
+                            detail: { showId: `netflix:${metadataId}` },
                         })
                     );
                 }
+                return [`${actualTitle.trim()} S${season}E${ep} ${epTitle.trim()}`, false];
+            } catch {
+                // Metadata failures must not prevent subtitle delivery. Retry
+                // briefly, then retain the stable id instead of a wrong title.
+                return [`${titleId}`, true];
             }
-
-            return [basename, false];
         }
 
         async function determineBasenameWithRetries(
