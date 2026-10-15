@@ -385,6 +385,24 @@ describe('EngagementClock — media-anchored credit across long gaps (SV-59)', (
         expect(flushes[2].endedAtMs).toBe(WALL0 + 720_000);
     });
 
+    it('stamps whole-millisecond times even when the media position is fractional', () => {
+        // `currentTime * 1000` is a float and never advances in exact step with
+        // the wall clock, so a chunk boundary inside a gap lands between
+        // milliseconds. The server reads these as integers and 422s the row —
+        // which then blocked the whole offline queue behind it.
+        const { c, flushes } = clock({ backgroundKind: 'relisten' });
+        for (let t = 0; t <= 1_200_000; t += 47_000) {
+            c.tick(t, WALL0 + t, bg(1_234.5678 + t * 0.99731));
+        }
+        c.flush();
+        expect(flushes.length).toBeGreaterThan(1);
+        for (const f of flushes) {
+            expect(Number.isInteger(f.startedAtMs)).toBe(true);
+            expect(Number.isInteger(f.endedAtMs)).toBe(true);
+            expect(Number.isInteger(f.engagedMs)).toBe(true);
+        }
+    });
+
     it('keeps the anchor through a buffering stall, so the next screen-off gap still counts', () => {
         // A stretched tick lands during a 1 s stall (readyState < 2: not
         // `playing`, but `mediaActive`). Playback resumes at once; the next tick

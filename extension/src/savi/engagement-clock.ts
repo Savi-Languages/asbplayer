@@ -285,9 +285,11 @@ export class EngagementClock {
         if (open.engagedMs < this.opts.minSessionMs) return;
         this.opts.onFlush({
             kind: open.kind,
+            // All three are integers on the wire: a media-anchored chunk boundary
+            // lands between milliseconds, and the server rejects a fractional time.
             engagedMs: Math.round(open.engagedMs),
-            startedAtMs: open.startedAtMs,
-            endedAtMs: open.endedAtMs,
+            startedAtMs: Math.round(open.startedAtMs),
+            endedAtMs: Math.round(open.endedAtMs),
         });
     }
 }
