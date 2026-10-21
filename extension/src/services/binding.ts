@@ -1,3 +1,4 @@
+import type { PlatformSubtitleSource } from '@/savi/english-subtitles';
 import { SaviWatchInterest } from '../savi/watch-interest';
 import { SaviTargetController } from '@/savi/target-controller';
 import {
@@ -305,6 +306,7 @@ export default class Binding {
     private unsubscribeStatisticsSubtitleMine?: () => void;
 
     private readonly frameId?: string;
+    private _platformSubtitleSource?: PlatformSubtitleSource;
     private readonly _subtitleLanguageContext = new SubtitleLanguageContext();
 
     constructor(video: HTMLMediaElement, hasPageScript: boolean, frameId?: string) {
@@ -328,6 +330,8 @@ export default class Binding {
             video,
             settings: this.settings,
             currentSubtitles: () => this.subtitleController.subtitles,
+            englishSubtitles: (primary, episodeId) =>
+                this.videoDataSyncController.englishCompanion(this._platformSubtitleSource, primary, episodeId),
             replay: (startMs) => this._replaySaviLine(startMs),
             videoSrc: () => this._registeredVideoSrc,
             subtitleFileName: () => this.subtitleFileName(),
@@ -2009,7 +2013,13 @@ export default class Binding {
         return await cropAndResize(maxWidth, maxHeight, rect, tabImageDataUrl);
     }
 
-    async loadSubtitles(files: File[], flatten: boolean, syncWithAsbplayerId?: string, language?: string) {
+    async loadSubtitles(
+        files: File[],
+        flatten: boolean,
+        syncWithAsbplayerId?: string,
+        language?: string,
+        platformSource?: PlatformSubtitleSource
+    ) {
         // Carry language with the actual files, including the app round trip.
         // A manual file load clears it; unrelated files/episodes cannot reuse it.
         this._subtitleLanguageContext.begin(
@@ -2093,7 +2103,8 @@ export default class Binding {
                         originalEnd: s.end,
                         tokenization: s.tokenization,
                     })),
-                    flatten ? [files[0].name] : files.map((f) => f.name)
+                    flatten ? [files[0].name] : files.map((f) => f.name),
+                    platformSource
                 );
                 break;
             case SubtitleListPreference.app:
@@ -2102,7 +2113,14 @@ export default class Binding {
         }
     }
 
-    private _updateSubtitles(subtitles: IndexedSubtitleModel[], subtitleFileNames: string[]) {
+    private _updateSubtitles(
+        subtitles: IndexedSubtitleModel[],
+        subtitleFileNames: string[],
+        platformSource?: PlatformSubtitleSource
+    ) {
+        // Provenance commits with the parsed platform files. App/manual replacements
+        // have no verified source and deliberately fall back to translation.
+        this._platformSubtitleSource = platformSource;
         // Commit language alongside the parsed files, so an in-flight load
         // cannot replace the metadata belonging to subtitles still on screen.
         this._subtitleLanguageContext.commit(subtitleFileNames);

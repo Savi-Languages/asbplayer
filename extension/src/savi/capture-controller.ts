@@ -1,3 +1,4 @@
+import type { EnglishSubtitleInput } from './english-subtitles';
 // Content-script side of savi capture.
 //
 // Owns the segment-cutting state machine and feeds it the video
@@ -33,6 +34,7 @@ import { SaviSpeedControl } from './speed-control';
 import { SaviRecordingGuard } from './recording-guard';
 import {
     SaviCommand,
+    SaviEnglishSubtitlesMessage,
     SaviPlaybackStateMessage,
     SaviPlaybackStateResponse,
     SaviSegmentOp,
@@ -46,6 +48,10 @@ export interface SaviCaptureHost {
     readonly video: HTMLMediaElement;
     readonly settings: SettingsProvider;
     currentSubtitles: () => SerializableSubtitle[];
+    englishSubtitles?: (
+        primary: SerializableSubtitle[],
+        episodeId: string
+    ) => Promise<EnglishSubtitleInput | undefined>;
     replay: (startMs: number) => Promise<void>;
     videoSrc: () => string;
     // asbplayer's own detected name for the loaded subtitle track, e.g.
@@ -475,6 +481,7 @@ export class SaviCaptureController {
                     this._opsFromOutputs(segmenter.begin(video.currentTime * 1000, video.playbackRate, video.paused))
                 );
                 this._guard.clear(); // capturing now — drop any "not recording" guard
+                void this._saveEnglishSubtitles(subtitles, episodeId, response.generation);
 
                 // SV-18: the daemon reports whether ITS tap is recording audio.
                 const audioState = response.audio?.state ?? 'legacy';
@@ -505,6 +512,38 @@ export class SaviCaptureController {
             this._host.notify(`Savi: capture failed — ${e instanceof Error ? e.message : String(e)}`);
         } finally {
             this._starting = false;
+        }
+    }
+
+    private async _saveEnglishSubtitles(primary: SerializableSubtitle[], episodeId: string, generation?: string) {
+        if (!generation || !this._host.englishSubtitles) return;
+        const subtitles = serializeToSrt(primary);
+        try {
+            const english = await this._host.englishSubtitles(primary, episodeId);
+            if (
+                !english ||
+                !this._active ||
+                this._captureGeneration !== generation ||
+                this._captureEpisodeId !== episodeId ||
+                this._pageMetadata().episodeId !== episodeId ||
+                serializeToSrt(this._subtitlesForCapture()) !== subtitles
+            )
+                return;
+            const message: SaviEnglishSubtitlesMessage = {
+                command: 'savi-english-subtitles',
+                episodeId,
+                generation,
+                subtitles,
+                english,
+            };
+            if (new TextEncoder().encode(JSON.stringify(message)).length > 1800000) return;
+            await browser.runtime.sendMessage({
+                sender: 'savi-video',
+                message,
+            } as SaviCommand<SaviEnglishSubtitlesMessage>);
+        } catch {
+            // Optional companion failure must not interrupt primary capture/audio.
+            console.info('savi: English subtitles unavailable for this capture');
         }
     }
 

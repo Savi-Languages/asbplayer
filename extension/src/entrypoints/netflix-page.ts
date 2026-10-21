@@ -217,6 +217,9 @@ export default defineUnlistedScript(() => {
             return trackFromDef({
                 label,
                 language,
+                captionTrust: 'human',
+                providerTrackId: String(track.trackId),
+                closedCaptions: isClosedCaptions,
                 // 'lazy' is a sentinel value indicating to the content script that it should
                 // make a lazy language-specific request to get the URL
                 url: urlsByTrackId?.get(track.trackId) ?? 'lazy',

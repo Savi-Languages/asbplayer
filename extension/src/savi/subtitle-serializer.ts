@@ -8,6 +8,7 @@
 export interface SerializableSubtitle {
     readonly text: string;
     readonly start: number;
+    readonly originalStart?: number;
     readonly end: number;
     readonly track: number;
 }

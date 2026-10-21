@@ -1,3 +1,4 @@
+import type { SaviEnglishSubtitlesMessage } from './messages';
 import { watchInterestConfig, queueWatchInterest, setImmersionMode } from './watch-interest-service';
 import { prepareTargets, queueTargetFeedback, queueTargetMines, drainTargetMines } from './target-service';
 // Background-side orchestration for savi capture, registered as one
@@ -200,6 +201,11 @@ export default class SaviCommandHandler implements CommandHandler {
                             errorMessage: e instanceof Error ? e.message : String(e),
                         } as SaviStartCaptureResponse);
                     });
+                return true;
+            case 'savi-english-subtitles':
+                this._englishSubtitles(command.message as SaviEnglishSubtitlesMessage, sender)
+                    .then(sendResponse)
+                    .catch(() => sendResponse({ ok: false }));
                 return true;
             case 'savi-stop-capture':
                 this._stopCapture(command.message.episodeId, sender, command.message.generation).then(sendResponse);
@@ -858,6 +864,35 @@ export default class SaviCommandHandler implements CommandHandler {
     }
 
     private _captureStartChain: Promise<unknown> = Promise.resolve();
+
+    private _englishSubtitles(message: SaviEnglishSubtitlesMessage, sender: Browser.runtime.MessageSender) {
+        const run = this._captureStartChain.then(async () => {
+            const config = await this._daemonConfig();
+            const session = await getCaptureSession();
+            if (
+                !config ||
+                !session ||
+                !message.generation ||
+                session.stopRequested ||
+                session.generation !== message.generation ||
+                session.episodeId !== message.episodeId ||
+                session.tabId !== sender.tab?.id ||
+                (session.documentId !== undefined && session.documentId !== sender.documentId) ||
+                (session.frameId !== undefined && session.frameId !== sender.frameId) ||
+                message.english.sourceId !== session.episodeId
+            )
+                return { ok: false };
+            await postSubtitles(config, {
+                captureId: session.captureId,
+                content: message.subtitles,
+                format: 'srt',
+                english: message.english,
+            });
+            return { ok: true };
+        });
+        this._captureStartChain = run.catch(() => {});
+        return run;
+    }
 
     private _startCapture(
         message: SaviStartCaptureMessage,

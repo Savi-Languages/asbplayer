@@ -292,3 +292,34 @@ describe('manual Record control with auto-capture off', () => {
         }
     });
 });
+
+describe('optional English companion delivery', () => {
+    it.each(['generation', 'source', 'primary', 'stopped'])('drops late English after %s changes', async (change) => {
+        const previous = (globalThis as any).browser,
+            sendMessage = jest.fn();
+        (globalThis as any).browser = { runtime: { sendMessage } };
+        let done!: (v: any) => void;
+        const primary = [{ text: '猫', start: 1000, end: 2000, originalStart: 1000, track: 0 }];
+        const controller = Object.create(SaviCaptureController.prototype) as any;
+        controller._host = {
+            englishSubtitles: () =>
+                new Promise((resolve) => {
+                    done = resolve;
+                }),
+        };
+        controller._active = true;
+        controller._captureEpisodeId = 'netflix:1';
+        controller._captureGeneration = 'g1';
+        controller._pageMetadata = () => ({ episodeId: 'netflix:1' });
+        controller._subtitlesForCapture = () => primary;
+        const pending = controller._saveEnglishSubtitles(primary, 'netflix:1', 'g1');
+        if (change === 'generation') controller._captureGeneration = 'g2';
+        if (change === 'source') controller._pageMetadata = () => ({ episodeId: 'netflix:2' });
+        if (change === 'primary') controller._subtitlesForCapture = () => [];
+        if (change === 'stopped') controller._active = false;
+        done({ content: 'English', sourceId: 'netflix:1' });
+        await pending;
+        expect(sendMessage).not.toHaveBeenCalled();
+        (globalThis as any).browser = previous;
+    });
+});

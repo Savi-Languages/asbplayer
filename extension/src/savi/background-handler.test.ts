@@ -1,7 +1,11 @@
 jest.mock('./account', () => ({ daemonCredentials: jest.fn(), storedAccount: jest.fn() }));
-jest.mock('./daemon-client', () => ({ ...jest.requireActual('./daemon-client'), postWatchedLine: jest.fn() }));
+jest.mock('./daemon-client', () => ({
+    ...jest.requireActual('./daemon-client'),
+    postWatchedLine: jest.fn(),
+    postSubtitles: jest.fn(),
+}));
 import { daemonCredentials, storedAccount } from './account';
-import { postWatchedLine, SaviDaemonHttpError } from './daemon-client';
+import { postWatchedLine, postSubtitles, SaviDaemonHttpError } from './daemon-client';
 // Direct coverage of SaviCommandHandler._warmProjections (SV-40 bind-time warm
 // follow-up). The finding this closes: cloud-client.ts's warmProjections never
 // checked response.ok, so a 401 (expired JWT), 404 (a cloud predating the
@@ -253,4 +257,47 @@ describe('watched-line daemon availability', () => {
         jest.mocked(postWatchedLine).mockRejectedValue(new SaviDaemonHttpError(401, 'unauthorized'));
         await expect(watched(handler())).resolves.toEqual({ ok: false, reason: 'rejected' });
     });
+});
+
+describe('English subtitle ownership', () => {
+    it.each(['generation', 'tab', 'document', 'frame', 'episode', 'stopped', 'valid'])(
+        'requires the active capture owner: %s',
+        async (change) => {
+            const prior = (globalThis as any).browser;
+            const session: any = {
+                generation: 'g',
+                episodeId: 'netflix:1',
+                captureId: 'netflix_1',
+                tabId: 1,
+                documentId: 'doc',
+                frameId: 0,
+            };
+            const sender: any = { tab: { id: 1 }, documentId: 'doc', frameId: 0 };
+            const message: any = {
+                generation: 'g',
+                episodeId: 'netflix:1',
+                subtitles: 'primary',
+                english: { sourceId: 'netflix:1' },
+            };
+            if (change === 'generation') message.generation = 'old';
+            if (change === 'tab') sender.tab.id = 2;
+            if (change === 'document') sender.documentId = 'other';
+            if (change === 'frame') sender.frameId = 1;
+            if (change === 'episode') message.episodeId = 'netflix:2';
+            if (change === 'stopped') session.stopRequested = true;
+            (globalThis as any).browser = {
+                storage: { session: { get: async () => ({ saviCaptureSession: session }) } },
+            };
+            (postSubtitles as jest.Mock).mockClear();
+            const handler = new SaviCommandHandler({} as any) as any;
+            handler._daemonConfig = async () => ({ url: 'http://local', token: 'test' });
+            try {
+                const result = await handler._englishSubtitles(message, sender);
+                expect(result.ok).toBe(change === 'valid');
+                expect(postSubtitles).toHaveBeenCalledTimes(change === 'valid' ? 1 : 0);
+            } finally {
+                (globalThis as any).browser = prior;
+            }
+        }
+    );
 });

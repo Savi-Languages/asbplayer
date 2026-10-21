@@ -1,3 +1,13 @@
+import { SubtitleReader } from '@project/common/subtitle-reader';
+import { SubtitleHtml } from '@project/common';
+import {
+    englishCompanionTrack,
+    primaryPlatformSource,
+    primaryOffset,
+    type PlatformSubtitleSource,
+    type EnglishSubtitleInput,
+} from '@/savi/english-subtitles';
+import { serializeToSrt, type SerializableSubtitle } from '@/savi/subtitle-serializer';
 import {
     ActiveProfileMessage,
     ConfirmedVideoDataSubtitleTrack,
@@ -1177,7 +1187,8 @@ export default class VideoDataSyncController {
                 subtitles,
                 data.some((track) => typeof track.url === 'object'),
                 undefined,
-                language ?? data.find((track) => track.language && track.language !== '-')?.language
+                language ?? data.find((track) => track.language && track.language !== '-')?.language,
+                primaryPlatformSource(this._syncedData, data[0])
             );
             return true;
         } catch (error) {
@@ -1235,7 +1246,8 @@ export default class VideoDataSyncController {
                 subtitles,
                 data.some((track) => typeof track.url === 'object'),
                 syncWithAsbplayerId,
-                data.find((track) => track.language && track.language !== '-')?.language
+                data.find((track) => track.language && track.language !== '-')?.language,
+                primaryPlatformSource(this._syncedData, data[0])
             );
             return true;
         } catch (error) {
@@ -1248,16 +1260,71 @@ export default class VideoDataSyncController {
         }
     }
 
+    /** Fetch an independent companion without touching the displayed ASB tracks or preferences. */
+    async englishCompanion(
+        source: PlatformSubtitleSource | undefined,
+        primary: SerializableSubtitle[],
+        episodeId: string
+    ): Promise<EnglishSubtitleInput | undefined> {
+        const data = this._syncedData;
+        const track = englishCompanionTrack(data?.subtitles ?? []);
+        const offset = primaryOffset(primary);
+        const current = () =>
+            source &&
+            data === this._syncedData &&
+            source.episodeId === episodeId &&
+            deriveEpisodeId(window.location.href, '') === episodeId &&
+            primaryPlatformSource(
+                data,
+                data?.subtitles?.find((t) => t.id === source.trackId)
+            )?.episodeId === episodeId;
+        if (!current() || !track || offset === undefined || primary.length === 0) return;
+        const serialized = await this._subtitlesForUrl(
+            'english',
+            track.language,
+            track.extension,
+            track.url,
+            false,
+            data?.episodeId,
+            source!.sourceUrl
+        );
+        if (!serialized || !current()) return;
+        const files = serialized.map((f) => new File([base64ToBlob(f.base64, 'text/plain')], f.name));
+        const reader = new SubtitleReader({
+            regexFilter: '',
+            regexFilterTextReplacement: '',
+            subtitleHtml: SubtitleHtml.remove,
+            convertNetflixRuby: false,
+            pgsParserWorkerFactory: async () => {
+                throw new Error('Text captions required');
+            },
+        });
+        const cues = await reader.subtitles(files, true);
+        if (!current() || !cues.length) return;
+        const content = serializeToSrt(cues);
+        if (new TextEncoder().encode(content).length > 1000000) return;
+        return {
+            content,
+            format: 'srt',
+            language: track.language!,
+            provider: episodeId.startsWith('netflix:') ? 'netflix' : 'youtube',
+            sourceId: episodeId,
+            trackId: track.providerTrackId ?? track.language!,
+            sourceOffsetMs: offset,
+        };
+    }
+
     private async _syncSubtitles(
         serializedFiles: SerializedSubtitleFile[],
         flatten: boolean,
         syncWithAsbplayerId?: string,
-        language?: string
+        language?: string,
+        platformSource?: PlatformSubtitleSource
     ) {
         const files: File[] = await Promise.all(
             serializedFiles.map(async (f) => new File([base64ToBlob(f.base64, 'text/plain')], f.name))
         );
-        this._context.loadSubtitles(files, flatten, syncWithAsbplayerId, language);
+        await this._context.loadSubtitles(files, flatten, syncWithAsbplayerId, language, platformSource);
     }
 
     private async _subtitlesForUrl(

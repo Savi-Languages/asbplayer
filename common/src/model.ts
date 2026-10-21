@@ -198,6 +198,9 @@ export interface VideoDataSubtitleTrackDef {
     url: string | string[];
     extension: string;
     localFile?: boolean;
+    providerTrackId?: string;
+    captionTrust?: 'human' | 'auto' | 'translated';
+    closedCaptions?: boolean;
 }
 
 export interface VideoDataSubtitleTrack extends VideoDataSubtitleTrackDef {

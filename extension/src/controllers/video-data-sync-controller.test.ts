@@ -8,6 +8,13 @@
 // background to fetch from OpenSubtitles (Path B) — and records the language for
 // savi capture.
 
+jest.mock('@project/common/subtitle-reader', () => ({
+    SubtitleReader: class {
+        async subtitles() {
+            return [{ start: 1000, end: 2000, text: 'Go home.', track: 0 }];
+        }
+    },
+}));
 const fakeFrame = { hidden: true, clientIfLoaded: undefined };
 
 jest.mock('../services/binding', () => ({ __esModule: true, default: class {} }));
@@ -727,5 +734,42 @@ describe('VideoDataSyncController savi auto-load (SV-8)', () => {
             expect(await controller._trySaviAutoLoad()).toBe(false);
             expect(settingsSet).not.toHaveBeenCalled();
         });
+    });
+});
+
+describe('independent English companion', () => {
+    it('fetches verified English without replacing displayed subtitles or preferences', async () => {
+        const loadSubtitles = jest.fn(),
+            settingsSet = jest.fn();
+        const c = new VideoDataSyncController({ loadSubtitles } as any, { set: settingsSet } as any) as any;
+        const ja = { ...track('ja', 'ja', 'Japanese'), captionTrust: 'human' },
+            en = {
+                ...track('en:https://signed.example/token', 'en', 'English'),
+                captionTrust: 'human',
+                providerTrackId: 'english-standard',
+            };
+        const sourceUrl = window.location.href;
+        c._syncedData = { basename: 'Show', episodeId: 'netflix:111', sourceUrl, subtitles: [ja, en] };
+        c._subtitlesForUrl = jest.fn().mockResolvedValue([{ name: 'english.srt', base64: btoa('dummy') }]);
+        const oldEncoder = globalThis.TextEncoder;
+        (globalThis as any).TextEncoder = require('util').TextEncoder;
+        try {
+            const value = await c.englishCompanion(
+                { episodeId: 'netflix:111', sourceUrl, trackId: 'ja' },
+                [{ start: 1500, originalStart: 1000, end: 2500, text: '帰ろう', track: 0 }],
+                'netflix:111'
+            );
+            expect(value).toMatchObject({
+                sourceId: 'netflix:111',
+                sourceOffsetMs: 500,
+                language: 'en',
+                trackId: 'english-standard',
+            });
+            expect(value.content).toContain('Go home.');
+            expect(loadSubtitles).not.toHaveBeenCalled();
+            expect(settingsSet).not.toHaveBeenCalled();
+        } finally {
+            (globalThis as any).TextEncoder = oldEncoder;
+        }
     });
 });

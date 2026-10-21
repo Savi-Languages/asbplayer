@@ -1,3 +1,4 @@
+import type { EnglishSubtitleInput } from './english-subtitles';
 // Message protocol for savi capture, kept entirely separate from
 // asbplayer's senders so upstream message handling is untouched.
 //
@@ -20,6 +21,14 @@ import { SaviCaptureAudio } from './capture-session';
 // by the content script only AFTER the recorder is confirmed live, so its
 // media-time stamp can't go stale during the start round trip (daemon
 // calls + getUserMedia can take a second or more while the video plays).
+export interface SaviEnglishSubtitlesMessage {
+    readonly command: 'savi-english-subtitles';
+    readonly episodeId: string;
+    readonly generation: string;
+    readonly subtitles: string;
+    readonly english: EnglishSubtitleInput;
+}
+
 export interface SaviStartCaptureMessage {
     readonly command: 'savi-start-capture';
     readonly episodeId: string;

@@ -1,4 +1,4 @@
-import { VideoData, VideoDataSubtitleTrack } from '@project/common';
+import { VideoData, VideoDataSubtitleTrackDef, VideoDataSubtitleTrack } from '@project/common';
 import { poll, trackFromDef, trackId } from '@/pages/util';
 import { decodePoToken, fetchPlayerContextForPage } from '@/services/youtube';
 import { spokenLanguageFromTracks } from '@/savi/language-gate';
@@ -47,8 +47,10 @@ const trackToSubtitleTrack = (track: any): VideoDataSubtitleTrack | undefined =>
     const url = new URL(timedTextUrl, window.location.href);
     prepareTimedTextUrl(url);
 
-    const def = {
+    const def: VideoDataSubtitleTrackDef = {
         label: trackLabel(track),
+        providerTrackId: String(track.vssId ?? `${language}:${track.kind ?? 'standard'}`),
+        captionTrust: track.kind === 'asr' || track.vssId?.startsWith('a.') ? 'auto' : 'human',
         language,
         url: url.toString(),
         extension: 'ytsrv3',
@@ -170,6 +172,7 @@ const includeTranslationsForLanguageCodes = async (tracks: VideoDataSubtitleTrac
                 const newTrack = {
                     ...track,
                     language: `${languageCode}_from_${track.language}`,
+                    captionTrust: 'translated' as const,
                     label: `${track.label} >> ${languageCode}`,
                     url: translationUrl,
                 };
@@ -232,6 +235,8 @@ const publishCurrentTracks = async ({
             subtitles = await includeTranslationsForLanguageCodes(subtitles, targetTranslationLanguageCodes);
         }
 
+        response.episodeId = `youtube:${videoId}`;
+        response.sourceUrl = window.location.href;
         response.basename = basename || document.title;
         response.subtitles = subtitles ?? [];
         return videoId;

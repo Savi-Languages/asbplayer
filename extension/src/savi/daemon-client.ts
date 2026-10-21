@@ -1,3 +1,4 @@
+import type { EnglishSubtitleInput } from './english-subtitles';
 // Thin HTTP client for the savi daemon's capture API (API v2 — every daemon
 // route lives under /v2/; the pre-restructure unversioned /api/ surface is
 // gone).
@@ -309,9 +310,14 @@ export const postPlaybackState = async (
 
 export const postSubtitles = async (
     config: SaviDaemonConfig,
-    { captureId, content, format }: { captureId: string; content: string; format: 'srt' | 'vtt' }
+    {
+        captureId,
+        content,
+        format,
+        english,
+    }: { captureId: string; content: string; format: 'srt' | 'vtt'; english?: EnglishSubtitleInput }
 ): Promise<void> => {
-    await request(config, '/v2/capture/subtitles', jsonInit({ captureId, content, format }));
+    await request(config, '/v2/capture/subtitles', jsonInit({ captureId, content, format, english }));
 };
 
 // POST {base}/v2/episode/transcript {episodeId, content, format} — store the
