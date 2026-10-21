@@ -21,6 +21,7 @@ export function englishCompanionTrack(tracks: VideoDataSubtitleTrack[]) {
             t.captionTrust === 'human' &&
             !t.closedCaptions &&
             !t.localFile &&
+            !(Array.isArray(t.url) ? t.url : [t.url]).some((url) => /[?&]tlang=/i.test(url)) &&
             /^en(?:-[a-z]{2})?$/i.test(t.language ?? '') &&
             !/\b(CC|SDH|forced)\b/i.test(t.label)
     );

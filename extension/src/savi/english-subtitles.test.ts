@@ -41,3 +41,9 @@ test('preserves one consistent primary offset and rejects unknown timing', () =>
         ])
     ).toBeUndefined();
 });
+
+test('rejects a platform auto-translation URL even when metadata calls it human', () => {
+    expect(
+        englishCompanionTrack([track('en', 'en', { url: 'https://youtube.com/api/timedtext?lang=ja&tlang=en' })])
+    ).toBeUndefined();
+});
