@@ -24,7 +24,10 @@
         "build:extension:dev": "yarn workspace @project/extension run build:dev",
         "build:extension:firefox": "yarn workspace @project/extension run build:firefox",
         "dev:extension": "yarn workspace @project/extension run dev",
-        "test:extension": "yarn workspace @project/extension run test"
+        "test:extension": "yarn workspace @project/extension run test",
+        "pr-review": "node scripts/pr-review.mjs setup",
+        "pr-review:setup": "node scripts/pr-review.mjs setup",
+        "pr-review:clean": "node scripts/pr-review.mjs clean"
     },
     "packageManager": "yarn@3.2.0",
     "resolutions": {
